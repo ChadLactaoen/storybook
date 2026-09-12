@@ -14,6 +14,29 @@ function idOf(title: string): string {
   return n.id
 }
 
+/**
+ * What the editor does: type into the body, then leave the field.
+ *
+ * `editBody` alone only writes text — passages are created and bare links bound
+ * when the author blurs, which is what `resolveBody` stands in for here.
+ */
+function write(id: string, body: string): void {
+  const before = store.state.doc.nodes.find((n) => n.id === id)!.body
+  store.editBody(id, body)
+  store.resolveBody(id, before)
+}
+
+/**
+ * A link to a passage that already exists, the way the picker writes one.
+ *
+ * A bare `[[Three]]` means "make me a passage called Three" — titles are not
+ * link targets, so re-typing one would create a second passage sharing the name.
+ * Pointing at an existing passage means naming its code.
+ */
+function linkTo(title: string): string {
+  return `[[${title}|${store.state.doc.nodes.find((x) => x.title === title)!.code}]]`
+}
+
 function levelOf(title: string): number {
   return store.layout.value.nodeById.get(idOf(title))!.level
 }
@@ -29,12 +52,12 @@ function yOf(title: string): number {
 beforeEach(() => {
   store.newStory('Spec Walkthrough')
   store.rename(idOf('Start'), 'One')
-  store.editBody(idOf('One'), '')
+  write(idOf('One'), '')
 })
 
 describe('the spec walkthrough', () => {
   it('auto-creates linked passages and puts siblings on one axis', () => {
-    store.editBody(idOf('One'), '[[Go|Two]]\n[[Stay|Three]]')
+    write(idOf('One'), '[[Two]]\n[[Three]]')
 
     expect(store.state.doc.nodes.map((n) => n.title).sort()).toEqual(['One', 'Three', 'Two'])
     expect(levelOf('One')).toBe(1)
@@ -46,10 +69,11 @@ describe('the spec walkthrough', () => {
   })
 
   it('re-levels a descendant when a passage is inserted above it', () => {
-    store.editBody(idOf('One'), '[[Go|Two]]\n[[Stay|Three]]')
-    // Rewire One -> Four -> Two, keeping One -> Three.
-    store.editBody(idOf('One'), '[[Go|Four]]\n[[Stay|Three]]')
-    store.editBody(idOf('Four'), '[[On|Two]]')
+    write(idOf('One'), '[[Two]]\n[[Three]]')
+    // Rewire One -> Four -> Two, keeping One -> Three. Four is new, so it goes in
+    // bare; Two and Three already exist, so they go in by code.
+    write(idOf('One'), `[[Four]]\n${linkTo('Three')}`)
+    write(idOf('Four'), linkTo('Two'))
 
     expect(levelOf('Four')).toBe(2)
     expect(levelOf('Three')).toBe(2)
@@ -57,8 +81,8 @@ describe('the spec walkthrough', () => {
   })
 
   it('lets Three be nudged onto Two’s axis, leaving Four alone on its level', () => {
-    store.editBody(idOf('One'), '[[Go|Four]]\n[[Stay|Three]]')
-    store.editBody(idOf('Four'), '[[On|Two]]')
+    write(idOf('One'), '[[Four]]\n[[Three]]')
+    write(idOf('Four'), '[[Two]]')
 
     store.changeLevelOffset(idOf('Three'), 1)
 
@@ -70,8 +94,8 @@ describe('the spec walkthrough', () => {
   })
 
   it('reports the floor that blocks moving a passage up a level', () => {
-    store.editBody(idOf('One'), '[[Go|Four]]\n[[Stay|Three]]')
-    store.editBody(idOf('Four'), '[[On|Two]]')
+    write(idOf('One'), '[[Four]]\n[[Three]]')
+    write(idOf('Four'), '[[Two]]')
     store.select(idOf('Three'))
 
     // Three sits at its floor, pinned by One at level 1: there is no level to
@@ -81,62 +105,80 @@ describe('the spec walkthrough', () => {
   })
 
   it('counts unique paths for a perfect binary tree', () => {
-    store.editBody(idOf('One'), '[[a|L]]\n[[b|R]]')
-    store.editBody(idOf('L'), '[[a|LL]]\n[[b|LR]]')
-    store.editBody(idOf('R'), '[[a|RL]]\n[[b|RR]]')
+    write(idOf('One'), '[[L]]\n[[R]]')
+    write(idOf('L'), '[[LL]]\n[[LR]]')
+    write(idOf('R'), '[[RL]]\n[[RR]]')
 
     expect(store.state.doc.nodes).toHaveLength(7)
     expect(store.pathsFrom(idOf('One'))).toBe(4n)
     expect(store.pathsFrom(idOf('L'))).toBe(2n)
   })
 
-  it('renames through every parent and refuses a collision', () => {
-    store.editBody(idOf('One'), '[[Go north|Cave]]')
-    store.editBody(idOf('Cave'), '')
+  it('recodes through every parent and refuses a collision', () => {
+    write(idOf('One'), '[[Cave]]')
+    write(idOf('Cave'), '')
     store.addPassage()
     const otherId = store.state.selectedId!
     store.rename(otherId, 'Side Room')
-    store.editBody(otherId, '[[Also here->Cave]]')
+    write(otherId, linkTo('Cave'))
 
-    expect(store.rename(idOf('Cave'), 'Grotto')).toBeNull()
-    expect(store.state.doc.nodes.find((n) => n.title === 'One')!.body).toBe('[[Go north|Grotto]]')
+    const caveId = idOf('Cave')
+    expect(store.codeSet(caveId, 'Grotto')).toBeNull()
+    // Both parents follow the code; the display text they wrote is untouched.
+    expect(store.state.doc.nodes.find((n) => n.title === 'One')!.body).toBe('[[Cave|Grotto]]')
     expect(store.state.doc.nodes.find((n) => n.title === 'Side Room')!.body).toBe(
-      '[[Also here->Grotto]]',
+      '[[Cave|Grotto]]',
     )
     // No phantom appeared, so every link still resolves.
     expect(store.layout.value.graph.phantoms).toHaveLength(0)
 
     const before = serializeDoc(store.state.doc)
-    expect(store.rename(idOf('Grotto'), 'One')).toBe('A passage named "One" already exists.')
+    const oneCode = store.state.doc.nodes.find((n) => n.title === 'One')!.code
+    expect(store.codeSet(caveId, oneCode)).toContain('already used by')
     expect(serializeDoc(store.state.doc)).toBe(before)
   })
 
-  it('undoes a rename cascade in one step', () => {
-    store.editBody(idOf('One'), '[[Go north|Cave]]')
+  it('lets two passages share a title without disturbing a link', () => {
+    write(idOf('One'), '[[Cave]]')
+    const before = store.state.doc.nodes.find((n) => n.title === 'One')!.body
+    store.rename(idOf('Cave'), 'One')
+
+    expect(store.state.doc.nodes.map((n) => n.title)).toEqual(['One', 'One'])
+    expect(store.state.doc.nodes.find((n) => n.id === '1')!.body).toBe(before)
+    expect(store.layout.value.graph.phantoms).toHaveLength(0)
+  })
+
+  it('undoes a code cascade in one step', () => {
+    write(idOf('One'), '[[Cave]]')
     const before = serializeDoc(store.state.doc)
-    store.rename(idOf('Cave'), 'Grotto')
+    store.codeSet(idOf('Cave'), 'Grotto')
     store.undo()
     expect(serializeDoc(store.state.doc)).toBe(before)
   })
 
   it('leaves prose alone on delete and surfaces a phantom instead', () => {
-    store.editBody(idOf('One'), '[[Go north|Cave]]')
+    write(idOf('One'), '[[Cave]]')
+    // Settling bound the bare link to the code it minted.
+    expect(store.state.doc.nodes[0]!.body).toBe('[[Cave|P2]]')
+
     store.removePassage(idOf('Cave'))
-
     expect(store.state.doc.nodes.map((n) => n.title)).toEqual(['One'])
-    expect(store.state.doc.nodes[0]!.body).toBe('[[Go north|Cave]]')
+    expect(store.state.doc.nodes[0]!.body).toBe('[[Cave|P2]]')
 
-    const phantom = store.layout.value.nodes.find((n) => n.isPhantom)
-    expect(phantom?.title).toBe('Cave')
-    expect(phantom?.level).toBe(2)
+    const phantom = store.layout.value.nodes.find((n) => n.isPhantom)!
+    expect(phantom.code).toBe('P2')
+    // The link's display text is what the card offers as a name.
+    expect(phantom.title).toBe('Cave')
+    expect(phantom.level).toBe(2)
 
-    // ...and the phantom can be turned back into a real passage.
-    store.createFromPhantom('Cave')
+    // ...and the phantom can be turned back into a real passage, keeping both.
+    store.createFromPhantom(phantom.id)
     expect(store.layout.value.nodes.some((n) => n.isPhantom)).toBe(false)
+    expect(idOf('Cave')).toBeDefined()
   })
 
   it('keeps tags global, reusable and recolourable across passages', () => {
-    store.editBody(idOf('One'), '[[Go|Two]]')
+    write(idOf('One'), '[[Two]]')
     store.tagAdd(idOf('One'), 'exposition')
     expect(store.tags.value).toContain('exposition')
 
@@ -149,13 +191,13 @@ describe('the spec walkthrough', () => {
   })
 
   it('filters by search, tag and state together', () => {
-    store.editBody(idOf('One'), '[[Go|Two]]\n[[Stay|Three]]')
+    write(idOf('One'), '[[Two]]\n[[Three]]')
     store.tagAdd(idOf('Two'), 'combat')
     store.changeState(idOf('Two'), 'Done')
 
     // Search covers prose as well as titles, so match on something only
     // Three's own card carries.
-    store.editBody(idOf('Three'), 'A quiet clearing.')
+    write(idOf('Three'), 'A quiet clearing.')
     store.state.search = 'clearing'
     expect([...store.matches.value!]).toEqual([idOf('Three')])
 
@@ -172,8 +214,8 @@ describe('the spec walkthrough', () => {
   })
 
   it('renders identically after a save/load round trip', () => {
-    store.editBody(idOf('One'), '[[Go|Two]]\n[[Stay|Three]]')
-    store.editBody(idOf('Two'), '[[On|Four]]')
+    write(idOf('One'), '[[Two]]\n[[Three]]')
+    write(idOf('Two'), '[[Four]]')
     store.changeLevelOffset(idOf('Three'), 1)
     store.tagAdd(idOf('Two'), 'combat')
 
@@ -194,8 +236,8 @@ describe('importing a foreign save file', () => {
         storyTitle: 'Hand edited',
         startNodeId: '1',
         nodes: [
-          { id: '1', title: 'One', body: '[[Go|Two]]' },
-          { id: '2', title: 'Two', body: '', level: 9 },
+          { id: '1', title: 'One', code: 'A', body: '[[Go|B]]' },
+          { id: '2', title: 'Two', code: 'B', body: '', level: 9 },
         ],
       }),
     )
@@ -214,6 +256,7 @@ describe('a larger story', () => {
       nodes.push({
         id: String(i),
         title: `P${i}`,
+        code: `P${i}`,
         body: kids.map((k) => `[[go|P${k}]]`).join('\n'),
         tags: [],
         state: 'TODO',
@@ -252,26 +295,31 @@ describe('a larger story', () => {
 describe('finding a passage by its code', () => {
   beforeEach(() => {
     store.clearFilters()
-    store.editBody(idOf('One'), '[[Go|Two]]\n[[Stay|Three]]')
+    write(idOf('One'), '[[Two]]\n[[Three]]')
   })
 
   it('matches only the coded passage on an exact code', () => {
     expect(store.codeSet(idOf('Two'), 'A3')).toBeNull()
     // Prose on another passage that contains the code as a substring must not
     // dilute the result — an exact code means "this passage".
-    store.editBody(idOf('Three'), 'The a3 corridor smells of smoke.')
+    write(idOf('Three'), 'The a3 corridor smells of smoke.')
 
     store.state.search = 'A3'
     expect([...store.matches.value!]).toEqual([idOf('Two')])
+  })
 
-    // ...and it is case-insensitive, the way the code itself is.
+  it('still finds a passage when the code is typed in the wrong case', () => {
+    expect(store.codeSet(idOf('Two'), 'A3')).toBeNull()
+
+    // `[[a3]]` would not link to `A3` — but a search box is not a link, so the
+    // query falls through to the folded prose search and still turns it up.
     store.state.search = 'a3'
-    expect([...store.matches.value!]).toEqual([idOf('Two')])
+    expect([...store.matches.value!]).toContain(idOf('Two'))
   })
 
   it('still searches prose when the query is not a code', () => {
     store.codeSet(idOf('Two'), 'A3')
-    store.editBody(idOf('Three'), 'A quiet clearing.')
+    write(idOf('Three'), 'A quiet clearing.')
     store.state.search = 'clearing'
     expect([...store.matches.value!]).toEqual([idOf('Three')])
   })
@@ -279,7 +327,13 @@ describe('finding a passage by its code', () => {
   it('falls back to substring matching on a partial code', () => {
     store.codeSet(idOf('Two'), 'END-A3')
     store.state.search = 'END'
-    expect([...store.matches.value!]).toEqual([idOf('Two')])
+
+    const hits = [...store.matches.value!]
+    expect(hits).toContain(idOf('Two'))
+    // One matches too, and correctly so: a code lives in the prose of every
+    // passage that links to it, so a partial code finds the way in as well as
+    // the destination. Only an exact code narrows to the one passage.
+    expect(hits).toContain(idOf('One'))
   })
 
   it('composes with a tag filter', () => {
@@ -306,18 +360,20 @@ describe('multi-select and mass delete', () => {
 
   it('takes a passage and everything it leads to', () => {
     // A diamond with a back edge: the walk must visit Four once and terminate.
-    store.editBody(idOf('One'), '[[Go|Two]]')
-    store.editBody(idOf('Two'), '[[Left|Three]]\n[[Right|Four]]')
-    store.editBody(idOf('Three'), '[[On|Four]]')
-    store.editBody(idOf('Four'), '[[Back|Two]]')
+    write(idOf('One'), '[[Two]]')
+    write(idOf('Two'), '[[Three]]\n[[Four]]')
+    // Three and Four already exist, so these link by code rather than making a
+    // second passage of each name.
+    write(idOf('Three'), linkTo('Four'))
+    write(idOf('Four'), linkTo('Two'))
 
     store.selectSubtree(idOf('Two'))
-    expect(picked()).toEqual(['Four', 'Three', 'Two'])
+    expect(picked()).toEqual(['Two', 'Three', 'Four'])
     expect(store.state.selectedId).toBe(idOf('Two'))
   })
 
   it('falls back to a plain select on a phantom card', () => {
-    store.editBody(idOf('One'), '[[Go|Ghost]]')
+    write(idOf('One'), '[[Ghost]]')
     store.removePassage(idOf('Ghost'))
     const ghost = store.layout.value.nodes.find((n) => n.isPhantom)!.id
     store.selectSubtree(ghost)
@@ -326,10 +382,10 @@ describe('multi-select and mass delete', () => {
   })
 
   it('toggles one passage in and out, re-anchoring when the anchor goes', () => {
-    store.editBody(idOf('One'), '[[Go|Two]]\n[[Stay|Three]]')
+    write(idOf('One'), '[[Two]]\n[[Three]]')
     store.select(idOf('Two'))
     store.toggleSelected(idOf('Three'))
-    expect(picked()).toEqual(['Three', 'Two'])
+    expect(picked()).toEqual(['Two', 'Three'])
     expect(store.state.selectedId).toBe(idOf('Three'))
 
     // Dropping the anchor must leave the inspector pointing at something selected.
@@ -339,8 +395,8 @@ describe('multi-select and mass delete', () => {
   })
 
   it('deletes every selected passage in one undo step', () => {
-    store.editBody(idOf('One'), '[[Go|Two]]')
-    store.editBody(idOf('Two'), '[[Left|Three]]\n[[Right|Four]]')
+    write(idOf('One'), '[[Two]]')
+    write(idOf('Two'), '[[Three]]\n[[Four]]')
     const before = serializeDoc(store.state.doc)
 
     store.selectSubtree(idOf('Two'))
@@ -356,13 +412,13 @@ describe('multi-select and mass delete', () => {
   })
 
   it('refuses a delete that would strand a surviving passage', () => {
-    store.editBody(idOf('One'), '[[Go|Two]]')
-    store.editBody(idOf('Two'), '[[On|Three]]')
+    write(idOf('One'), '[[Two]]')
+    write(idOf('Two'), '[[Three]]')
     const before = serializeDoc(store.state.doc)
 
     store.select(idOf('Two'))
     const refusal = store.removePassage(idOf('Two'))
-    expect(refusal).toContain('"Three" would no longer be reachable from the start')
+    expect(refusal).toContain('"P3 · Three" would no longer be reachable from the start')
     expect(store.state.notice).toBe(refusal)
     // Refused means untouched: no commit, and the selection stands so the
     // author can add the stranded passage to it.
@@ -371,21 +427,21 @@ describe('multi-select and mass delete', () => {
   })
 
   it('allows the delete once the stranded passage joins the selection', () => {
-    store.editBody(idOf('One'), '[[Go|Two]]')
-    store.editBody(idOf('Two'), '[[On|Three]]')
+    write(idOf('One'), '[[Two]]')
+    write(idOf('Two'), '[[Three]]')
     store.selectSubtree(idOf('Two'))
     expect(store.removeSelected()).toBeNull()
     expect(store.state.doc.nodes.map((n) => n.title)).toEqual(['One'])
   })
 
   it('does not block on a passage that was already unreachable', () => {
-    store.editBody(idOf('One'), '[[Go|Two]]')
+    write(idOf('One'), '[[Two]]')
     store.addPassage()
     expect(store.removePassage(idOf('Two'))).toBeNull()
   })
 
   it('re-anchors on the start once the whole selection is gone', () => {
-    store.editBody(idOf('One'), '[[Go|Two]]\n[[Stay|Three]]')
+    write(idOf('One'), '[[Two]]\n[[Three]]')
     store.select(idOf('Two'))
     store.toggleSelected(idOf('Three'))
     store.removeSelected()
@@ -394,7 +450,7 @@ describe('multi-select and mass delete', () => {
   })
 
   it('drops passages the selection names when history takes them away', () => {
-    store.editBody(idOf('One'), '[[Go|Two]]\n[[Stay|Three]]')
+    write(idOf('One'), '[[Two]]\n[[Three]]')
     store.select(idOf('Two'))
     store.toggleSelected(idOf('Three'))
 

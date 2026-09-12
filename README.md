@@ -22,17 +22,21 @@ the JSON on every change. Three requirements fall out of that one decision:
 - adding or removing a passage redraws the whole tree with proper spacing.
 
 Structure is derived from the prose: each body is parsed for `[[...]]` links, and
-those links *are* the edges. Passage titles double as link targets, exactly as in
-Twine.
+those links *are* the edges. A link names a passage's **code** — a short unique
+handle like `3A` — never its title, so titles are free to repeat as often as the
+story wants them to.
 
 ## Authoring
 
 | | |
 |---|---|
-| Link forms | `[[Target]]`, `[[Text\|Target]]`, `[[Text->Target]]`, `[[Target<-Text]]` |
-| New passages | Linking to a title that doesn't exist creates it, in TODO state |
+| Link forms | `[[Code]]`, `[[Text\|Code]]`, `[[Text->Code]]`, `[[Code<-Text]]` |
+| Code | Every passage has one, unique and case-sensitive (`3A` is not `3a`). Auto-assigned as `P1`, `P2`, … and yours to rename |
+| Title | A name for you. Two passages may share one, and no link ever reads it |
+| New passages | A link to a code that doesn't exist creates the passage, in TODO state, when you leave the editor. Write a bare `[[Head north]]` and it gets a code of its own, written back into the link as `[[Head north\|P7]]` |
 | Formatting | `''bold''`, `//italic//` and `> quoted` lines, from the editor's buttons or `Cmd B` / `Cmd I` / `Cmd Shift .`. Pressing the same one again takes it off |
-| Renaming | Rewrites the target half of every inbound link; display text is untouched. A colliding rename is blocked |
+| Changing a code | Rewrites the target half of every inbound link; display text is untouched. A colliding or empty code is blocked, as is one containing link syntax |
+| Renaming a title | Just a field write. Nothing points at a title, so nothing has to follow it |
 | Deleting | Leaves inbound `[[...]]` alone — your prose is never rewritten. The link shows as a dashed phantom card you can click to recreate. Refused if it would cut a surviving passage off from the start |
 | Tags | Story-global, reusable from a dropdown, colour-coded from Twine's palette. Recolouring a tag repaints every passage carrying it |
 | Setting | Free text, with autocomplete from settings already used. A passage linked from another inherits its setting |
@@ -58,8 +62,10 @@ italic, quote and link — and every one of those is a shortcut in the sidebar
 editor too.
 
 `Cmd Shift K` links the selected words to a passage. It asks which one first,
-offering the titles you already have: a target is never half-typed into the
-document, so choosing an existing passage cannot leave a stray one behind.
+listing each passage by code and title and matching on either: a target is never
+half-typed into the document, so choosing an existing passage cannot leave a
+stray one behind. Typing a name that isn't on the list writes a bare link, and
+the passage behind it is created when you leave the editor.
 
 Wheel or pinch to zoom at the cursor, drag the background to pan.
 `Cmd +` / `Cmd -` zoom, `Cmd 0` zooms to fit, `Cmd 1` resets to 100%.
@@ -81,7 +87,7 @@ canonical JSON; **Import** reads it back.
 
 | Module | Job |
 |---|---|
-| `derive` | parse bodies into a graph; unresolved links become phantoms |
+| `derive` | parse bodies into a graph, resolving link targets against passage codes; unresolved links become phantoms |
 | `acyclic` | designate back edges with a canonical DFS (loops are normal in CYOA writing, never errors) |
 | `layering` | longest-path levels, with the user's offset folded in as a lower bound |
 | `components` | lay out disconnected fragments separately, pack left to right |

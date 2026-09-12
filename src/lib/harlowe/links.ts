@@ -11,9 +11,12 @@
  * `|`. Arrow forms split at the *outermost* arrow (last `->`, first `<-`) so
  * that display text containing an arrow still works.
  *
+ * The target is a passage *code*, never a title — titles are cosmetic and may
+ * repeat, so nothing structural could resolve against one.
+ *
  * Each link records the absolute span of the whole `[[...]]` and, separately,
- * the span of just the target substring. The rename cascade splices using the
- * latter so display text is never touched.
+ * the span of just the target substring. The code cascade and the bare-link
+ * rewrite both splice using the latter, so display text is never touched.
  */
 
 export interface Span {
@@ -24,7 +27,7 @@ export interface Span {
 export interface ParsedLink {
   /** Index of this link within its body, in source order. */
   ordinal: number
-  /** Trimmed passage title this link points at. */
+  /** Trimmed passage code this link points at. */
   target: string
   /** Display text, or null when the link is the bare `[[Target]]` form. */
   label: string | null
@@ -116,6 +119,8 @@ export function parseLinks(body: string): ParsedLink[] {
  * at `to`. Only the target substring is replaced; display text and surrounding
  * prose are left byte-for-byte intact.
  *
+ * Matching is exact, which is what makes codes case-sensitive end to end.
+ *
  * Splices run right-to-left so that earlier spans stay valid as we go.
  */
 export function retargetLinks(body: string, from: string, to: string): string {
@@ -131,10 +136,6 @@ export function retargetLinks(body: string, from: string, to: string): string {
   return out
 }
 
-/** Does `body` link to `target` at least once? */
-export function linksTo(body: string, target: string): boolean {
-  return parseLinks(body).some((l) => l.target === target)
-}
 
 /**
  * Build link text pointing at `target`, optionally shown as `label`.

@@ -10,6 +10,7 @@ import {
   materializePhantom,
   renameCharacter,
   renameSetting,
+  resolveLinks,
   setBody,
   setCharacterBio,
   setPassageCharacterNote,
@@ -29,6 +30,13 @@ function idOf(doc: StoryDoc, title: string): string {
   return n.id
 }
 
+/** What the editor does: type into the body, then leave the field. */
+function writeBody(nodeId: string, body: string): void {
+  const before = store.state.doc.nodes.find((n) => n.id === nodeId)!.body
+  store.editBody(nodeId, body)
+  store.resolveBody(nodeId, before)
+}
+
 function settingOf(doc: StoryDoc, title: string): string {
   return doc.nodes.find((n) => n.title === title)!.setting
 }
@@ -38,7 +46,7 @@ describe('setting inheritance', () => {
     let doc = createNode(emptyDoc(), { title: 'Tavern Door' }).doc
     const id = doc.nodes[0]!.id
     doc = setSetting(doc, id, 'The Rusty Anchor')
-    doc = setBody(doc, id, '[[Step inside|Common Room]]')
+    doc = resolveLinks(setBody(doc, id, '[[Common Room]]'), id, '')
 
     expect(settingOf(doc, 'Common Room')).toBe('The Rusty Anchor')
   })
@@ -47,11 +55,12 @@ describe('setting inheritance', () => {
     let doc = createNode(emptyDoc(), { title: 'Tavern Door' }).doc
     const parent = doc.nodes[0]!.id
     doc = setSetting(doc, parent, 'The Rusty Anchor')
-    doc = setBody(doc, parent, '[[Step inside|Common Room]]')
+    doc = resolveLinks(setBody(doc, parent, '[[Common Room]]'), parent, '')
+    const bound = doc.nodes.find((n) => n.id === parent)!.body
 
     doc = setSetting(doc, idOf(doc, 'Common Room'), 'The Cellar')
     // Editing the parent again must not re-inherit onto an existing passage.
-    doc = setBody(doc, parent, 'More prose.\n[[Step inside|Common Room]]')
+    doc = resolveLinks(setBody(doc, parent, `More prose.\n${bound}`), parent, bound)
 
     expect(settingOf(doc, 'Common Room')).toBe('The Cellar')
   })
@@ -376,7 +385,7 @@ describe('through the store', () => {
   const id = (title: string) => idOf(store.state.doc, title)
 
   it('does not relayout when scene metadata changes', () => {
-    store.editBody(id('Start'), '[[Go|Two]]')
+    writeBody(id('Start'), '[[Two]]')
     const before = store.layout.value.stats.hash
 
     store.settingSet(id('Start'), 'Tavern')
@@ -440,7 +449,7 @@ describe('through the store', () => {
   })
 
   it('filters by setting and character alongside the existing filters', () => {
-    store.editBody(id('Start'), '[[Go|Two]]\n[[Stay|Three]]')
+    writeBody(id('Start'), '[[Two]]\n[[Three]]')
     store.settingSet(id('Two'), 'Tavern')
     store.settingSet(id('Three'), 'Docks')
     store.characterCreate('Mira')
@@ -462,7 +471,7 @@ describe('through the store', () => {
   })
 
   it('finds a character’s scenes by name through the search box', () => {
-    store.editBody(id('Start'), '[[Go|Two]]')
+    writeBody(id('Start'), '[[Two]]')
     store.characterCreate('Mirabel')
     store.castAdd(id('Two'), 'Mirabel')
 

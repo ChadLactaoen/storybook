@@ -35,11 +35,20 @@ is nothing to refactor, levels are simply re-derived.
 
 **2. Body prose is the only source of truth for structure.** Edges are not stored.
 `deriveGraph` parses each `body` for `[[...]]` links (`src/lib/harlowe/links.ts` handles
-all four Twine forms) and those links *are* the edges. Passage titles are the link
-targets, so renaming must cascade through inbound link text — and deriving must never
+all four Twine forms) and those links *are* the edges. A link target is a passage's
+**`code`** — required, unique, case-sensitive, minted as `P<id>` — never its `title`,
+which is cosmetic and may repeat. So changing a code must cascade through inbound link
+text (`setCode`), while renaming a title is a plain field write. Deriving must never
 create real nodes, or a deleted-but-still-linked passage would be resurrected on the
 next re-derive. Unresolved targets become *phantoms* (`phantom:`-prefixed ids) that
 participate fully in layout but exist only in the derived graph.
+
+**3. Writing a body and resolving its links are separate mutations.** `setBody` is a
+plain field write and runs on every keystroke; `resolveLinks(doc, id, bodyAtFocus)` runs
+on blur, creates the passages the links name, and rewrites a bare `[[Head north]]` into
+`[[Head north|P7]]`. Folding the two together would splice text in under the author's
+caret mid-word. `bodyAtFocus` is what distinguishes a link just written from one left
+dangling on purpose, so it must be captured when the editor takes focus, not re-read.
 
 ### Layers
 
@@ -87,8 +96,10 @@ Mira→Tam records only how Mira regards Tam; the reverse is a separate entry.
 **The store keeps `layout` in a `shallowRef` + `markRaw`.** Deep-proxying a large story's
 layout costs more than computing it. `setDoc` recomputes layout synchronously (not in a
 watcher, which would flush a tick late and leave `layout` describing the previous
-document) and memoizes on a hash of only the fields layout depends on — id, title,
-`levelOffset`, body, `startNodeId` — so tag/state edits are pure re-renders.
+document) and memoizes on a hash of only the fields layout depends on — id, code, title,
+`levelOffset`, body, `startNodeId` — so tag/state edits are pure re-renders. `code` is in
+there because links resolve against it; leave it out and a recode goes unnoticed while
+every inbound edge re-resolves to a phantom.
 `layoutVersion` is a stale-result guard so layout can later move into a Web Worker.
 
 ### Tests

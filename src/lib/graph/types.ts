@@ -9,23 +9,32 @@ export interface DerivedEdge {
   /** `${sourceId}|${ordinal}` — stable across retargeting. */
   id: EdgeId
   sourceId: NodeId
-  /** Resolved target; points at a phantom id when the title is unknown. */
+  /** Resolved target; points at a phantom id when the code is unknown. */
   targetId: NodeId
-  targetTitle: string
+  /** The code this link names, verbatim, whether or not it resolved. */
+  targetCode: string
   label: string | null
   /** Position of the link within the source body. */
   ordinal: number
   /** Where the link sits in the source text, for click-to-source. */
   span: Span
-  /** True when the target title does not exist in the document. */
+  /** True when no passage in the document carries the target code. */
   dangling: boolean
   /** sourceId === targetId */
   selfLoop: boolean
 }
 
+/**
+ * A link target with no passage behind it.
+ *
+ * It has a code (the unresolved target) but no title — only the display text a
+ * link proposed for it, which is null when every link to it is the bare
+ * `[[code]]` form.
+ */
 export interface PhantomNode {
   id: NodeId
-  title: string
+  code: string
+  label: string | null
 }
 
 export type GraphNode = StoryNode | PhantomNode
@@ -41,6 +50,9 @@ export interface DerivedGraph {
   byId: ReadonlyMap<NodeId, GraphNode>
   outAdj: ReadonlyMap<NodeId, readonly EdgeId[]>
   inAdj: ReadonlyMap<NodeId, readonly EdgeId[]>
+  /** The structural key: a node's code, or a phantom's unresolved target. */
+  codeOf: ReadonlyMap<NodeId, string>
+  /** Display title. Empty for a phantom that no link proposed a name for. */
   titleOf: ReadonlyMap<NodeId, string>
   stateOf: ReadonlyMap<NodeId, NodeState | null>
 }
@@ -129,6 +141,9 @@ export interface EdgeLayout {
 
 export interface NodeLayout {
   id: NodeId
+  /** The passage's code, or a phantom's unresolved target. Always present. */
+  code: string
+  /** Display title. Empty for a phantom that no link proposed a name for. */
   title: string
   level: number
   layer: number
@@ -155,7 +170,7 @@ export type DiagnosticCode =
   | 'cycle'
   | 'dangling-link'
   | 'override-clamped'
-  | 'duplicate-title'
+  | 'duplicate-code'
   | 'self-loop'
   | 'orphan'
 

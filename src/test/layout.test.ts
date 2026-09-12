@@ -266,21 +266,28 @@ describe('cycle and phantom edges', () => {
   it('gives an unresolved link a phantom target on the next level', () => {
     const res = layoutStory(docFrom({ Hub: ['Missing'] }))
     const phantom = res.nodes.find((n) => n.isPhantom)!
-    expect(phantom.title).toBe('Missing')
+    expect(phantom.code).toBe('Missing')
+    // The link was written `[[Go to Missing|Missing]]`, so its display text is
+    // what the card offers as a name.
+    expect(phantom.title).toBe('Go to Missing')
     expect(phantom.level).toBe(2)
     expect(res.edges.find((e) => e.targetId === phantom.id)!.kind).toBe('dangling')
   })
 })
 
 describe('fields outside the layout inputs', () => {
-  it('lays out identically whatever the codes are', () => {
+  it('lays out identically whatever the titles are', () => {
     const plain = docFrom(BINARY_3)
-    const coded = docFrom(BINARY_3, {
-      codes: Object.fromEntries(Object.keys(BINARY_3).map((t, i) => [t, `C${i}`])),
-    })
-    // Codes are authoring metadata: they must not reach the geometry, or every
-    // code edit would reflow the board.
-    expect(layoutStory(coded).nodes).toEqual(layoutStory(plain).nodes)
+    const retitled = {
+      ...plain,
+      nodes: plain.nodes.map((n) => ({ ...n, title: `renamed ${n.id}` })),
+    }
+    // Titles are authoring metadata: they must not reach the geometry, or every
+    // rename would reflow the board. Codes are the opposite — they are identity,
+    // and `lays out identically whatever the codes are` would be a lie now.
+    const geometry = (d: typeof plain) =>
+      layoutStory(d).nodes.map(({ title, ...rest }) => rest)
+    expect(geometry(retitled)).toEqual(geometry(plain))
   })
 })
 

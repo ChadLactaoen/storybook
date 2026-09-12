@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as store from '../stores/story'
-import { compareStr } from '../types/story'
 import HarloweEditor from './HarloweEditor.vue'
 
-const props = defineProps<{ modelValue: string; title: string }>()
+const props = defineProps<{
+  modelValue: string
+  /** How the passage is named in the header: its code and title together. */
+  label: string
+  /** Passages offered when linking, in canonical order. */
+  targets: readonly { code: string; title: string }[]
+}>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  settle: []
   close: []
 }>()
 
@@ -23,11 +29,6 @@ const body = computed({
   get: () => props.modelValue,
   set: (v: string) => emit('update:modelValue', v),
 })
-
-/** What the link button offers. Sorted by the document's own comparator. */
-const titles = computed(() =>
-  store.state.doc.nodes.map((n) => n.title).sort(compareStr),
-)
 
 /** Counted on the prose the author sees, not on a tokenised view of it. */
 const stats = computed(() => {
@@ -61,7 +62,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
       <header>
         <div class="who">
           <span class="eyebrow">Body</span>
-          <strong class="name">{{ title }}</strong>
+          <strong class="name">{{ label }}</strong>
         </div>
         <button class="btn btn-ghost btn-icon" title="Close (Esc)" @click="emit('close')">
           &times;
@@ -69,11 +70,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
       </header>
 
       <p class="hint">
-        Link with <code>[[Text|Target]]</code>, <code>[[Text-&gt;Target]]</code> or
-        <code>[[Target&lt;-Text]]</code>. Linking to a passage that doesn&rsquo;t exist creates it.
+        Link with <code>[[Text|Code]]</code>, <code>[[Text-&gt;Code]]</code> or
+        <code>[[Code&lt;-Text]]</code>. A link to a code that doesn&rsquo;t exist creates the passage
+        when you leave the editor.
       </p>
 
-      <HarloweEditor ref="editor" v-model="body" toolbar :titles="titles" />
+      <HarloweEditor
+        ref="editor"
+        v-model="body"
+        toolbar
+        :targets="targets"
+        @settle="emit('settle')"
+      />
 
       <footer>
         <span class="muted">

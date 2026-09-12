@@ -13,7 +13,7 @@ const BLACK = 2
  * never an error — but *which* edge of a cycle gets called the back edge
  * changes the entire layering, so the traversal order has to be pinned down:
  *
- *   1. the declared start node first, then remaining roots by title,
+ *   1. the declared start node first, then remaining roots by code,
  *      then any still-unvisited node in canonical order;
  *   2. out-edges in body order.
  *
@@ -35,7 +35,10 @@ export function findBackEdges(g: DerivedGraph, startNodeId: NodeId | null): Acyc
   const otherRoots = g.ids.filter(
     (id) => !seen.has(id) && (g.inAdj.get(id)?.length ?? 0) === 0,
   )
-  otherRoots.sort((a, b) => compareStr(g.titleOf.get(a)!, g.titleOf.get(b)!) || compareStr(a, b))
+  // Code, not title: a title is cosmetic, so ordering on one would let a rename
+  // change which root is walked first, which changes which edge of a cycle is
+  // called the back edge, and with it the whole layering.
+  otherRoots.sort((a, b) => compareStr(g.codeOf.get(a)!, g.codeOf.get(b)!) || compareStr(a, b))
   for (const id of otherRoots) {
     roots.push(id)
     seen.add(id)

@@ -4,6 +4,7 @@ import * as M from '../lib/doc/mutations'
 import { serializeDoc } from '../lib/doc/serialize'
 import { clearLocal, loadLocal, localMeta, saveLocal } from '../lib/doc/storage'
 import type { SavedMeta } from '../lib/doc/storage'
+import { buildLink } from '../lib/harlowe/links'
 import { fnv1a } from '../lib/graph/hash'
 import { isPhantomId } from '../lib/graph/constants'
 import { layoutStory } from '../lib/graph/layout'
@@ -18,7 +19,7 @@ import type {
   TagColor,
   TraitField,
 } from '../types/story'
-import { compareNodes, emptyDoc } from '../types/story'
+import { compareNodes, emptyDoc, nodeLabel } from '../types/story'
 
 const HISTORY_LIMIT = 100
 
@@ -76,14 +77,27 @@ const layout = shallowRef<LayoutResult>(markRaw(layoutStory(state.doc)))
 const layoutVersion = shallowRef(0)
 
 /**
- * Memoize on the inputs layout actually depends on. Editing a title, a tag or a
- * state is a large share of real editing and leaves the geometry untouched, so
- * those edits become pure re-renders.
+ * Memoize on the inputs layout actually depends on. Editing a tag or a state is
+ * a large share of real editing and leaves the geometry untouched, so those
+ * edits become pure re-renders.
+ *
+ * `code` has to be in here: it is what links resolve against, so leaving it out
+ * would let a recode go unnoticed while every inbound edge re-resolved to a
+ * phantom — which presents as "the canvas didn't update". `title` is in here
+ * only because it reaches `NodeLayout.title` and the diagnostic strings, both of
+ * which live inside the memoized result.
+ *
+ * Fields join on NUL rather than a space so that `{code:'A B', title:'C'}` and
+ * `{code:'A', title:'B C'}` cannot hash alike now that codes are author-typed.
  */
 let lastLayoutKey = ''
 
+const KEY_SEP = '\u0000'
+
 function layoutKey(doc: StoryDoc): string {
-  const parts = doc.nodes.map((n) => [n.id, n.title, n.levelOffset, n.body].join(' '))
+  const parts = doc.nodes.map((n) =>
+    [n.id, n.code, n.title, n.levelOffset, n.body].join(KEY_SEP),
+  )
   parts.push(String(doc.startNodeId))
   return fnv1a(parts.join('|'))
 }
@@ -182,10 +196,16 @@ function resetViewState(): void {
   clearFilters()
 }
 
+/**
+ * The link is written in its bound form on purpose. `P2` is exactly the code the
+ * next passage will be minted with, so the dashed card the author sees is the
+ * one that appears when they double-click it.
+ */
 const STARTER_BODY = [
   'Your story begins here.',
   '',
-  'Write a link like [[Head north->North Road]] to branch.',
+  'Write a link like [[Head north|P2]] to branch. The part after the bar is the',
+  'passage code — that is what a link points at, and titles never matter to it.',
 ].join('\n')
 
 export function newStory(title = 'Untitled Story'): void {
@@ -327,7 +347,7 @@ const NAME_LIMIT = 3
 
 /** `"A", "B" and 2 more` — enough to recognise, short enough for a banner. */
 function quoteList(nodes: readonly StoryNode[]): string {
-  const shown = nodes.slice(0, NAME_LIMIT).map((n) => `"${n.title}"`)
+  const shown = nodes.slice(0, NAME_LIMIT).map((n) => `"${nodeLabel(n.code, n.title)}"`)
   const rest = nodes.length - shown.length
   if (rest > 0) shown.push(`${rest} more`)
   if (shown.length === 1) return shown[0]!
@@ -337,7 +357,7 @@ function quoteList(nodes: readonly StoryNode[]): string {
 function strandedMessage(stranded: readonly StoryNode[]): string {
   const who =
     stranded.length === 1
-      ? `"${stranded[0]!.title}" would no longer be reachable from the start`
+      ? `"${nodeLabel(stranded[0]!.code, stranded[0]!.title)}" would no longer be reachable from the start`
       : `${stranded.length} passages would no longer be reachable from the start — ${quoteList(stranded)}`
   const fix = stranded.length === 1 ? 'Delete it too' : 'Delete them too'
   return `Delete refused: ${who}. ${fix}, or link to ${stranded.length === 1 ? 'it' : 'them'} from a passage that survives.`
@@ -346,7 +366,7 @@ function strandedMessage(stranded: readonly StoryNode[]): string {
 function deletedMessage(impact: DeleteImpact): string {
   const what =
     impact.removed.length === 1
-      ? `Deleted "${impact.removed[0]!.title}".`
+      ? `Deleted "${nodeLabel(impact.removed[0]!.code, impact.removed[0]!.title)}".`
       : `Deleted ${impact.removed.length} passages.`
   if (impact.dangling === 0) return what
   const links =
@@ -392,7 +412,9 @@ export function addPassage(linkFrom?: string): string {
     const parent = next.nodes.find((n) => n.id === linkFrom)
     if (parent) {
       const gap = parent.body.length > 0 && !parent.body.endsWith('\n') ? '\n' : ''
-      next = M.setBody(next, linkFrom, parent.body + gap + '[[' + node.title + ']]')
+      // Through `buildLink`, so the link is written the one way the app teaches:
+      // display text on the left, the code that actually resolves on the right.
+      next = M.setBody(next, linkFrom, parent.body + gap + buildLink(node.code, node.title))
     }
   }
   commit(next)
@@ -410,15 +432,26 @@ export function removeSelected(): string | null {
   return removeIds([...state.selectedIds])
 }
 
-export function rename(id: string, title: string): string | null {
-  const { doc: next, error } = M.renameNode(state.doc, id, title)
-  if (error) return error
-  commit(next)
-  return null
+/** Titles are cosmetic and repeatable, so a rename can never be refused. */
+export function rename(id: string, title: string): void {
+  commit(M.renameNode(state.doc, id, title))
 }
 
 export function editBody(id: string, body: string): void {
   commit(M.setBody(state.doc, id, body))
+}
+
+/**
+ * Bind the links in a body once the author leaves the editor: create the
+ * passages they name, and give bare links the code minted for them.
+ *
+ * Split from `editBody` because that fires on every keystroke. `bodyAtFocus` is
+ * the body as it stood when the editor took focus — the only way to tell a link
+ * the author just wrote from one that was already there and deliberately left
+ * dangling. Lands as one undo step rather than one per keystroke.
+ */
+export function resolveBody(id: string, bodyAtFocus: string): void {
+  commit(M.resolveLinks(state.doc, id, bodyAtFocus))
 }
 
 export function changeState(id: string, value: NodeState): void {
@@ -437,10 +470,13 @@ export function renameStory(title: string): void {
   commit(M.setStoryTitle(state.doc, title))
 }
 
-export function createFromPhantom(title: string): void {
-  const next = M.materializePhantom(state.doc, title)
+/** Turn a dashed placeholder card into a real passage, and select it. */
+export function createFromPhantom(phantomId: string): void {
+  const phantom = layout.value.graph.phantoms.find((p) => p.id === phantomId)
+  if (!phantom) return
+  const next = M.materializePhantom(state.doc, phantom.code, phantom.label)
   commit(next)
-  select(next.nodes.find((n) => n.title === title)?.id ?? state.selectedId)
+  select(next.nodes.find((n) => n.code === phantom.code)?.id ?? state.selectedId)
 }
 
 /* ---------- tags ---------- */
@@ -668,14 +704,17 @@ export const matches = computed((): Set<string> | null => {
   // A code is an exact handle, so typing one means "this passage" and nothing
   // else. Without this a short code like "a3" would also drag in every passage
   // whose prose happens to contain those letters, burying the one you asked for.
-  const exactCode = q.length > 0 && state.doc.nodes.some((n) => n.code.toLowerCase() === q)
+  //
+  // Matched against the raw query, so this only fires on the exact code. Typing
+  // `a3` when the code is `A3` falls through to the folded prose search below and
+  // still finds it — links have to be exact, but a search box does not.
+  const raw = state.search.trim()
+  const exactCode = raw.length > 0 && state.doc.nodes.some((n) => n.code === raw)
 
   const out = new Set<string>()
   for (const n of state.doc.nodes) {
     if (q.length > 0) {
-      const hit = exactCode
-        ? n.code.toLowerCase() === q
-        : searchableText(n).toLowerCase().includes(q)
+      const hit = exactCode ? n.code === raw : searchableText(n).toLowerCase().includes(q)
       if (!hit) continue
     }
     if (state.tagFilter.length > 0 && !state.tagFilter.some((t) => n.tags.includes(t))) continue

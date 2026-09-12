@@ -32,10 +32,11 @@ const SHORTCUTS: { keys: string; what: string }[] = [
 ]
 
 const LINKS: { syntax: string; what: string }[] = [
-  { syntax: '[[Cave]]', what: 'Link straight to the passage named Cave' },
-  { syntax: '[[Go north|Cave]]', what: 'Show “Go north”, go to Cave' },
-  { syntax: '[[Go north->Cave]]', what: 'The same, written with an arrow' },
-  { syntax: '[[Cave<-Go north]]', what: 'The same, arrow pointing the other way' },
+  { syntax: '[[Go north|3A]]', what: 'Show “Go north”, go to the passage coded 3A' },
+  { syntax: '[[Go north->3A]]', what: 'The same, written with an arrow' },
+  { syntax: '[[3A<-Go north]]', what: 'The same, arrow pointing the other way' },
+  { syntax: '[[3A]]', what: 'Straight to 3A, with the code as the link text' },
+  { syntax: '[[Go north]]', what: 'No such code: creates a passage titled “Go north”' },
 ]
 
 const MARKUP: { syntax: string; what: string }[] = [
@@ -87,11 +88,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             </tbody>
           </table>
           <p class="note">
-            Link to a passage that doesn&rsquo;t exist yet and it is created for you. Delete a
-            passage and the links to it stay as written &mdash; they show up as a dashed card you
-            can double-click to bring back. A delete is refused if it would cut a surviving
-            passage off from the start &mdash; select that passage too, or leave a link to it from
-            somewhere that survives.
+            Links point at a passage&rsquo;s <em>code</em>, never its title &mdash; titles are yours
+            to repeat as often as you like. Link to a code that doesn&rsquo;t exist yet and the
+            passage is created when you leave the editor; write a bare
+            <code>[[Go north]]</code> and it gets a code of its own, which is written back into
+            the link. Delete a passage and the links to it stay as written &mdash; they show up as
+            a dashed card you can double-click to bring back. A delete is refused if it would cut
+            a surviving passage off from the start &mdash; select that passage too, or leave a link
+            to it from somewhere that survives.
           </p>
         </section>
 

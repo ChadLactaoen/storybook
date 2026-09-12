@@ -10,13 +10,20 @@ const props = withDefaults(
     modelValue: string
     /** Show the formatting buttons. The shortcuts work either way. */
     toolbar?: boolean
-    /** Passage titles offered when linking. */
-    titles?: readonly string[]
+    /** Passages offered when linking, in canonical order. */
+    targets?: readonly { code: string; title: string }[]
   }>(),
-  { toolbar: false, titles: () => [] },
+  { toolbar: false, targets: () => [] },
 )
 
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: string]
+  /**
+   * The author has left the field. Link resolution happens here rather than on
+   * every keystroke, because it rewrites the very text they would be typing into.
+   */
+  settle: []
+}>()
 
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const highlight = ref<HTMLPreElement | null>(null)
@@ -87,12 +94,26 @@ function quote() {
  * a textarea that has lost focus is not a reliable place to read a selection
  * back from, so it is remembered rather than re-read.
  */
+const shell = ref<HTMLElement | null>(null)
+
 const linking = ref<Selection | null>(null)
 
 const linkLabel = computed(() => {
   const sel = linking.value
   return sel ? sel.text.slice(sel.start, sel.end) : ''
 })
+
+/**
+ * Losing focus settles the body. The picker and the toolbar both steal focus
+ * without the author having finished, so those cases are filtered out: a
+ * transform is about to put the caret straight back.
+ */
+function onBlur(e: FocusEvent) {
+  if (linking.value !== null) return
+  const to = e.relatedTarget
+  if (to instanceof Node && shell.value?.contains(to)) return
+  emit('settle')
+}
 
 function openLink() {
   linking.value = selection()
@@ -147,7 +168,7 @@ defineExpose({ focus: () => textarea.value?.focus() })
 </script>
 
 <template>
-  <div class="shell">
+  <div ref="shell" class="shell">
     <div v-if="toolbar" class="tools">
       <button class="tool" type="button" :title="`Bold (${MOD}B)`" @click="wrap(BOLD)">
         <b>B</b>
@@ -165,7 +186,7 @@ defineExpose({ focus: () => textarea.value?.focus() })
 
     <LinkPicker
       v-if="linking"
-      :titles="titles"
+      :targets="targets"
       :label="linkLabel"
       @pick="pickLink"
       @close="closeLink"
@@ -181,6 +202,7 @@ defineExpose({ focus: () => textarea.value?.focus() })
         @input="onInput"
         @scroll="syncScroll"
         @keydown="onKeyDown"
+        @blur="onBlur"
       />
     </div>
   </div>

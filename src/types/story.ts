@@ -32,13 +32,21 @@ export interface SceneCharacter {
 
 export interface StoryNode {
   id: NodeId
-  /** Unique across the story; doubles as the link target in `[[Text|title]]`. */
+  /**
+   * A name for the author, and nothing more.
+   *
+   * Free-form and repeatable: two passages may share a title, and nothing
+   * structural ever reads one. Renaming is a plain field write.
+   */
   title: string
   /**
-   * Short author-assigned reference, unique across the story. Empty when unset.
+   * The passage's identity: unique across the story, case-sensitive, never empty,
+   * and the link target in `[[Text|code]]`.
    *
-   * A handle on a passage that is not its title: terse enough to write in notes,
-   * and stable enough for a reader to quote when comparing which ending they got.
+   * Terse enough to write in notes and stable enough for a reader to quote when
+   * comparing which ending they got. Auto-assigned as `P<id>` at creation and the
+   * author's to change — changing it cascades through every inbound link, which
+   * is the mirror of what renaming a title used to do.
    */
   code: string
   /** Harlowe source. The single source of truth for this passage's outgoing links. */
@@ -120,7 +128,7 @@ export interface StoryDoc {
   version: 1
   storyTitle: string
   startNodeId: NodeId | null
-  /** Serialized sorted by canonical key (title, then id). */
+  /** Serialized sorted by canonical key (code, then id). */
   nodes: StoryNode[]
   /** Story-global tag registry, sorted by name. */
   tagColors: TagColorEntry[]
@@ -154,9 +162,36 @@ export function compareStr(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
-/** Total order over nodes: title first, id as the unique tiebreak. */
+/**
+ * Total order over nodes: code first, id as the tiebreak.
+ *
+ * Code rather than title because titles are cosmetic and repeatable. Ordering on
+ * one would let a rename reshuffle `doc.nodes`, which reshuffles the derived
+ * adjacency, which moves cards on a canvas for an edit that means nothing
+ * structurally. The id tiebreak keeps the order total while `parseDoc` is
+ * mid-repair and a code may still be missing or duplicated.
+ */
 export function compareNodes(a: StoryNode, b: StoryNode): number {
-  return compareStr(a.title, b.title) || compareStr(a.id, b.id)
+  return compareStr(a.code, b.code) || compareStr(a.id, b.id)
+}
+
+/**
+ * Separator for `nodeLabel`. Deliberately not `|`, `->` or `<-`: those are link
+ * syntax, and a label is often quoted back inside prose.
+ */
+const LABEL_SEP = ' \u00b7 '
+
+/**
+ * How a passage is named to the author: `"P7 · Head north"`.
+ *
+ * Every banner, list row, picker row and diagnostic goes through here. Titles
+ * repeat, so a title alone no longer identifies a passage; the code always does.
+ * Falls back to whichever half is present when the other is empty.
+ */
+export function nodeLabel(code: string, title: string): string {
+  if (code.length === 0) return title
+  if (title.length === 0) return code
+  return code + LABEL_SEP + title
 }
 
 /** Total order over named entries: name, which is unique in both registries. */
