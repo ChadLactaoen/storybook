@@ -10,8 +10,12 @@ export interface ShortcutHandlers {
   addPassage: () => void
   deletePassage: () => void
   focusSearch: () => void
+  toggleBodyEditor: () => void
+  toggleCheatSheet: () => void
   openHelp: () => void
 }
+
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 
 function isTyping(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null
@@ -31,6 +35,9 @@ export function useShortcuts(handlers: ShortcutHandlers) {
   function onKeyDown(e: KeyboardEvent) {
     const mod = e.metaKey || e.ctrlKey
     const typing = isTyping(e.target)
+    // macOS gives Ctrl E and Ctrl K to the text field itself — end of line, and
+    // kill to end of line. The Cmd variants are ours; the Ctrl ones are not.
+    const nativeEditing = typing && IS_MAC && !e.metaKey
 
     if (mod) {
       switch (e.key) {
@@ -55,6 +62,20 @@ export function useShortcuts(handlers: ShortcutHandlers) {
         case 'f':
           e.preventDefault()
           handlers.focusSearch()
+          return
+        // Deliberately not behind the plain typing guard: both panels are
+        // reached with the cursor already in a text field, and the expanded
+        // editor focuses its own textarea, so a key that stood down while
+        // typing could open it but never close it again.
+        case 'e':
+          if (nativeEditing) return
+          e.preventDefault()
+          handlers.toggleBodyEditor()
+          return
+        case 'k':
+          if (nativeEditing) return
+          e.preventDefault()
+          handlers.toggleCheatSheet()
           return
         case 'z':
           if (typing) return

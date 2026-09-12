@@ -277,6 +277,65 @@ describe('the app renders', () => {
     expect(problems).toEqual([])
   })
 
+  it('toggles the pop-out and the cheat sheet from the keyboard', async () => {
+    mount()
+    store.newStory('Keyed')
+    const id = store.state.doc.nodes[0]!.id
+    store.characterCreate('Mira')
+    store.castAdd(id, 'Mira')
+    store.select(id)
+    await nextTick()
+
+    // Both are modified keys on purpose: the cursor is usually inside the body
+    // editor, where an unmodified key would type rather than close.
+    const press = async (key: string) => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey: true }))
+      await nextTick()
+    }
+
+    await press('e')
+    expect(host.querySelector('[aria-label="Edit passage body"]')).not.toBeNull()
+    await press('e')
+    expect(host.querySelector('[aria-label="Edit passage body"]')).toBeNull()
+
+    await press('k')
+    const cheat = host.querySelector('.cheat')!
+    expect(cheat).not.toBeNull()
+    expect(cheat.textContent).toContain('Mira')
+    await press('k')
+    expect(host.querySelector('.cheat')).toBeNull()
+
+    // The sidebar can be closed with the passage still selected; the key
+    // brings both back rather than doing nothing.
+    host.querySelector<HTMLButtonElement>('.inspector header .btn-icon')!.click()
+    await nextTick()
+    expect(host.querySelector('.inspector')).toBeNull()
+    await press('e')
+    await nextTick()
+    expect(host.querySelector('.inspector')).not.toBeNull()
+    expect(host.querySelector('[aria-label="Edit passage body"]')).not.toBeNull()
+    await press('e')
+
+    // A phantom is selectable but is not a passage: neither panel should open.
+    store.editBody(id, '[[Go|Cave]]')
+    store.removePassage(store.state.doc.nodes.find((n) => n.title === 'Cave')!.id)
+    store.select(store.layout.value.nodes.find((n) => n.isPhantom)!.id)
+    await nextTick()
+    await press('e')
+    await press('k')
+    expect(host.querySelector('[aria-label="Edit passage body"]')).toBeNull()
+    expect(host.querySelector('.cheat')).toBeNull()
+
+    // Nor with nothing selected at all.
+    store.select(null)
+    await nextTick()
+    await press('e')
+    await press('k')
+    expect(host.querySelector('[aria-label="Edit passage body"]')).toBeNull()
+    expect(host.querySelector('.cheat')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
   it('points a first-time author at the help panel, once', async () => {
     localStorage.clear()
     mount()

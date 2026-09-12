@@ -78,6 +78,15 @@ const isStart = computed(() => node.value?.id === store.state.doc.startNodeId)
  */
 const expanded = ref(false)
 
+// Driven from App.vue too, where the Cmd/Ctrl E shortcut lives. Guarded on the
+// same condition the aside is — `expanded` outlives a selection change, so
+// without it the dialog could be armed now and spring open later.
+defineExpose({
+  toggleExpanded: () => {
+    if (node.value && geom.value) expanded.value = !expanded.value
+  },
+})
+
 /* ---------- scene ---------- */
 
 const setting = computed({
