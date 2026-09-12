@@ -20,6 +20,7 @@ import type {
   TraitField,
 } from '../types/story'
 import { compareNodes, emptyDoc, nodeLabel } from '../types/story'
+import { prefs } from './prefs'
 
 const HISTORY_LIMIT = 100
 
@@ -399,13 +400,26 @@ function removeIds(ids: readonly string[]): string | null {
 
 /* ---------- passage edits ---------- */
 
+/**
+ * The author's inheritance preferences, in the shape the document layer takes.
+ *
+ * The single point where a preference crosses into `mutations.ts`, which is
+ * pure and must never read app state for itself.
+ */
+function inheritance(): M.InheritOptions {
+  return { setting: prefs.inheritSetting, characters: prefs.inheritCharacters }
+}
+
 export function addPassage(linkFrom?: string): string {
-  const parentSetting = linkFrom
-    ? (state.doc.nodes.find((n) => n.id === linkFrom)?.setting ?? '')
-    : ''
+  // Named `source` rather than `parent`: the block below needs its own lookup
+  // against the cloned document, and two bindings of the same name would be a
+  // quiet way to read from the wrong one.
+  const source = linkFrom ? (state.doc.nodes.find((n) => n.id === linkFrom) ?? null) : null
+  const inherit = inheritance()
   const { doc: withNode, node } = M.createNode(state.doc, {
     title: 'Untitled Passage',
-    setting: parentSetting,
+    setting: source && inherit.setting ? source.setting : '',
+    characters: source && inherit.characters ? source.characters.map((c) => c.name) : [],
   })
   let next = withNode
   if (linkFrom) {
@@ -451,7 +465,7 @@ export function editBody(id: string, body: string): void {
  * dangling. Lands as one undo step rather than one per keystroke.
  */
 export function resolveBody(id: string, bodyAtFocus: string): void {
-  commit(M.resolveLinks(state.doc, id, bodyAtFocus))
+  commit(M.resolveLinks(state.doc, id, bodyAtFocus, inheritance()))
 }
 
 export function changeState(id: string, value: NodeState): void {
@@ -474,7 +488,7 @@ export function renameStory(title: string): void {
 export function createFromPhantom(phantomId: string): void {
   const phantom = layout.value.graph.phantoms.find((p) => p.id === phantomId)
   if (!phantom) return
-  const next = M.materializePhantom(state.doc, phantom.code, phantom.label)
+  const next = M.materializePhantom(state.doc, phantom.code, phantom.label, inheritance())
   commit(next)
   select(next.nodes.find((n) => n.code === phantom.code)?.id ?? state.selectedId)
 }

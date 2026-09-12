@@ -71,12 +71,55 @@ function freeCode(taken: ReadonlySet<string>, seed: number): string {
 }
 
 /**
+ * What a passage created from another one copies across.
+ *
+ * An explicit argument rather than anything read from app state: this module is
+ * pure, and whether to inherit is an editor preference (`stores/prefs.ts`), not
+ * something the document knows. Both absent means inherit nothing, so a call
+ * site that says nothing gets the plain behaviour.
+ */
+export interface InheritOptions {
+  setting?: boolean
+  characters?: boolean
+}
+
+/**
+ * The cast a brand-new passage starts with, built from a list of names.
+ *
+ * Names rather than whole `SceneCharacter`s, and that is the point: a note is
+ * direction for one scene, so it can never be carried forward by accident, and
+ * a string cannot be aliased into the parent's array the way a shared object
+ * would be — the failure `clone()` warns about. Off-roster names are dropped on
+ * the same rule `addPassageCharacter` applies, and the result is stored in name
+ * order, which is what keeps the save file byte-stable.
+ */
+function castFrom(doc: StoryDoc, names: readonly string[] | undefined): SceneCharacter[] {
+  if (names === undefined || names.length === 0) return []
+  const roster = new Set(doc.characters.map((c) => c.name))
+  const seen = new Set<string>()
+  const out: SceneCharacter[] = []
+  for (const name of names) {
+    if (!roster.has(name) || seen.has(name)) continue
+    seen.add(name)
+    out.push({ name, note: '' })
+  }
+  return out.sort(compareByName)
+}
+
+/**
  * Create a passage. `opts.code` asks for a specific code and is honoured only if
  * it is free — a caller passing one got it from author text, which may collide.
  */
 export function createNode(
   doc: StoryDoc,
-  opts: { title?: string; code?: string; body?: string; setting?: string } = {},
+  opts: {
+    title?: string
+    code?: string
+    body?: string
+    setting?: string
+    /** Names only. Notes are per-scene and never reach a new passage. */
+    characters?: readonly string[]
+  } = {},
 ): { doc: StoryDoc; node: StoryNode } {
   const next = clone(doc)
   const taken = new Set(next.nodes.map((n) => n.code))
@@ -92,7 +135,7 @@ export function createNode(
     state: 'TODO',
     levelOffset: 0,
     setting: opts.setting?.trim() ?? '',
-    characters: [],
+    characters: castFrom(next, opts.characters),
   }
   next.nextId += 1
   next.nodes.push(node)
@@ -185,10 +228,20 @@ export function setBody(doc: StoryDoc, id: string, body: string): StoryDoc {
  * splices run right-to-left so earlier spans stay valid — the same discipline
  * `retargetLinks` follows.
  */
-export function resolveLinks(doc: StoryDoc, id: string, bodyAtFocus: string): StoryDoc {
+export function resolveLinks(
+  doc: StoryDoc,
+  id: string,
+  bodyAtFocus: string,
+  inherit: InheritOptions = {},
+): StoryDoc {
   const before = doc.nodes.find((n) => n.id === id)
   if (!before) return doc
   const body = before.body
+
+  // Snapshotted once, above the loop: every passage a single blur creates is
+  // written from the same parent, so they all start from the same scene.
+  const setting = inherit.setting === true ? before.setting : ''
+  const cast = inherit.characters === true ? before.characters.map((c) => c.name) : []
 
   const byCode = new Set(doc.nodes.map((n) => n.code))
   const previous = new Set(parseLinks(bodyAtFocus).map((l) => l.target))
@@ -206,8 +259,9 @@ export function resolveLinks(doc: StoryDoc, id: string, bodyAtFocus: string): St
       // `[[Head north]]`: the text is a title, and the code is ours to mint.
       let code = minted.get(target)
       if (code === undefined) {
-        // A passage written from here starts in the same place, until told otherwise.
-        const made = createNode(next, { title: target, setting: before.setting })
+        // A passage written from here starts in the same scene as the one that
+        // wrote it — but only as far as the author has asked it to.
+        const made = createNode(next, { title: target, setting, characters: cast })
         next = made.doc
         code = made.node.code
         minted.set(target, code)
@@ -216,7 +270,12 @@ export function resolveLinks(doc: StoryDoc, id: string, bodyAtFocus: string): St
       splices.push({ span: link.targetSpan, text: `${target}|${code}` })
     } else {
       // `[[Head north|3A]]`: the author named the code; the label is the title.
-      const made = createNode(next, { code: target, title: link.label, setting: before.setting })
+      const made = createNode(next, {
+        code: target,
+        title: link.label,
+        setting,
+        characters: cast,
+      })
       next = made.doc
       byCode.add(made.node.code)
     }
@@ -250,6 +309,43 @@ export function inheritedSetting(doc: StoryDoc, code: string): string {
   return agreed ?? ''
 }
 
+/** Whether two casts name the same people. Notes are not part of the question. */
+function sameNames(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((name, i) => name === b[i])
+}
+
+/**
+ * A passage's cast as a sorted name list — the comparable form of a cast.
+ *
+ * Sorted here rather than trusting that storage already is. Every write path
+ * does sort, but `inheritedCast` turns on this comparison, and a hand-edited
+ * file reaching it out of order would silently refuse to inherit.
+ */
+function castNames(node: StoryNode): string[] {
+  return node.characters.map((c) => c.name).sort(compareStr)
+}
+
+/**
+ * The cast a newly created passage should start with, given the passages that
+ * link to it.
+ *
+ * The same rule as `inheritedSetting`, for the same reason: a phantom can be
+ * linked from several passages with different people in them, and merging or
+ * picking one would plant wrong metadata silently. Ambiguity means don't guess.
+ * One parent with a cast and one without disagree, exactly as a blank setting
+ * disagrees with a filled one.
+ */
+export function inheritedCast(doc: StoryDoc, code: string): string[] {
+  let agreed: string[] | null = null
+  for (const n of doc.nodes) {
+    if (!parseLinks(n.body).some((l) => l.target === code)) continue
+    const names = castNames(n)
+    if (agreed === null) agreed = names
+    else if (!sameNames(agreed, names)) return []
+  }
+  return agreed ?? []
+}
+
 /**
  * Turn a phantom (a link with no passage behind it) into a real passage.
  *
@@ -261,12 +357,16 @@ export function materializePhantom(
   doc: StoryDoc,
   code: string,
   label?: string | null,
+  inherit: InheritOptions = {},
 ): StoryDoc {
   if (doc.nodes.some((n) => n.code === code)) return doc
+  // Gated here rather than inside the queries, so a preference that is off
+  // skips the graph walks entirely.
   return createNode(doc, {
     code,
     title: label?.trim() || code,
-    setting: inheritedSetting(doc, code),
+    setting: inherit.setting === true ? inheritedSetting(doc, code) : '',
+    characters: inherit.characters === true ? inheritedCast(doc, code) : [],
   }).doc
 }
 

@@ -8,6 +8,7 @@ import StartupDialog from './components/StartupDialog.vue'
 import StoryCanvas from './components/StoryCanvas.vue'
 import CharacterCheatSheet from './components/CharacterCheatSheet.vue'
 import CharacterSheet from './components/CharacterSheet.vue'
+import EditorSettings from './components/EditorSettings.vue'
 import HelpPanel from './components/HelpPanel.vue'
 import StoryIndexPanel from './components/StoryIndexPanel.vue'
 import { useShortcuts } from './composables/useShortcuts'
@@ -26,6 +27,16 @@ const inspectorOpen = ref(true)
  */
 const leftPanel = ref<'index' | 'cheat' | null>(null)
 const helpOpen = ref(false)
+const settingsOpen = ref(false)
+
+/**
+ * A full-screen modal owns the keyboard while it is up.
+ *
+ * Neither panel has a text field for the shortcut layer's `isTyping` guard to
+ * catch, so without this `n` would still create a passage and Delete would
+ * still delete one, behind the veil and out of sight.
+ */
+const modalOpen = computed(() => helpOpen.value || settingsOpen.value)
 
 function toggleIndex() {
   leftPanel.value = leftPanel.value === 'index' ? null : 'index'
@@ -139,6 +150,7 @@ useShortcuts({
   toggleBodyEditor: () => void toggleBodyEditor(),
   toggleCheatSheet,
   openHelp: () => (helpOpen.value = true),
+  modalOpen: () => modalOpen.value,
 })
 
 onMounted(() => {
@@ -183,6 +195,7 @@ function dismissNotices() {
       @toggle-minimap="showMinimap = !showMinimap"
       @toggle-index="toggleIndex"
       @open-help="openHelp"
+      @open-settings="settingsOpen = true"
     />
 
     <SearchFilterBar ref="searchBar" />
@@ -259,6 +272,8 @@ function dismissNotices() {
     <!-- Mounted once at the shell so both the index and a passage's cast open
          the same sheet. -->
     <HelpPanel v-if="helpOpen" @close="helpOpen = false" />
+
+    <EditorSettings v-if="settingsOpen" @close="settingsOpen = false" />
 
     <CharacterSheet
       v-if="store.state.openCharacter"

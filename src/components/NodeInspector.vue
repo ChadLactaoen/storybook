@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { formatCount } from '../lib/graph/paths'
+import { prefs } from '../stores/prefs'
 import * as store from '../stores/story'
 import type { NodeState, TagColor } from '../types/story'
 import { NODE_STATES, compareNodes, nodeLabel } from '../types/story'
@@ -143,6 +144,20 @@ const setting = computed({
   get: () => node.value?.setting ?? '',
   set: (v: string) => node.value && store.settingSet(node.value.id, v),
 })
+
+// Both hints are one element with a computed string rather than two `v-if`
+// paragraphs, so the section's shape never changes with a preference.
+const settingHint = computed(() =>
+  prefs.inheritSetting
+    ? 'New passages linked from here start in this setting.'
+    : 'This passage only. Editor settings can pass it on to new passages.',
+)
+
+const castHint = computed(() =>
+  prefs.inheritCharacters
+    ? 'New passages linked from here start with this cast. Notes here describe this scene only and are not copied.'
+    : 'Notes here describe this scene only. The cast list is shared story-wide.',
+)
 
 const castPicker = ref<InstanceType<typeof CharacterPicker> | null>(null)
 
@@ -336,7 +351,7 @@ const upBlockedBy = computed(() => store.blockingParent.value)
         <datalist id="known-settings">
           <option v-for="value in store.settingSuggestions.value" :key="value" :value="value" />
         </datalist>
-        <p class="hint">New passages linked from here start in this setting.</p>
+        <p class="hint">{{ settingHint }}</p>
       </section>
 
       <section>
@@ -350,7 +365,7 @@ const upBlockedBy = computed(() => store.blockingParent.value)
           @remove="store.castRemove(node.id, $event)"
           @note="castNote"
         />
-        <p class="hint">Notes here describe this scene only. The cast list is shared story-wide.</p>
+        <p class="hint">{{ castHint }}</p>
         <button
           v-if="node.characters.length > 0"
           class="cheat-link"

@@ -242,12 +242,18 @@ const style = computed(() => ({
   font-style: italic;
 }
 
+/* One row of chips; any that wrap past it are clipped, because a card's height
+   is a layout constant and extra tags must never grow it.
+   The cap has to clear a whole chip — 15px of text box (10px at line-height
+   1.5), plus 1px of padding and 1px of border top and bottom — or it shaves the
+   bottom border off and the chip reads as cut in half. The extra pixel is slack
+   against sub-pixel rounding; a second row would need 22px, so it stays hidden. */
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
   overflow: hidden;
-  max-height: 18px;
+  max-height: 20px;
 }
 
 .chip {

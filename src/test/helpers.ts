@@ -1,5 +1,5 @@
 import type { StoryDoc, StoryNode } from '../types/story'
-import { emptyDoc } from '../types/story'
+import { compareByName, emptyCharacter, emptyDoc } from '../types/story'
 
 /**
  * Build a document from a compact adjacency spec: `{ One: ['Two', 'Three'] }`
@@ -9,6 +9,10 @@ import { emptyDoc } from '../types/story'
  * unless `opts.codes` names one, and bodies link by code. A target that is not
  * itself a spec key is written verbatim, so `{ A: ['Ghost'] }` yields a phantom
  * whose code is `Ghost`.
+ *
+ * `opts.casts` also seeds the roster, in order of first appearance: a scene
+ * name that is not on `doc.characters` is off-invariant, and nothing built here
+ * should start out breaking one.
  */
 export function docFrom(
   spec: Record<string, string[]>,
@@ -16,12 +20,19 @@ export function docFrom(
     start?: string
     offsets?: Record<string, number>
     settings?: Record<string, string>
+    casts?: Record<string, string[]>
     codes?: Record<string, string>
   } = {},
 ): StoryDoc {
   const doc = emptyDoc('Test Story')
   const titles = Object.keys(spec)
   const codeOf = new Map(titles.map((t, i) => [t, opts.codes?.[t] ?? `P${i + 1}`]))
+
+  const roster: string[] = []
+  for (const names of Object.values(opts.casts ?? {})) {
+    for (const name of names) if (!roster.includes(name)) roster.push(name)
+  }
+  doc.characters = roster.map((name, i) => emptyCharacter(name, i))
 
   const nodes: StoryNode[] = titles.map((title, i) => ({
     id: String(i + 1),
@@ -32,7 +43,10 @@ export function docFrom(
     levelOffset: opts.offsets?.[title] ?? 0,
     setting: opts.settings?.[title] ?? '',
     code: codeOf.get(title)!,
-    characters: [],
+    // Name order, matching how a node's cast is always stored.
+    characters: (opts.casts?.[title] ?? [])
+      .map((name) => ({ name, note: '' }))
+      .sort(compareByName),
   }))
 
   doc.nodes = nodes
