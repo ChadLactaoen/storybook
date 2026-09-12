@@ -74,7 +74,8 @@ canonical JSON; **Import** reads it back.
 | `components` | lay out disconnected fragments separately, pack left to right |
 | `layered` | insert dummy nodes so multi-level edges route through inter-node gaps instead of across cards |
 | `ordering` / `crossings` | DFS seed, weighted-median sweeps, Barth–Jünger–Mutzel crossing counts |
-| `xcoord` | compact packing, then slack-clamped relaxation that centres parents over children |
+| `xcoord` | lay each component out, then pack them left to right |
+| `tidy` | bottom-up rigid-subtree placement: parents land on the midpoint of their outermost children — exactly so for a tree, best effort once a passage has two parents |
 | `routing` | C1-smooth cubics, straight-run collapse, arrowheads clipped to card boundaries |
 | `paths` | distinct path counts as BigInt (they grow exponentially) |
 

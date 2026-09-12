@@ -198,7 +198,6 @@ export interface LayoutConfig {
   layerSpacing: number
   margin: number
   orderingSweeps: number
-  relaxIterations: number
   transposeMaxLayerWidth: number
   coordPrecision: number
 }

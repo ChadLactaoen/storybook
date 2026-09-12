@@ -3,7 +3,8 @@ import { findBackEdges } from '../lib/graph/acyclic'
 import { deriveGraph } from '../lib/graph/derive'
 import { layoutStory } from '../lib/graph/layout'
 import { countPaths } from '../lib/graph/paths'
-import { docFrom, shuffled } from './helpers'
+import { NODE_GAP } from '../lib/graph/constants'
+import { docFrom, minCardGap, shuffled } from './helpers'
 
 const BINARY_3 = {
   Root: ['L', 'R'],
@@ -50,19 +51,7 @@ describe('determinism', () => {
 describe('geometry', () => {
   it('never overlaps two cards on the same level', () => {
     const res = layoutStory(docFrom(BINARY_3))
-    const byLayer = new Map<number, typeof res.nodes>()
-    for (const n of res.nodes) {
-      const list = byLayer.get(n.layer) ?? []
-      list.push(n)
-      byLayer.set(n.layer, list)
-    }
-    for (const list of byLayer.values()) {
-      const sorted = [...list].sort((a, b) => a.x - b.x)
-      for (let i = 0; i + 1 < sorted.length; i++) {
-        const gap = sorted[i + 1]!.x - sorted[i]!.x
-        expect(gap).toBeGreaterThanOrEqual(sorted[i]!.width - 0.01)
-      }
-    }
+    expect(minCardGap(res.nodes)).toBeGreaterThanOrEqual(NODE_GAP - 0.01)
   })
 
   it('puts every node on a level onto the same horizontal axis', () => {
@@ -106,6 +95,104 @@ describe('geometry', () => {
     const middle = res.nodes.find((n) => n.title === 'Middle')!
     const waypoint = long!.points[1]!
     expect(Math.abs(waypoint.x - middle.x)).toBeGreaterThan(middle.width / 2)
+  })
+
+  it('centres every parent between its outermost children', () => {
+    // Branches of unequal depth: the old packing left Start 64 units off, because
+    // relaxation could only use slack that compact packing happened to leave.
+    const spec: Record<string, string[]> = {
+      Start: ['Market', 'Docks', 'Temple', 'Gate'],
+      Market: ['Haggle', 'Steal'],
+      Docks: [],
+      Temple: ['Pray'],
+      Pray: ['Vision', 'Silence'],
+      Gate: [],
+      Haggle: [],
+      Steal: [],
+      Vision: [],
+      Silence: [],
+    }
+    const res = layoutStory(docFrom(spec))
+    const xOf = (title: string) => res.nodes.find((n) => n.title === title)!.x
+    for (const [parent, kids] of Object.entries(spec)) {
+      if (kids.length === 0) continue
+      const xs = kids.map(xOf)
+      expect(xOf(parent)).toBeCloseTo((Math.min(...xs) + Math.max(...xs)) / 2, 2)
+    }
+  })
+
+  it('centres a parent whose children sit beside a long edge', () => {
+    // Skip-level edges drop dummy nodes into the layers below. Those used to be
+    // placed first and freeze, walling in any card beside them.
+    const spec: Record<string, string[]> = {
+      Start: ['Wear', 'Drink', 'Camp'],
+      Wear: ['WearIt', 'DontWearIt'],
+      Drink: ['Coffee', 'Tea'],
+      WearIt: ['Camp'],
+      DontWearIt: [],
+      Coffee: [],
+      Tea: [],
+      Camp: [],
+    }
+    const res = layoutStory(docFrom(spec))
+    const at = (title: string) => res.nodes.find((n) => n.title === title)!
+    expect(res.stats.dummies).toBeGreaterThan(0)
+    expect(Math.abs(at('Wear').x - at('WearIt').x)).toBeCloseTo(
+      Math.abs(at('Wear').x - at('DontWearIt').x),
+      2,
+    )
+    expect(Math.abs(at('Drink').x - at('Coffee').x)).toBeCloseTo(
+      Math.abs(at('Drink').x - at('Tea').x),
+      2,
+    )
+  })
+
+  it('puts the merge point of a diamond between its two parents', () => {
+    // Both choices lead to the same passage — the commonest non-tree shape a
+    // story produces. The merge can only hang off one parent in the layout
+    // forest, so it is the mirrored second pass that pulls it back to the middle.
+    const res = layoutStory(docFrom({ A: ['B', 'C'], B: ['D'], C: ['D'], D: [] }))
+    const at = (title: string) => res.nodes.find((n) => n.title === title)!.x
+    expect(at('D')).toBeCloseTo((at('B') + at('C')) / 2, 2)
+    expect(at('A')).toBeCloseTo((at('B') + at('C')) / 2, 2)
+  })
+
+  it('puts a three-child parent on the middle child rather than on the mean', () => {
+    const res = layoutStory(docFrom({ P: ['A', 'B', 'C'], A: [], B: [], C: [] }))
+    const at = (title: string) => res.nodes.find((n) => n.title === title)!.x
+    expect(at('P')).toBeCloseTo(at('B'), 2)
+    expect(at('P')).toBeCloseTo((at('A') + at('C')) / 2, 2)
+  })
+
+  it('centres parents when a passage has been nudged down a level', () => {
+    // `levelOffset` is the one positional field in the document, and it can make
+    // a passage with no parents start below the top layer. Such a root is packed
+    // beside whole subtrees rather than inside one, which the mirrored pass has
+    // to agree about — otherwise the two candidates put it on opposite sides and
+    // averaging lands everything between two contradictory arrangements.
+    const res = layoutStory(
+      docFrom(
+        { Start: ['Mid', 'Other'], Mid: ['End'], Other: [], End: [], Side: ['End'] },
+        { offsets: { Side: 1 } },
+      ),
+    )
+    const at = (title: string) => res.nodes.find((n) => n.title === title)!.x
+    expect(at('Start')).toBeCloseTo((at('Mid') + at('Other')) / 2, 2)
+    expect(minCardGap(res.nodes)).toBeGreaterThanOrEqual(NODE_GAP - 0.01)
+  })
+
+  it('keeps cards clear of one another on a wide uneven tree', () => {
+    const res = layoutStory(
+      docFrom({
+        Start: ['One', 'Two', 'Three'],
+        One: ['OneA', 'OneB'],
+        Two: ['TwoA'],
+        Three: ['ThreeA', 'ThreeB', 'ThreeC'],
+        OneA: ['Deep'],
+        OneB: [], TwoA: [], ThreeA: [], ThreeB: [], ThreeC: [], Deep: [],
+      }),
+    )
+    expect(minCardGap(res.nodes)).toBeGreaterThanOrEqual(NODE_GAP - 0.01)
   })
 
   it('places disconnected fragments side by side rather than interleaved', () => {

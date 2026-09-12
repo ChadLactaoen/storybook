@@ -27,7 +27,6 @@ export const DEFAULT_CONFIG: LayoutConfig = {
   layerSpacing: LAYER_SPACING,
   margin: 80,
   orderingSweeps: 8,
-  relaxIterations: 8,
   transposeMaxLayerWidth: 200,
   coordPrecision: 2,
 }

@@ -342,4 +342,177 @@ describe('the app renders', () => {
     expect(host.querySelectorAll('.card .code')).toHaveLength(0)
     expect(problems).toEqual([])
   })
+
+  it('puts the body field directly under the title', async () => {
+    mount()
+    store.newStory('Render Check')
+    store.select(store.state.doc.nodes[0]!.id)
+    await nextTick()
+
+    const sections = [...host.querySelectorAll('.inspector .scroll > section')]
+    expect(sections[0]!.querySelector('#passage-title')).not.toBeNull()
+    expect(sections[1]!.querySelector('.editor')).not.toBeNull()
+    // Everything else, Code included, sits below the editor.
+    expect(sections[1]!.querySelector('#passage-code')).toBeNull()
+    expect(problems).toEqual([])
+  })
+})
+
+describe('the character cheat sheet', () => {
+  /** A passage casting two characters, with the cheat sheet opened on it. */
+  async function openOnCast() {
+    mount()
+    store.newStory('Cheat Check')
+    const id = store.state.doc.nodes[0]!.id
+    store.characterCreate('Mira')
+    store.characterCreate('Tam')
+    store.characterSetBio('Mira', "The innkeeper's daughter")
+    store.characterSetTrait('Mira', 'personality', ['Guarded'])
+    store.characterSetTrait('Mira', 'dialogue', ['Clipped sentences'])
+    store.relationAdd('Mira', 'Tam')
+    store.relationSetPoints('Mira', 'Tam', ['Owes him nothing'])
+    store.castAdd(id, 'Mira')
+    store.castAdd(id, 'Tam')
+    store.castSetNote(id, 'Mira', 'Furious.')
+    store.select(id)
+    await nextTick()
+
+    host.querySelector<HTMLButtonElement>('.inspector .cheat-link')!.click()
+    await nextTick()
+    return id
+  }
+
+  function groupLabel(text: string) {
+    return [...host.querySelectorAll<HTMLButtonElement>('.cheat .group-label')].find((b) =>
+      b.textContent!.includes(text),
+    )!
+  }
+
+  it('opens on the left from the passage sidebar, showing the cast', async () => {
+    await openOnCast()
+
+    const panel = host.querySelector('.cheat')!
+    expect(panel).not.toBeNull()
+    expect(host.querySelector('main')!.firstElementChild).toBe(panel)
+
+    const text = panel.textContent!.replace(/\s+/g, ' ')
+    expect(text).toContain('Cast of Start')
+    expect(text).toContain('Mira')
+    expect(text).toContain('Tam')
+    expect(text).toContain("The innkeeper's daughter")
+    expect(text).toContain('In this scene: Furious.')
+    expect(text).toContain('Personality')
+    expect(text).toContain('Guarded')
+    expect(text).toContain('Dialogue characteristics')
+    expect(text).toContain('Relations')
+    expect(text).toContain('Owes him nothing')
+    // Tam is also on stage, so the relation is flagged as live here.
+    expect(panel.querySelector('.here')).not.toBeNull()
+    // Tam has nothing written, so his card says so rather than rendering empty.
+    expect(text).toContain('No direction written yet.')
+    expect(problems).toEqual([])
+  })
+
+  it('shows only one left panel at a time', async () => {
+    await openOnCast()
+
+    const indexButton = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === 'Cast & Settings',
+    )!
+    indexButton.click()
+    await nextTick()
+    expect(host.querySelector('.cheat')).toBeNull()
+    expect(host.querySelector('.index')).not.toBeNull()
+
+    indexButton.click()
+    await nextTick()
+    expect(host.querySelector('.index')).toBeNull()
+    expect(host.querySelector('.cheat')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('closes from its own button, leaving the passage sidebar up', async () => {
+    await openOnCast()
+
+    host.querySelector<HTMLButtonElement>('.cheat header .btn-icon')!.click()
+    await nextTick()
+    expect(host.querySelector('.cheat')).toBeNull()
+    expect(host.querySelector('.inspector')).not.toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('folds one subsection without touching the others', async () => {
+    await openOnCast()
+
+    expect(groupLabel('Personality').nextElementSibling!.textContent).toContain('Guarded')
+
+    groupLabel('Personality').click()
+    await nextTick()
+    expect(groupLabel('Personality').nextElementSibling).toBeNull()
+    // The sibling group, and the same group on nobody else, stays open.
+    expect(groupLabel('Dialogue characteristics').nextElementSibling!.textContent).toContain(
+      'Clipped sentences',
+    )
+
+    groupLabel('Personality').click()
+    await nextTick()
+    expect(groupLabel('Personality').nextElementSibling!.textContent).toContain('Guarded')
+    expect(problems).toEqual([])
+  })
+
+  it('follows the selection, and forgets the folds with it', async () => {
+    const id = await openOnCast()
+    groupLabel('Personality').click()
+    await nextTick()
+    expect(groupLabel('Personality').nextElementSibling).toBeNull()
+
+    store.editBody(id, '[[Go|Two]]')
+    const two = store.state.doc.nodes.find((n) => n.title === 'Two')!.id
+    store.castAdd(two, 'Mira')
+    store.select(two)
+    await nextTick()
+
+    const panel = host.querySelector('.cheat')!
+    expect(panel).not.toBeNull()
+    expect(panel.textContent).toContain('Cast of Two')
+    expect(groupLabel('Personality').nextElementSibling!.textContent).toContain('Guarded')
+    expect(problems).toEqual([])
+  })
+
+  it('closes with the passage sidebar, and does not come back with it', async () => {
+    await openOnCast()
+
+    host.querySelector<HTMLButtonElement>('.inspector header .btn-icon')!.click()
+    await nextTick()
+    expect(host.querySelector('.inspector')).toBeNull()
+    expect(host.querySelector('.cheat')).toBeNull()
+
+    const reopen = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === 'Show passage',
+    )!
+    reopen.click()
+    await nextTick()
+    expect(host.querySelector('.inspector')).not.toBeNull()
+    expect(host.querySelector('.cheat')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('closes when the selection is cleared', async () => {
+    await openOnCast()
+
+    store.select(null)
+    await nextTick()
+    expect(host.querySelector('.cheat')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('offers no way in from a passage with no cast', async () => {
+    mount()
+    store.newStory('Cheat Check')
+    store.select(store.state.doc.nodes[0]!.id)
+    await nextTick()
+
+    expect(host.querySelector('.inspector .cheat-link')).toBeNull()
+    expect(problems).toEqual([])
+  })
 })

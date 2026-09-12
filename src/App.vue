@@ -6,6 +6,7 @@ import NodeInspector from './components/NodeInspector.vue'
 import SearchFilterBar from './components/SearchFilterBar.vue'
 import StartupDialog from './components/StartupDialog.vue'
 import StoryCanvas from './components/StoryCanvas.vue'
+import CharacterCheatSheet from './components/CharacterCheatSheet.vue'
 import CharacterSheet from './components/CharacterSheet.vue'
 import HelpPanel from './components/HelpPanel.vue'
 import StoryIndexPanel from './components/StoryIndexPanel.vue'
@@ -17,8 +18,26 @@ import type { NodeState } from './types/story'
 const canvasEl = ref<HTMLElement | null>(null)
 const searchBar = ref<InstanceType<typeof SearchFilterBar> | null>(null)
 const inspectorOpen = ref(true)
-const indexOpen = ref(false)
+/**
+ * The left gutter holds one panel at a time. A single ref rather than a boolean
+ * each: mutual exclusion is then structural, and opening the cheat sheet cannot
+ * leave the index standing behind it.
+ */
+const leftPanel = ref<'index' | 'cheat' | null>(null)
 const helpOpen = ref(false)
+
+function toggleIndex() {
+  leftPanel.value = leftPanel.value === 'index' ? null : 'index'
+}
+
+// The cheat sheet is a companion to the passage sidebar: it has no meaning once
+// that sidebar is gone, whether it was closed or the selection was cleared.
+watch(
+  () => inspectorOpen.value && store.selected.value !== null,
+  (showing) => {
+    if (!showing && leftPanel.value === 'cheat') leftPanel.value = null
+  },
+)
 
 /**
  * Shown once, under the toolbar, on a story the author has not built out yet.
@@ -131,7 +150,7 @@ function dismissNotices() {
       @reset-zoom="vp.resetZoom"
       @toggle-levels="showLevels = !showLevels"
       @toggle-minimap="showMinimap = !showMinimap"
-      @toggle-index="indexOpen = !indexOpen"
+      @toggle-index="toggleIndex"
       @open-help="openHelp"
     />
 
@@ -151,7 +170,8 @@ function dismissNotices() {
     </div>
 
     <main>
-      <StoryIndexPanel v-if="indexOpen" @close="indexOpen = false" />
+      <StoryIndexPanel v-if="leftPanel === 'index'" @close="leftPanel = null" />
+      <CharacterCheatSheet v-if="leftPanel === 'cheat'" @close="leftPanel = null" />
 
       <div ref="canvasEl" class="stage">
         <StoryCanvas
@@ -196,7 +216,11 @@ function dismissNotices() {
         </button>
       </div>
 
-      <NodeInspector v-if="inspectorOpen" @close="inspectorOpen = false" />
+      <NodeInspector
+        v-if="inspectorOpen"
+        @close="inspectorOpen = false"
+        @cheat-sheet="leftPanel = 'cheat'"
+      />
     </main>
 
     <!-- Mounted once at the shell so both the index and a passage's cast open

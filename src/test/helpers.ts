@@ -66,3 +66,26 @@ export function levelsByTitle(
   }
   return out
 }
+
+/**
+ * Smallest edge-to-edge gap between two cards on the same level, across the
+ * whole drawing. Measured edge to edge rather than centre to centre, which is
+ * the only form that stays correct if cards ever differ in width.
+ */
+export function minCardGap(nodes: readonly { x: number; width: number; layer: number }[]): number {
+  const byLayer = new Map<number, { x: number; width: number }[]>()
+  for (const n of nodes) {
+    const list = byLayer.get(n.layer) ?? []
+    list.push(n)
+    byLayer.set(n.layer, list)
+  }
+  let min = Infinity
+  for (const list of byLayer.values()) {
+    const sorted = [...list].sort((a, b) => a.x - b.x)
+    for (let i = 0; i + 1 < sorted.length; i++) {
+      const gap = sorted[i + 1]!.x - sorted[i + 1]!.width / 2 - (sorted[i]!.x + sorted[i]!.width / 2)
+      if (gap < min) min = gap
+    }
+  }
+  return min
+}

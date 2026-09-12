@@ -53,7 +53,7 @@ participate fully in layout but exist only in the derived graph.
 | `src/components/`, `src/composables/` | Presentation; viewport pan/zoom and global shortcuts |
 
 The graph pipeline runs `derive → acyclic → layering → components → layered → ordering /
-crossings → xcoord → routing` (each a module of that name); `paths.ts` counts distinct
+crossings → xcoord / tidy → routing` (each a module of that name); `paths.ts` counts distinct
 paths as `BigInt`. `README.md` has a per-module table.
 
 ### Rules that are load-bearing

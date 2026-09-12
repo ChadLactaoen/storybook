@@ -9,7 +9,7 @@ import CharacterPicker from './CharacterPicker.vue'
 import HarloweEditor from './HarloweEditor.vue'
 import TagPicker from './TagPicker.vue'
 
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; cheatSheet: [] }>()
 
 const node = store.selected
 const geom = store.selectedLayout
@@ -140,6 +140,20 @@ const upBlockedBy = computed(() => store.blockingParent.value)
         </p>
       </section>
 
+      <section class="grow">
+        <div class="body-head">
+          <span class="label">Body <span class="muted">Harlowe</span></span>
+          <button class="expand" title="Edit in a larger window" @click="expanded = true">
+            &#10530; Expand
+          </button>
+        </div>
+        <p class="hint above">
+          Link with <code>[[Text|Target]]</code>, <code>[[Text-&gt;Target]]</code> or
+          <code>[[Target&lt;-Text]]</code>. Linking to a passage that doesn&rsquo;t exist creates it.
+        </p>
+        <HarloweEditor v-model="body" />
+      </section>
+
       <section>
         <label class="label" for="passage-code">Code</label>
         <input
@@ -214,6 +228,14 @@ const upBlockedBy = computed(() => store.blockingParent.value)
           @note="castNote"
         />
         <p class="hint">Notes here describe this scene only. The cast list is shared story-wide.</p>
+        <button
+          v-if="node.characters.length > 0"
+          class="cheat-link"
+          title="Every cast member's traits and relations, side by side"
+          @click="emit('cheatSheet')"
+        >
+          Character Cheat Sheet
+        </button>
       </section>
 
       <section>
@@ -261,20 +283,6 @@ const upBlockedBy = computed(() => store.blockingParent.value)
             the deepest passage that links to it.
           </template>
         </p>
-      </section>
-
-      <section class="grow">
-        <div class="body-head">
-          <span class="label">Body <span class="muted">Harlowe</span></span>
-          <button class="expand" title="Edit in a larger window" @click="expanded = true">
-            &#10530; Expand
-          </button>
-        </div>
-        <p class="hint above">
-          Link with <code>[[Text|Target]]</code>, <code>[[Text-&gt;Target]]</code> or
-          <code>[[Target&lt;-Text]]</code>. Linking to a passage that doesn&rsquo;t exist creates it.
-        </p>
-        <HarloweEditor v-model="body" />
       </section>
 
       <section class="stats">
@@ -394,6 +402,21 @@ section.grow {
 .expand:hover {
   background: var(--bg);
   color: var(--accent);
+}
+
+/* `.link` is scoped to CharacterPicker rather than global, so this repeats it
+   rather than reaching for a class that does not exist here. */
+.cheat-link {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.cheat-link:hover {
+  text-decoration: underline;
 }
 
 /* Sits between the label and the editor, so it needs the spacing inverted. */
