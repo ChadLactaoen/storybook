@@ -15,6 +15,7 @@ const emit = defineEmits<{
   toggleMinimap: []
   toggleIndex: []
   openHelp: []
+  openSettings: []
 }>()
 
 const editingTitle = ref(false)
@@ -150,6 +151,9 @@ async function onFile(e: Event) {
       <button class="btn btn-icon help" title="How Storybook works (?)" @click="emit('openHelp')">
         ?
       </button>
+      <button class="btn btn-icon gear" title="Settings" @click="emit('openSettings')">
+        &#9881;
+      </button>
       <input ref="fileInput" type="file" accept="application/json,.json" hidden @change="onFile" />
     </div>
   </header>
@@ -219,6 +223,15 @@ async function onFile(e: Event) {
 .help {
   font-weight: 700;
   color: var(--accent);
+}
+
+/* The button box is fixed by .btn/.btn-icon at 28px square, so the glyph can be
+   sized freely. line-height is pinned because the inherited 1.45 would other-
+   wise scale with it and nudge the icon off centre. */
+.gear {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-dim);
 }
 
 .zoom {

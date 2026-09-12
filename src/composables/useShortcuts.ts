@@ -14,6 +14,8 @@ export interface ShortcutHandlers {
   toggleBodyEditor: () => void
   toggleCheatSheet: () => void
   openHelp: () => void
+  /** True while a full-screen modal is up; the unmodified keys stand down. */
+  modalOpen: () => boolean
 }
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
@@ -95,6 +97,10 @@ export function useShortcuts(handlers: ShortcutHandlers) {
     }
 
     if (typing) return
+    // A modal owns the keyboard while it is up, and handles Escape itself. Only
+    // the bare keys below stand down — Cmd Z and the zoom keys still belong to
+    // the canvas underneath.
+    if (handlers.modalOpen()) return
 
     if (e.key === '?') {
       e.preventDefault()

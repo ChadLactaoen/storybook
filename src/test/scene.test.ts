@@ -5,10 +5,12 @@ import {
   createCharacter,
   createNode,
   deleteCharacter,
+  inheritedCast,
   inheritedSetting,
   moveCharacter,
   materializePhantom,
   renameCharacter,
+  removePassageCharacter,
   renameSetting,
   resolveLinks,
   setBody,
@@ -41,12 +43,24 @@ function settingOf(doc: StoryDoc, title: string): string {
   return doc.nodes.find((n) => n.title === title)!.setting
 }
 
+/** Inheritance is opt-in, so most of these have to ask for it. */
+const INHERIT_SETTING = { setting: true }
+
 describe('setting inheritance', () => {
-  it('gives a passage created by a new link its parent’s setting', () => {
+  it('inherits nothing unless asked', () => {
     let doc = createNode(emptyDoc(), { title: 'Tavern Door' }).doc
     const id = doc.nodes[0]!.id
     doc = setSetting(doc, id, 'The Rusty Anchor')
     doc = resolveLinks(setBody(doc, id, '[[Common Room]]'), id, '')
+
+    expect(settingOf(doc, 'Common Room')).toBe('')
+  })
+
+  it('gives a passage created by a new link its parent’s setting', () => {
+    let doc = createNode(emptyDoc(), { title: 'Tavern Door' }).doc
+    const id = doc.nodes[0]!.id
+    doc = setSetting(doc, id, 'The Rusty Anchor')
+    doc = resolveLinks(setBody(doc, id, '[[Common Room]]'), id, '', INHERIT_SETTING)
 
     expect(settingOf(doc, 'Common Room')).toBe('The Rusty Anchor')
   })
@@ -55,12 +69,17 @@ describe('setting inheritance', () => {
     let doc = createNode(emptyDoc(), { title: 'Tavern Door' }).doc
     const parent = doc.nodes[0]!.id
     doc = setSetting(doc, parent, 'The Rusty Anchor')
-    doc = resolveLinks(setBody(doc, parent, '[[Common Room]]'), parent, '')
+    doc = resolveLinks(setBody(doc, parent, '[[Common Room]]'), parent, '', INHERIT_SETTING)
     const bound = doc.nodes.find((n) => n.id === parent)!.body
 
     doc = setSetting(doc, idOf(doc, 'Common Room'), 'The Cellar')
     // Editing the parent again must not re-inherit onto an existing passage.
-    doc = resolveLinks(setBody(doc, parent, `More prose.\n${bound}`), parent, bound)
+    doc = resolveLinks(
+      setBody(doc, parent, `More prose.\n${bound}`),
+      parent,
+      bound,
+      INHERIT_SETTING,
+    )
 
     expect(settingOf(doc, 'Common Room')).toBe('The Cellar')
   })
@@ -71,7 +90,11 @@ describe('setting inheritance', () => {
       { settings: { North: 'The Moors', South: 'The Moors' } },
     )
     expect(inheritedSetting(agreeing, 'Cave')).toBe('The Moors')
-    expect(settingOf(materializePhantom(agreeing, 'Cave'), 'Cave')).toBe('The Moors')
+    expect(settingOf(materializePhantom(agreeing, 'Cave', null, INHERIT_SETTING), 'Cave')).toBe(
+      'The Moors',
+    )
+    // ...and not at all with the preference off.
+    expect(settingOf(materializePhantom(agreeing, 'Cave'), 'Cave')).toBe('')
 
     const disagreeing = docFrom(
       { North: ['Cave'], South: ['Cave'] },
@@ -79,12 +102,177 @@ describe('setting inheritance', () => {
     )
     // Two parents in different places: guessing one would plant wrong metadata.
     expect(inheritedSetting(disagreeing, 'Cave')).toBe('')
-    expect(settingOf(materializePhantom(disagreeing, 'Cave'), 'Cave')).toBe('')
+    expect(settingOf(materializePhantom(disagreeing, 'Cave', null, INHERIT_SETTING), 'Cave')).toBe(
+      '',
+    )
   })
 
   it('leaves a passage created with no parent blank', () => {
     const doc = createNode(docFrom({ A: [] }, { settings: { A: 'Somewhere' } })).doc
     expect(doc.nodes.find((n) => n.title === 'Untitled Passage')!.setting).toBe('')
+  })
+})
+
+describe('cast inheritance', () => {
+  const INHERIT_CAST = { characters: true }
+
+  const castOf = (doc: StoryDoc, title: string) =>
+    doc.nodes.find((n) => n.title === title)!.characters
+
+  const namesOf = (doc: StoryDoc, title: string) => castOf(doc, title).map((c) => c.name)
+
+  /** One passage with Mira and Tam in it, each carrying a scene note. */
+  function peopled(): StoryDoc {
+    let doc = createNode(emptyDoc(), { title: 'Tavern Door' }).doc
+    const id = doc.nodes[0]!.id
+    doc = createCharacter(doc, 'Mira').doc
+    doc = createCharacter(doc, 'Tam').doc
+    doc = addPassageCharacter(doc, id, 'Mira')
+    doc = addPassageCharacter(doc, id, 'Tam')
+    doc = setPassageCharacterNote(doc, id, 'Mira', 'Furious.')
+    return doc
+  }
+
+  it('inherits nothing unless asked', () => {
+    const doc = peopled()
+    const id = doc.nodes[0]!.id
+    const next = resolveLinks(setBody(doc, id, '[[Common Room]]'), id, '')
+
+    expect(castOf(next, 'Common Room')).toEqual([])
+  })
+
+  it('carries the parent’s cast onto a passage created by a new link', () => {
+    const doc = peopled()
+    const id = doc.nodes[0]!.id
+    const next = resolveLinks(setBody(doc, id, '[[Common Room]]'), id, '', INHERIT_CAST)
+
+    expect(namesOf(next, 'Common Room')).toEqual(['Mira', 'Tam'])
+  })
+
+  it('never carries a scene note forward', () => {
+    const doc = peopled()
+    const id = doc.nodes[0]!.id
+    const next = resolveLinks(setBody(doc, id, '[[Common Room]]'), id, '', INHERIT_CAST)
+
+    // "Furious." is direction for the tavern door, not for wherever they go next.
+    expect(castOf(next, 'Common Room')).toEqual([
+      { name: 'Mira', note: '' },
+      { name: 'Tam', note: '' },
+    ])
+    expect(castOf(next, 'Tavern Door').find((c) => c.name === 'Mira')!.note).toBe('Furious.')
+  })
+
+  it('gives the child its own objects, so neither can rewrite the other', () => {
+    const doc = peopled()
+    const id = doc.nodes[0]!.id
+    let next = resolveLinks(setBody(doc, id, '[[Common Room]]'), id, '', INHERIT_CAST)
+    const child = idOf(next, 'Common Room')
+
+    next = setPassageCharacterNote(next, child, 'Mira', 'Calmer now.')
+
+    // The clone() aliasing failure: a shared object would have moved both.
+    expect(castOf(next, 'Tavern Door').find((c) => c.name === 'Mira')!.note).toBe('Furious.')
+    expect(castOf(next, 'Common Room').find((c) => c.name === 'Mira')!.note).toBe('Calmer now.')
+  })
+
+  it('lets the child override without the parent clawing it back', () => {
+    const doc = peopled()
+    const parent = doc.nodes[0]!.id
+    let next = resolveLinks(setBody(doc, parent, '[[Common Room]]'), parent, '', INHERIT_CAST)
+    const bound = next.nodes.find((n) => n.id === parent)!.body
+
+    next = removePassageCharacter(next, idOf(next, 'Common Room'), 'Tam')
+    next = resolveLinks(
+      setBody(next, parent, `More prose.\n${bound}`),
+      parent,
+      bound,
+      INHERIT_CAST,
+    )
+
+    expect(namesOf(next, 'Common Room')).toEqual(['Mira'])
+  })
+
+  it('stores an inherited cast in name order, not roster order', () => {
+    let doc = docFrom({ One: [] })
+    for (const name of ['Zeno', 'Mira', 'Bandit']) doc = createCharacter(doc, name).doc
+    const id = idOf(doc, 'One')
+    for (const name of ['Zeno', 'Mira', 'Bandit']) doc = addPassageCharacter(doc, id, name)
+
+    const next = resolveLinks(setBody(doc, id, '[[Two]]'), id, '', INHERIT_CAST)
+    expect(namesOf(next, 'Two')).toEqual(['Bandit', 'Mira', 'Zeno'])
+  })
+
+  it('drops a name the roster does not have', () => {
+    // A hand-edited document can hold one; the invariant says a new passage
+    // must not spread it any further.
+    const doc = docFrom({ One: ['Cave'] }, { casts: { One: ['Mira'] } })
+    const stray: StoryDoc = {
+      ...doc,
+      nodes: doc.nodes.map((n) =>
+        n.title === 'One' ? { ...n, characters: [...n.characters, { name: 'Ghost', note: '' }] } : n,
+      ),
+    }
+    const id = idOf(stray, 'One')
+
+    // The query still reports what the parents say; `createNode` is what refuses
+    // to write an off-roster name onto a new passage.
+    expect(inheritedCast(stray, 'Cave')).toEqual(['Ghost', 'Mira'])
+    expect(namesOf(materializePhantom(stray, 'Cave', null, INHERIT_CAST), 'Cave')).toEqual(['Mira'])
+    expect(namesOf(resolveLinks(setBody(stray, id, '[[Cellar]]'), id, '', INHERIT_CAST), 'Cellar'))
+      .toEqual(['Mira'])
+  })
+
+  it('gives every passage one blur creates the same cast', () => {
+    const doc = peopled()
+    const id = doc.nodes[0]!.id
+    const next = resolveLinks(setBody(doc, id, '[[Cellar]]\n[[Yard]]'), id, '', INHERIT_CAST)
+
+    expect(namesOf(next, 'Cellar')).toEqual(['Mira', 'Tam'])
+    expect(namesOf(next, 'Yard')).toEqual(['Mira', 'Tam'])
+  })
+
+  it('inherits into a phantom only when every parent agrees', () => {
+    const agreeing = docFrom(
+      { North: ['Cave'], South: ['Cave'] },
+      { casts: { North: ['Mira', 'Tam'], South: ['Tam', 'Mira'] } },
+    )
+    expect(inheritedCast(agreeing, 'Cave')).toEqual(['Mira', 'Tam'])
+    expect(namesOf(materializePhantom(agreeing, 'Cave', null, INHERIT_CAST), 'Cave')).toEqual([
+      'Mira',
+      'Tam',
+    ])
+    // ...and not at all with the preference off.
+    expect(namesOf(materializePhantom(agreeing, 'Cave'), 'Cave')).toEqual([])
+
+    const disagreeing = docFrom(
+      { North: ['Cave'], South: ['Cave'] },
+      { casts: { North: ['Mira', 'Tam'], South: ['Mira'] } },
+    )
+    expect(inheritedCast(disagreeing, 'Cave')).toEqual([])
+    expect(namesOf(materializePhantom(disagreeing, 'Cave', null, INHERIT_CAST), 'Cave')).toEqual([])
+  })
+
+  it('counts an empty parent as a disagreement, the way a blank setting does', () => {
+    const doc = docFrom({ North: ['Cave'], South: ['Cave'] }, { casts: { North: ['Mira'] } })
+    expect(inheritedCast(doc, 'Cave')).toEqual([])
+  })
+
+  it('leaves a passage created with no parent empty', () => {
+    expect(inheritedCast(docFrom({ A: [] }, { casts: { A: ['Mira'] } }), 'Nowhere')).toEqual([])
+  })
+
+  it('is independent of the setting preference', () => {
+    let doc = peopled()
+    const id = doc.nodes[0]!.id
+    doc = setSetting(doc, id, 'The Rusty Anchor')
+
+    const castOnly = resolveLinks(setBody(doc, id, '[[Cellar]]'), id, '', INHERIT_CAST)
+    expect(settingOf(castOnly, 'Cellar')).toBe('')
+    expect(namesOf(castOnly, 'Cellar')).toEqual(['Mira', 'Tam'])
+
+    const settingOnly = resolveLinks(setBody(doc, id, '[[Cellar]]'), id, '', { setting: true })
+    expect(settingOf(settingOnly, 'Cellar')).toBe('The Rusty Anchor')
+    expect(namesOf(settingOnly, 'Cellar')).toEqual([])
   })
 })
 

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import type { App as VueApp } from 'vue'
 import App from '../App.vue'
+import { resetPrefs } from '../stores/prefs'
 import * as store from '../stores/story'
 
 /**
@@ -40,6 +41,9 @@ beforeEach(() => {
   // silently dims everything in the next.
   store.clearFilters()
   store.closeCharacterSheet()
+  // Preferences are a module singleton too: without this, a toggle flipped by
+  // one test silently changes what the next one creates.
+  resetPrefs()
 })
 
 afterEach(() => {
@@ -553,6 +557,111 @@ describe('the app renders', () => {
     expect(sections[0]!.querySelector('#passage-code')).not.toBeNull()
     expect(sections[1]!.querySelector('#passage-title')).not.toBeNull()
     expect(sections[2]!.querySelector('.editor')).not.toBeNull()
+    expect(problems).toEqual([])
+  })
+})
+
+describe('editor settings', () => {
+  const gear = () =>
+    [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === '\u2699')!
+
+  const panel = () => host.querySelector('[aria-label="Editor settings"]')
+
+  const boxes = () => [...host.querySelectorAll<HTMLInputElement>('[aria-label="Editor settings"] input')]
+
+  async function openSettings() {
+    mount()
+    store.newStory('Settings Check')
+    await nextTick()
+    gear().click()
+    await nextTick()
+  }
+
+  it('opens from the toolbar with every toggle off', async () => {
+    await openSettings()
+
+    expect(panel()).not.toBeNull()
+    expect(boxes()).toHaveLength(2)
+    expect(boxes().map((b) => b.checked)).toEqual([false, false])
+    expect(problems).toEqual([])
+  })
+
+  it('persists a toggle without touching the story or its history', async () => {
+    await openSettings()
+    const hash = store.layout.value.stats.hash
+    const undoable = store.canUndo.value
+
+    boxes()[0]!.checked = true
+    boxes()[0]!.dispatchEvent(new Event('change'))
+    await nextTick()
+
+    expect(boxes()[0]!.checked).toBe(true)
+    expect(localStorage.getItem('storybook.prefs.v1')).toContain('"inheritSetting":true')
+    // A preference is not a document edit: no undo step, no relayout.
+    expect(store.canUndo.value).toBe(undoable)
+    expect(store.layout.value.stats.hash).toBe(hash)
+    expect(problems).toEqual([])
+  })
+
+  it('closes on Escape, and keeps the keyboard while it is up', async () => {
+    await openSettings()
+    const before = store.state.doc.nodes.length
+
+    // `n` would otherwise create a passage behind the veil, out of sight.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n' }))
+    await nextTick()
+    expect(store.state.doc.nodes).toHaveLength(before)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await nextTick()
+    expect(panel()).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('carries the setting and the cast into a new passage once turned on', async () => {
+    await openSettings()
+    const id = store.state.doc.nodes[0]!.id
+
+    for (const box of boxes()) {
+      box.checked = true
+      box.dispatchEvent(new Event('change'))
+    }
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('[aria-label="Editor settings"] .btn-primary')!.click()
+    await nextTick()
+
+    store.settingSet(id, 'The Rusty Anchor')
+    store.characterCreate('Mira')
+    store.castAdd(id, 'Mira')
+    store.castSetNote(id, 'Mira', 'Furious.')
+
+    const madeId = store.addPassage(id)
+    const made = store.state.doc.nodes.find((n) => n.id === madeId)!
+    expect(made.setting).toBe('The Rusty Anchor')
+    expect(made.characters).toEqual([{ name: 'Mira', note: '' }])
+
+    // The sidebar now says so, where a moment ago it said the opposite.
+    store.select(id)
+    await nextTick()
+    expect(host.querySelector('.inspector')!.textContent).toContain(
+      'New passages linked from here start with this cast',
+    )
+    expect(problems).toEqual([])
+  })
+
+  it('inherits nothing while the toggles are off', async () => {
+    mount()
+    store.newStory('Settings Check')
+    const id = store.state.doc.nodes[0]!.id
+    store.settingSet(id, 'The Rusty Anchor')
+    store.characterCreate('Mira')
+    store.castAdd(id, 'Mira')
+    await nextTick()
+
+    const madeId = store.addPassage(id)
+    const made = store.state.doc.nodes.find((n) => n.id === madeId)!
+    expect(made.setting).toBe('')
+    expect(made.characters).toEqual([])
     expect(problems).toEqual([])
   })
 })
