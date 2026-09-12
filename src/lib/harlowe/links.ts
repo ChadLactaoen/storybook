@@ -135,3 +135,28 @@ export function retargetLinks(body: string, from: string, to: string): string {
 export function linksTo(body: string, target: string): boolean {
   return parseLinks(body).some((l) => l.target === target)
 }
+
+/**
+ * Build link text pointing at `target`, optionally shown as `label`.
+ *
+ * The pipe form is the one written here because it is the one the app teaches
+ * everywhere else — the help panel, the editor hints and the test helpers all
+ * use it. A label equal to the target, or an empty one, collapses to the bare
+ * `[[Target]]` form rather than writing `[[Cave|Cave]]`.
+ *
+ * A target containing `]]`, `|` or an arrow cannot be expressed as a link at
+ * all, so those characters are stripped rather than emitting text that
+ * `parseLinks` would read back as something else.
+ */
+export function buildLink(target: string, label?: string | null): string {
+  const safeTarget = sanitize(target)
+  if (safeTarget.length === 0) return ''
+  const safeLabel = sanitize(label ?? '')
+  if (safeLabel.length === 0 || safeLabel === safeTarget) return `[[${safeTarget}]]`
+  return `[[${safeLabel}|${safeTarget}]]`
+}
+
+/** Strip the delimiters that would make link text parse as a different link. */
+function sanitize(text: string): string {
+  return text.replace(/\]\]|\[\[|->|<-|\|/g, ' ').replace(/\s+/g, ' ').trim()
+}

@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { formatCount } from '../lib/graph/paths'
 import * as store from '../stores/story'
 import type { NodeState, TagColor } from '../types/story'
-import { NODE_STATES } from '../types/story'
+import { NODE_STATES, compareStr } from '../types/story'
 import BodyDialog from './BodyDialog.vue'
 import CharacterPicker from './CharacterPicker.vue'
 import HarloweEditor from './HarloweEditor.vue'
@@ -83,6 +83,9 @@ const body = computed({
   get: () => node.value?.body ?? '',
   set: (v: string) => node.value && store.editBody(node.value.id, v),
 })
+
+/** What the editor's link picker offers, here and in the pop-out. */
+const titles = computed(() => store.state.doc.nodes.map((n) => n.title).sort(compareStr))
 
 const pathCount = computed(() =>
   node.value ? formatCount(store.pathsFrom(node.value.id)) : '0',
@@ -236,7 +239,7 @@ const upBlockedBy = computed(() => store.blockingParent.value)
           Link with <code>[[Text|Target]]</code>, <code>[[Text-&gt;Target]]</code> or
           <code>[[Target&lt;-Text]]</code>. Linking to a passage that doesn&rsquo;t exist creates it.
         </p>
-        <HarloweEditor v-model="body" />
+        <HarloweEditor v-model="body" :titles="titles" />
       </section>
 
       <section>

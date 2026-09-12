@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as store from '../stores/story'
+import { compareStr } from '../types/story'
 import HarloweEditor from './HarloweEditor.vue'
 
 const props = defineProps<{ modelValue: string; title: string }>()
@@ -22,6 +23,11 @@ const body = computed({
   get: () => props.modelValue,
   set: (v: string) => emit('update:modelValue', v),
 })
+
+/** What the link button offers. Sorted by the document's own comparator. */
+const titles = computed(() =>
+  store.state.doc.nodes.map((n) => n.title).sort(compareStr),
+)
 
 /** Counted on the prose the author sees, not on a tokenised view of it. */
 const stats = computed(() => {
@@ -67,7 +73,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         <code>[[Target&lt;-Text]]</code>. Linking to a passage that doesn&rsquo;t exist creates it.
       </p>
 
-      <HarloweEditor ref="editor" v-model="body" />
+      <HarloweEditor ref="editor" v-model="body" toolbar :titles="titles" />
 
       <footer>
         <span class="muted">

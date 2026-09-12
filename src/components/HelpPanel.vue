@@ -19,6 +19,10 @@ const SHORTCUTS: { keys: string; what: string }[] = [
   { keys: `${MOD} F`, what: 'Jump to search' },
   { keys: `${MOD} E`, what: 'Expand the selected passage’s body editor' },
   { keys: `${MOD} K`, what: 'Character cheat sheet for the selected passage' },
+  { keys: `${MOD} B`, what: 'Bold the selected prose' },
+  { keys: `${MOD} I`, what: 'Italicise the selected prose' },
+  { keys: `${MOD} ⇧ .`, what: 'Quote the selected lines' },
+  { keys: `${MOD} ⇧ K`, what: 'Link the selected prose to a passage' },
   { keys: `${MOD} Z`, what: 'Undo' },
   { keys: `${MOD} ⇧ Z`, what: 'Redo' },
   { keys: 'N', what: 'New passage, linked from the selected one' },
@@ -32,6 +36,12 @@ const LINKS: { syntax: string; what: string }[] = [
   { syntax: '[[Go north|Cave]]', what: 'Show “Go north”, go to Cave' },
   { syntax: '[[Go north->Cave]]', what: 'The same, written with an arrow' },
   { syntax: '[[Cave<-Go north]]', what: 'The same, arrow pointing the other way' },
+]
+
+const MARKUP: { syntax: string; what: string }[] = [
+  { syntax: "''bold''", what: 'Bold' },
+  { syntax: '//italic//', what: 'Italic' },
+  { syntax: '> quoted', what: 'A quoted line' },
 ]
 
 function onKey(e: KeyboardEvent) {
@@ -82,6 +92,24 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             can double-click to bring back. A delete is refused if it would cut a surviving
             passage off from the start &mdash; select that passage too, or leave a link to it from
             somewhere that survives.
+          </p>
+        </section>
+
+        <section>
+          <h3>Formatting</h3>
+          <table class="syntax">
+            <tbody>
+              <tr v-for="row in MARKUP" :key="row.syntax">
+                <td><code>{{ row.syntax }}</code></td>
+                <td>{{ row.what }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="note">
+            The buttons above the expanded editor apply these to whatever you have selected, and
+            pressing the same shortcut again takes them off. The last button asks which passage to
+            link to before it writes anything, so choosing an existing one never leaves a stray
+            passage behind.
           </p>
         </section>
 
