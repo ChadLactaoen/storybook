@@ -36,6 +36,7 @@
   --radius: 8px;
   --toolbar-h: 48px;
   --sidebar-w: 360px;
+  --left-panel-w: 320px;
 
   color-scheme: light dark;
 }

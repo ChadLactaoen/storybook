@@ -275,8 +275,8 @@ function profileSummary(name: string): string {
 .index {
   display: flex;
   flex-direction: column;
-  width: 320px;
-  flex: 0 0 320px;
+  width: var(--left-panel-w);
+  flex: 0 0 var(--left-panel-w);
   border-right: 1px solid var(--border);
   background: var(--panel-alt);
 }
