@@ -31,6 +31,7 @@ Twine.
 |---|---|
 | Link forms | `[[Target]]`, `[[Text\|Target]]`, `[[Text->Target]]`, `[[Target<-Text]]` |
 | New passages | Linking to a title that doesn't exist creates it, in TODO state |
+| Formatting | `''bold''`, `//italic//` and `> quoted` lines, from the editor's buttons or `Cmd B` / `Cmd I` / `Cmd Shift .`. Pressing the same one again takes it off |
 | Renaming | Rewrites the target half of every inbound link; display text is untouched. A colliding rename is blocked |
 | Deleting | Leaves inbound `[[...]]` alone — your prose is never rewritten. The link shows as a dashed phantom card you can click to recreate. Refused if it would cut a surviving passage off from the start |
 | Tags | Story-global, reusable from a dropdown, colour-coded from Twine's palette. Recolouring a tag repaints every passage carrying it |
@@ -52,12 +53,20 @@ link syntax, and the full shortcut list.
 
 **Expand**, above a passage's body, reopens the same editor over the whole
 window for longer prose; it writes the same document, so there is nothing to
-save when it closes.
+save when it closes. The expanded editor carries a formatting row — bold,
+italic, quote and link — and every one of those is a shortcut in the sidebar
+editor too.
+
+`Cmd Shift K` links the selected words to a passage. It asks which one first,
+offering the titles you already have: a target is never half-typed into the
+document, so choosing an existing passage cannot leave a stray one behind.
 
 Wheel or pinch to zoom at the cursor, drag the background to pan.
 `Cmd +` / `Cmd -` zoom, `Cmd 0` zooms to fit, `Cmd 1` resets to 100%.
 `Cmd F` focuses search, `Cmd Z` / `Cmd Shift Z` undo and redo, `N` adds a
-passage, `Delete` removes everything selected.
+passage, `Delete` removes everything selected. Formatting keys are handled by
+the editor itself rather than the global map, so they only fire where a
+selection means something.
 
 `Cmd`-click a card to select it and everything it leads to, `Shift`-click to add
 or drop one, and click the background to clear. With more than one selected the

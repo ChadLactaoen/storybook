@@ -13,6 +13,9 @@ export type TokenType =
   | 'number'
   | 'keyword'
   | 'hook'
+  | 'bold'
+  | 'italic'
+  | 'quote'
 
 export interface Token {
   type: TokenType
@@ -74,6 +77,26 @@ export function tokenize(src: string): Token[] {
       const m = IDENT.exec(src)
       if (m && m[0].length > 0) {
         emit('variable', i, IDENT.lastIndex)
+        continue
+      }
+    }
+
+    // Quoting is a line-level thing, so this only fires at the start of one.
+    if (c === '>' && (i === 0 || src[i - 1] === '\n')) {
+      emit('quote', i, i + (src[i + 1] === ' ' ? 2 : 1))
+      continue
+    }
+
+    // `''bold''` and `//italic//`. Both are held to a single line, and neither
+    // is recognised inside a macro's arguments, where `''` is far more likely
+    // to be an empty string than the start of emphasis.
+    if ((c === "'" || c === '/') && src[i + 1] === c && !insideMacro(src, i)) {
+      const marker = c + c
+      const lineBreak = src.indexOf('\n', i)
+      const limit = lineBreak === -1 ? src.length : lineBreak
+      const close = src.indexOf(marker, i + 2)
+      if (close !== -1 && close + 2 <= limit) {
+        emit(c === "'" ? 'bold' : 'italic', i, close + 2)
         continue
       }
     }

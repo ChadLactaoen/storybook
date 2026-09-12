@@ -277,6 +277,98 @@ describe('the app renders', () => {
     expect(problems).toEqual([])
   })
 
+  it('formats the selection from the pop-out toolbar', async () => {
+    mount()
+    store.newStory('Toolbar')
+    const id = store.state.doc.nodes[0]!.id
+    store.editBody(id, 'She ran home.')
+    store.select(id)
+    await nextTick()
+
+    // The narrow sidebar gets the shortcuts but not the buttons.
+    expect(host.querySelector('.inspector .tool')).toBeNull()
+    host.querySelector<HTMLButtonElement>('.inspector .expand')!.click()
+    await nextTick()
+
+    const dialog = host.querySelector('[aria-label="Edit passage body"]')!
+    const area = dialog.querySelector<HTMLTextAreaElement>('textarea.input')!
+    const tools = [...dialog.querySelectorAll<HTMLButtonElement>('.tool')]
+    expect(tools).toHaveLength(4)
+
+    area.setSelectionRange(4, 7)
+    tools[0]!.click()
+    await nextTick()
+    expect(store.state.doc.nodes.find((n) => n.id === id)!.body).toBe("She ''ran'' home.")
+
+    // Done stays the one primary button in the dialog; the toolbar is dense and
+    // borderless on purpose, following `.expand` rather than `.btn`.
+    expect(dialog.querySelectorAll('.btn-primary')).toHaveLength(1)
+    expect(problems).toEqual([])
+  })
+
+  it('formats from the keyboard in the sidebar editor', async () => {
+    mount()
+    store.newStory('Keys')
+    const id = store.state.doc.nodes[0]!.id
+    store.editBody(id, 'She ran home.')
+    store.select(id)
+    await nextTick()
+
+    const area = host.querySelector<HTMLTextAreaElement>('.inspector textarea.input')!
+    const press = async (key: string, shiftKey = false) => {
+      area.dispatchEvent(
+        new KeyboardEvent('keydown', { key, metaKey: true, shiftKey, bubbles: true }),
+      )
+      await nextTick()
+    }
+    const body = () => store.state.doc.nodes.find((n) => n.id === id)!.body
+
+    area.setSelectionRange(4, 7)
+    await press('i')
+    expect(body()).toBe('She //ran// home.')
+
+    // Quoting widens to the whole line, whatever the selection was.
+    area.setSelectionRange(0, 0)
+    await press('.', true)
+    expect(body()).toBe('> She //ran// home.')
+    expect(problems).toEqual([])
+  })
+
+  it('asks which passage to link to before writing anything', async () => {
+    mount()
+    store.newStory('Linking')
+    const id = store.state.doc.nodes[0]!.id
+    store.editBody(id, 'Two ways out.\n[[Cave]]')
+    store.select(id)
+    await nextTick()
+    const before = store.state.doc.nodes.length
+
+    const area = host.querySelector<HTMLTextAreaElement>('.inspector textarea.input')!
+    area.setSelectionRange(0, 3)
+    area.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'K', metaKey: true, shiftKey: true, bubbles: true }),
+    )
+    await nextTick()
+
+    const picker = host.querySelector('[aria-label="Link to a passage"]')!
+    expect(picker).not.toBeNull()
+    // Plain Cmd K is the cheat sheet's; the shifted one stops before reaching it.
+    expect(host.querySelector('.cheat')).toBeNull()
+
+    const rows = [...picker.querySelectorAll<HTMLButtonElement>('.item')]
+    const cave = rows.find((r) => r.textContent!.trim() === 'Cave')!
+    expect(cave).not.toBeUndefined()
+    cave.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    await nextTick()
+
+    // The selected words became the display text, and picking a passage that
+    // already exists left no stray passage behind.
+    expect(store.state.doc.nodes.find((n) => n.id === id)!.body).toContain('[[Two|Cave]]')
+    expect(store.state.doc.nodes).toHaveLength(before)
+    expect(host.querySelector('[aria-label="Link to a passage"]')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
   it('toggles the pop-out and the cheat sheet from the keyboard', async () => {
     mount()
     store.newStory('Keyed')

@@ -230,6 +230,18 @@ select {
   color: #3a78d6;
   font-weight: 600;
 }
+/* Weight and slant are safe in a monospace face, and the layer underneath the
+   textarea has to keep the same metrics or the caret drifts off the glyphs. */
+.hl-bold {
+  font-weight: 700;
+}
+.hl-italic {
+  font-style: italic;
+}
+.hl-quote {
+  color: var(--text-faint);
+  font-weight: 600;
+}
 
 @media (prefers-color-scheme: dark) {
   .hl-macro {
