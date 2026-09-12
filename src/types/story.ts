@@ -57,7 +57,13 @@ export interface StoryNode {
   levelOffset: number
   /** Where this passage takes place. Empty when unset. */
   setting: string
-  /** This passage's cast, sorted by name. */
+  /**
+   * This passage's cast, stored sorted by name.
+   *
+   * Name order is storage only — it is what keeps the save file byte-stable,
+   * and a node cannot see the roster. On screen the cast goes through
+   * `castInRosterOrder`, which is the author's arrangement.
+   */
   characters: SceneCharacter[]
 }
 
@@ -219,6 +225,26 @@ export function orderRoster(characters: readonly CharacterEntry[]): CharacterEnt
   return [...characters]
     .sort(compareCharacters)
     .map((c, i) => (c.order === i ? c : { ...c, order: i }))
+}
+
+/**
+ * A passage's cast in the author's roster order.
+ *
+ * Storage stays alphabetical — `addPassageCharacter` sorts and `serializeDoc`
+ * re-sorts — because that is what keeps the save file byte-stable, and a
+ * `StoryNode` cannot see the roster anyway. Roster order is a view over it,
+ * derived at render time, so one move in the roster reorders every passage's
+ * cast at once without touching the document.
+ */
+export function castInRosterOrder(
+  cast: readonly SceneCharacter[],
+  roster: readonly CharacterEntry[],
+): SceneCharacter[] {
+  const rank = new Map(roster.map((c) => [c.name, c.order]))
+  // Anyone off the roster shouldn't exist, but sorting them last on a name
+  // tiebreak keeps the comparator total rather than trusting the invariant.
+  const at = (name: string) => rank.get(name) ?? Number.MAX_SAFE_INTEGER
+  return [...cast].sort((a, b) => at(a.name) - at(b.name) || compareStr(a.name, b.name))
 }
 
 export function emptyDoc(storyTitle = 'Untitled Story'): StoryDoc {
