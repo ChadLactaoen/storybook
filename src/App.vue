@@ -17,6 +17,7 @@ import type { NodeState } from './types/story'
 
 const canvasEl = ref<HTMLElement | null>(null)
 const searchBar = ref<InstanceType<typeof SearchFilterBar> | null>(null)
+const inspector = ref<InstanceType<typeof NodeInspector> | null>(null)
 const inspectorOpen = ref(true)
 /**
  * The left gutter holds one panel at a time. A single ref rather than a boolean
@@ -105,6 +106,28 @@ function deleteSelected() {
   if (store.state.selectedId) store.removePassage(store.state.selectedId)
 }
 
+async function toggleBodyEditor() {
+  // The resolved node, not the id: a phantom card is selectable, and the
+  // inspector it would open is behind `v-if="node && geom"`.
+  if (!store.selected.value) return
+  // The sidebar may be closed behind the "Show passage" button; the shortcut
+  // should still work, so mount it first and toggle on the next tick.
+  if (!inspectorOpen.value) {
+    inspectorOpen.value = true
+    await nextTick()
+  }
+  inspector.value?.toggleExpanded()
+}
+
+// The cheat sheet is a companion to the passage sidebar — the watcher above
+// closes it when that sidebar goes away — so opening it means opening both.
+// No cast in the passage is not a reason to refuse: the panel says so itself.
+function toggleCheatSheet() {
+  if (!store.selected.value) return
+  inspectorOpen.value = true
+  leftPanel.value = leftPanel.value === 'cheat' ? null : 'cheat'
+}
+
 useShortcuts({
   zoomIn: vp.zoomIn,
   zoomOut: vp.zoomOut,
@@ -115,6 +138,8 @@ useShortcuts({
   addPassage: () => store.addPassage(store.state.selectedId ?? undefined),
   deletePassage: deleteSelected,
   focusSearch: () => searchBar.value?.focus(),
+  toggleBodyEditor: () => void toggleBodyEditor(),
+  toggleCheatSheet,
   openHelp: () => (helpOpen.value = true),
 })
 
@@ -218,6 +243,7 @@ function dismissNotices() {
 
       <NodeInspector
         v-if="inspectorOpen"
+        ref="inspector"
         @close="inspectorOpen = false"
         @cheat-sheet="leftPanel = 'cheat'"
       />

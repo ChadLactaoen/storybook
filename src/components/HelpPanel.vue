@@ -17,6 +17,8 @@ const SHORTCUTS: { keys: string; what: string }[] = [
   { keys: `${MOD} 0`, what: 'Zoom to fit the whole story' },
   { keys: `${MOD} 1`, what: 'Reset zoom to 100%' },
   { keys: `${MOD} F`, what: 'Jump to search' },
+  { keys: `${MOD} E`, what: 'Expand the selected passage’s body editor' },
+  { keys: `${MOD} K`, what: 'Character cheat sheet for the selected passage' },
   { keys: `${MOD} Z`, what: 'Undo' },
   { keys: `${MOD} ⇧ Z`, what: 'Redo' },
   { keys: 'N', what: 'New passage, linked from the selected one' },
@@ -87,7 +89,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             <li><strong>Fit</strong> in the toolbar frames the whole story.</li>
             <li>
               <strong>Expand</strong>, above a passage&rsquo;s body, opens the same editor over the
-              whole window for longer prose.
+              whole window for longer prose &mdash; <kbd>{{ MOD }} E</kbd> opens and closes it
+              without leaving the keyboard.
             </li>
           </ul>
         </section>
@@ -106,6 +109,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             <li>
               <strong>Cast &amp; Settings</strong> lists every character and location with a
               passage count. Click one to dim everything else.
+            </li>
+            <li>
+              The <strong>Character Cheat Sheet</strong> &mdash; <kbd>{{ MOD }} K</kbd>, or the
+              link under a passage&rsquo;s cast &mdash; puts everyone in the scene, and how they
+              regard each other, beside the body editor.
             </li>
             <li>
               The <strong>paths</strong> count is how many distinct routes run from the start
