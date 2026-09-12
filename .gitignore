@@ -1,0 +1,52 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Build caches
+# Both tsconfigs currently point tsBuildInfoFile into node_modules/.tmp, so this
+# is a safety net for if that setting is ever dropped — the default writes the
+# file next to the tsconfig.
+*.tsbuildinfo
+.vite
+
+# Test output
+coverage
+.nyc_output
+
+# Vite writes these transient files when it has to transpile the config
+vite.config.*.timestamp-*
+vitest.config.*.timestamp-*
+
+# Secrets. `*.local` above already catches .env.local, but not the rest.
+.env
+.env.*
+!.env.example
+
+# macOS resource forks
+._*
+.AppleDouble
+
+# Per-developer Claude Code settings. Project-level .claude/settings.json and
+# .claude/agents/ are meant to be shared, so only the local override is ignored.
+.claude/settings.local.json

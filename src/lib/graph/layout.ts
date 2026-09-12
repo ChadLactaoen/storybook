@@ -1,0 +1,210 @@
+import type { NodeId, StoryDoc } from '../../types/story'
+import { compareStr } from '../../types/story'
+import { findBackEdges } from './acyclic'
+import { findComponents } from './components'
+import { DEFAULT_CONFIG, isPhantomId } from './constants'
+import { countCrossings } from './crossings'
+import { deriveGraph, duplicateTitles } from './derive'
+import { fnv1a } from './hash'
+import { assignLevels } from './layering'
+import { buildLayeredGraph, realKey } from './layered'
+import { orderLayers } from './ordering'
+import { routeEdges } from './routing'
+import { assignX, assignY } from './xcoord'
+import type {
+  Bounds,
+  Diagnostic,
+  LayoutConfig,
+  LayoutResult,
+  LevelBand,
+  NodeLayout,
+} from './types'
+
+function round(v: number, precision: number): number {
+  const f = 10 ** precision
+  return Math.round(v * f) / f
+}
+
+/**
+ * The single public entry point. Pure, synchronous and clone-friendly: the same
+ * document always produces the same drawing, which is what makes the save file
+ * idempotent and lets this move into a worker later without a rewrite.
+ *
+ * Nothing positional is ever persisted — levels, ordering, coordinates and edge
+ * paths are all recomputed here. That is also why inserting a node mid-story
+ * "auto-refactors" levels: there is nothing to refactor, the levels are simply
+ * re-derived.
+ */
+export function layoutStory(doc: StoryDoc, config?: Partial<LayoutConfig>): LayoutResult {
+  const cfg: LayoutConfig = { ...DEFAULT_CONFIG, ...config }
+  const diagnostics: Diagnostic[] = []
+
+  const g = deriveGraph(doc)
+
+  for (const title of duplicateTitles(doc)) {
+    diagnostics.push({
+      code: 'duplicate-title',
+      severity: 'error',
+      message: `More than one passage is titled "${title}". Links to it are ambiguous.`,
+      nodeIds: doc.nodes.filter((n) => n.title === title).map((n) => n.id),
+      edgeIds: [],
+    })
+  }
+
+  const { backEdges, cycles } = findBackEdges(g, doc.startNodeId)
+
+  for (const cycle of cycles) {
+    diagnostics.push({
+      code: 'cycle',
+      severity: 'info',
+      message: `Loop: ${cycle.map((id) => g.titleOf.get(id) ?? id).join(' → ')}`,
+      nodeIds: [...cycle],
+      edgeIds: [],
+    })
+  }
+
+  const offsets = new Map<NodeId, number>()
+  for (const n of doc.nodes) offsets.set(n.id, n.levelOffset)
+  const lv = assignLevels(g, backEdges, (id) => offsets.get(id) ?? 0)
+
+  const { componentOf, count } = findComponents(g)
+  const lg = buildLayeredGraph(g, lv, backEdges, componentOf, count, cfg)
+
+  orderLayers(lg, cfg)
+  assignX(lg, cfg)
+  assignY(lg, cfg)
+
+  const edges = routeEdges(lg, g, cfg)
+
+  const nodes: NodeLayout[] = []
+  for (const id of g.ids) {
+    const ln = lg.nodes.get(realKey(id))
+    if (!ln) continue
+    nodes.push({
+      id,
+      title: g.titleOf.get(id) ?? id,
+      level: lv.level.get(id) ?? 1,
+      layer: ln.layer,
+      order: ln.order,
+      x: round(ln.x, cfg.coordPrecision),
+      y: round(ln.y, cfg.coordPrecision),
+      width: ln.width,
+      height: ln.height,
+      isPhantom: isPhantomId(id),
+      minLevel: lv.minLevel.get(id) ?? 1,
+      levelOffset: Math.min(1, Math.max(0, Math.trunc(offsets.get(id) ?? 0))),
+    })
+  }
+  nodes.sort((a, b) => compareStr(a.title, b.title) || compareStr(a.id, b.id))
+
+  const nodeById = new Map(nodes.map((n) => [n.id, n]))
+
+  for (const p of g.phantoms) {
+    diagnostics.push({
+      code: 'dangling-link',
+      severity: 'warn',
+      message: `No passage titled "${p.title}" exists.`,
+      nodeIds: [p.id],
+      edgeIds: g.edges.filter((e) => e.targetId === p.id).map((e) => e.id),
+    })
+  }
+
+  for (const e of g.edges) {
+    if (!e.selfLoop) continue
+    diagnostics.push({
+      code: 'self-loop',
+      severity: 'info',
+      message: `"${g.titleOf.get(e.sourceId)}" links to itself.`,
+      nodeIds: [e.sourceId],
+      edgeIds: [e.id],
+    })
+  }
+
+  if (doc.startNodeId) {
+    const reachable = reachableFrom(g, doc.startNodeId)
+    const orphans = g.nodes.filter((n) => !reachable.has(n.id))
+    if (orphans.length > 0) {
+      diagnostics.push({
+        code: 'orphan',
+        severity: 'info',
+        message:
+          orphans.length === 1
+            ? `"${orphans[0]!.title}" is not reachable from the start.`
+            : `${orphans.length} passages are not reachable from the start.`,
+        nodeIds: orphans.map((n) => n.id),
+        edgeIds: [],
+      })
+    }
+  }
+
+  const levels: LevelBand[] = lg.levelOfLayer.map((level, layer) => ({
+    level,
+    y: round(cfg.margin + layer * cfg.layerSpacing, cfg.coordPrecision),
+    height: cfg.nodeHeight,
+    count: nodes.filter((n) => n.layer === layer).length,
+  }))
+
+  const bounds = boundsOf(nodes, cfg)
+
+  const hashInput = [
+    nodes.map((n) => `${n.id}:${n.x}:${n.y}:${n.level}`).join(','),
+    edges.map((e) => `${e.edgeId}:${e.d}`).join(','),
+  ].join('|')
+
+  return {
+    nodes,
+    nodeById,
+    edges,
+    levels,
+    bounds,
+    diagnostics,
+    stats: {
+      crossings: countCrossings(lg),
+      layers: lg.levelOfLayer.length,
+      dummies: lg.keys.length - g.ids.length,
+      hash: fnv1a(hashInput),
+    },
+    graph: g,
+    backEdges,
+  }
+}
+
+function boundsOf(nodes: readonly NodeLayout[], cfg: LayoutConfig): Bounds {
+  if (nodes.length === 0) {
+    return { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 }
+  }
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const n of nodes) {
+    minX = Math.min(minX, n.x - n.width / 2)
+    maxX = Math.max(maxX, n.x + n.width / 2)
+    minY = Math.min(minY, n.y - n.height / 2)
+    maxY = Math.max(maxY, n.y + n.height / 2)
+  }
+  minX -= cfg.margin
+  minY -= cfg.margin
+  maxX += cfg.margin
+  maxY += cfg.margin
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY }
+}
+
+function reachableFrom(
+  g: ReturnType<typeof deriveGraph>,
+  startId: NodeId,
+): Set<NodeId> {
+  const seen = new Set<NodeId>([startId])
+  const stack = [startId]
+  while (stack.length > 0) {
+    const id = stack.pop()!
+    for (const eid of g.outAdj.get(id) ?? []) {
+      const t = g.edgeById.get(eid)!.targetId
+      if (!seen.has(t)) {
+        seen.add(t)
+        stack.push(t)
+      }
+    }
+  }
+  return seen
+}
