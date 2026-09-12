@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import * as store from '../stores/story'
 import HarloweEditor from './HarloweEditor.vue'
 
 const props = defineProps<{ modelValue: string; title: string }>()
@@ -30,9 +31,15 @@ const stats = computed(() => {
 })
 
 function onKey(e: KeyboardEvent) {
+  if (e.key !== 'Escape') return
+  // The character sheet stacks above this dialog — the cheat sheet beside us
+  // stays clickable, and its "Edit" link opens one. A window listener fires
+  // wherever focus sits, so without this it would close us underneath the
+  // sheet the author is actually looking at. Escape closes the top only.
+  if (store.state.openCharacter) return
   // Escape inside the textarea should close too, so this listens on the window
   // rather than on the veil.
-  if (e.key === 'Escape') emit('close')
+  emit('close')
 }
 
 onMounted(() => {
@@ -74,9 +81,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 </template>
 
 <style scoped>
+/* Inset from the left by whatever the left gutter is holding (App publishes
+   --veil-inset): the cheat sheet is reference material for the passage being
+   written here, so it stays lit and clickable rather than dimmed behind us. */
 .veil {
   position: fixed;
   inset: 0;
+  left: var(--veil-inset, 0px);
   z-index: 92;
   display: grid;
   place-items: center;

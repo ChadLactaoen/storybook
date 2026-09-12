@@ -258,10 +258,12 @@ function setTrait(field: TraitField, points: string[]) {
 </template>
 
 <style scoped>
+/* Above BodyDialog (92): the cheat sheet stays clickable while the body editor
+   is open, so its "Edit" link can open this sheet from behind that dialog. */
 .veil {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: 94;
   display: grid;
   place-items: center;
   padding: 24px;

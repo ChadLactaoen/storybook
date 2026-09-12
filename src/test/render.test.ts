@@ -430,6 +430,10 @@ describe('the character cheat sheet', () => {
     store.characterSetTrait('Mira', 'dialogue', ['Clipped sentences'])
     store.relationAdd('Mira', 'Tam')
     store.relationSetPoints('Mira', 'Tam', ['Owes him nothing'])
+    // Off stage in this passage, so Mira's feelings about her stay off the panel.
+    store.characterCreate('Wren')
+    store.relationAdd('Mira', 'Wren')
+    store.relationSetPoints('Mira', 'Wren', ['Has never forgiven her'])
     store.castAdd(id, 'Mira')
     store.castAdd(id, 'Tam')
     store.castSetNote(id, 'Mira', 'Furious.')
@@ -465,8 +469,9 @@ describe('the character cheat sheet', () => {
     expect(text).toContain('Dialogue characteristics')
     expect(text).toContain('Relations')
     expect(text).toContain('Owes him nothing')
-    // Tam is also on stage, so the relation is flagged as live here.
-    expect(panel.querySelector('.here')).not.toBeNull()
+    // Wren is not in the cast: neither she nor Mira's note about her appears.
+    expect(text).not.toContain('Wren')
+    expect(text).not.toContain('Has never forgiven her')
     // Tam has nothing written, so his card says so rather than rendering empty.
     expect(text).toContain('No direction written yet.')
     expect(problems).toEqual([])
@@ -562,6 +567,67 @@ describe('the character cheat sheet', () => {
     store.select(null)
     await nextTick()
     expect(host.querySelector('.cheat')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('hides Relations entirely when no relation points at this cast', async () => {
+    const id = await openOnCast()
+
+    // A passage casting Mira alone: both her relations now point off stage.
+    store.editBody(id, '[[Go|Two]]')
+    const two = store.state.doc.nodes.find((n) => n.title === 'Two')!.id
+    store.castAdd(two, 'Mira')
+    store.select(two)
+    await nextTick()
+
+    const panel = host.querySelector('.cheat')!
+    const text = panel.textContent!.replace(/\s+/g, ' ')
+    expect(text).toContain('Cast of Two')
+    expect(text).toContain('Guarded')
+    expect(text).not.toContain('Relations')
+    expect(text).not.toContain('Owes him nothing')
+    expect(problems).toEqual([])
+  })
+
+  it('leaves the panel lit beside the body editor rather than under its veil', async () => {
+    await openOnCast()
+
+    host.querySelector<HTMLButtonElement>('.inspector .expand')!.click()
+    await nextTick()
+
+    // The dialog is up, the panel is still mounted, and the veil is inset past it.
+    expect(host.querySelector('.veil')).not.toBeNull()
+    expect(host.querySelector('.cheat')).not.toBeNull()
+    expect(host.querySelector<HTMLElement>('.app')!.style.getPropertyValue('--veil-inset')).toBe(
+      'var(--left-panel-w)',
+    )
+    expect(problems).toEqual([])
+  })
+
+  it('leaves the body editor alone when Escape dismisses a sheet stacked on it', async () => {
+    await openOnCast()
+
+    host.querySelector<HTMLButtonElement>('.inspector .expand')!.click()
+    await nextTick()
+    expect(host.querySelector('.veil')).not.toBeNull()
+
+    // The cheat sheet is clickable beside the editor, so its "Edit" link can
+    // stack a character sheet on top of it.
+    host.querySelector<HTMLButtonElement>('.cheat .link')!.click()
+    await nextTick()
+    expect(store.state.openCharacter).toBe('Mira')
+
+    // Escape belongs to the sheet on top; the editor underneath must survive.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await nextTick()
+    expect(host.querySelector('.sheet[aria-label="Edit passage body"]')).not.toBeNull()
+
+    // Closing that sheet hands Escape back.
+    store.closeCharacterSheet()
+    await nextTick()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await nextTick()
+    expect(host.querySelector('.sheet[aria-label="Edit passage body"]')).toBeNull()
     expect(problems).toEqual([])
   })
 

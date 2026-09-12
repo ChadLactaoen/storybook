@@ -16,7 +16,7 @@ const emit = defineEmits<{ close: [] }>()
 const node = store.selected
 const entries = store.characterMap
 
-/** Who else is on stage, so a relation can be flagged as live in this scene. */
+/** Who else is on stage; a relation to anyone else is not this scene's business. */
 const present = computed(() => new Set((node.value?.characters ?? []).map((c) => c.name)))
 
 /**
@@ -37,7 +37,9 @@ const cards = computed(() =>
           points: entry[f],
         }))
       : []
-    const relations = (entry?.relations ?? []).filter((r) => r.points.length > 0)
+    const relations = (entry?.relations ?? []).filter(
+      (r) => r.points.length > 0 && present.value.has(r.to),
+    )
     return {
       name: member.name,
       bio: entry?.note ?? '',
@@ -122,7 +124,9 @@ watch(
         </div>
 
         <!-- Relations are one-directional: this is only how the character
-             regards others, never how they are regarded. -->
+             regards others, never how they are regarded. Only relations toward
+             the rest of this passage's cast appear — the panel is a reference
+             for the scene being written, not the whole roster. -->
         <div v-if="card.relations.length > 0" class="group">
           <button class="group-label" @click="fold(card.name, 'relations')">
             <span class="caret" :class="{ open: isOpen(card.name, 'relations') }">&rsaquo;</span>
@@ -130,10 +134,7 @@ watch(
           </button>
           <template v-if="isOpen(card.name, 'relations')">
             <div v-for="relation in card.relations" :key="relation.to" class="relation">
-              <span class="toward">
-                &rarr; {{ relation.to }}
-                <span v-if="present.has(relation.to)" class="here">in this scene</span>
-              </span>
+              <span class="toward">&rarr; {{ relation.to }}</span>
               <ul class="bullets">
                 <li v-for="(point, i) in relation.points" :key="i">{{ point }}</li>
               </ul>
@@ -152,13 +153,13 @@ watch(
 </template>
 
 <style scoped>
-/* Matches StoryIndexPanel's width rather than --sidebar-w: the two share the
-   left gutter, and swapping between them must not reflow the stage. */
+/* --left-panel-w, not --sidebar-w: this and StoryIndexPanel share the left
+   gutter, and swapping between them must not reflow the stage. */
 .cheat {
   display: flex;
   flex-direction: column;
-  width: 320px;
-  flex: 0 0 320px;
+  width: var(--left-panel-w);
+  flex: 0 0 var(--left-panel-w);
   border-right: 1px solid var(--border);
   background: var(--panel-alt);
 }
@@ -282,16 +283,6 @@ header {
   font-size: 11px;
   font-weight: 600;
   color: var(--text);
-}
-
-.here {
-  margin-left: 5px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 600;
 }
 
 .nothing {

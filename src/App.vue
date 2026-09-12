@@ -166,7 +166,15 @@ function dismissNotices() {
 <template>
   <StartupDialog v-if="!store.state.started" />
 
-  <div v-else class="app">
+  <!-- --veil-inset rides the DOM down to BodyDialog's fixed veil, which would
+       otherwise dim and block the cheat sheet the author is editing against.
+       Only the cheat sheet earns it: selecting a passage in the index would
+       swap the node that open dialog is editing, mid-keystroke. -->
+  <div
+    v-else
+    class="app"
+    :style="{ '--veil-inset': leftPanel === 'cheat' ? 'var(--left-panel-w)' : '0px' }"
+  >
     <AppToolbar
       :zoom="vp.view.k"
       @zoom-in="vp.zoomIn"
