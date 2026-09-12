@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import * as store from '../stores/story'
 import type { CharacterEntry, SceneCharacter } from '../types/story'
-import { TRAIT_FIELDS, TRAIT_LABELS } from '../types/story'
+import { TRAIT_FIELDS, TRAIT_LABELS, castInRosterOrder } from '../types/story'
 
 const props = defineProps<{
   /** This passage's cast. */
@@ -39,6 +39,16 @@ const canCreate = computed(() => {
   const name = draft.value.trim()
   return name.length > 0 && !props.roster.some((c) => c.name === name)
 })
+
+/**
+ * The cast as the author arranged it, not as it is stored.
+ *
+ * `node.characters` is kept alphabetical so the save file stays byte-stable, but
+ * the roster has a shape the author chose — leads first — and this list should
+ * read in that shape. Deriving it here rather than storing it is what makes a
+ * reorder in the story index reach every passage at once.
+ */
+const ordered = computed(() => castInRosterOrder(props.cast, props.roster))
 
 const entries = computed(() => new Map(props.roster.map((c) => [c.name, c])))
 
@@ -125,7 +135,7 @@ defineExpose({ setError: (msg: string | null) => (error.value = msg) })
 <template>
   <div class="picker">
     <ul v-if="cast.length > 0" class="cast">
-      <li v-for="member in cast" :key="member.name" class="member">
+      <li v-for="member in ordered" :key="member.name" class="member">
         <div class="head">
           <button
             class="disclose"

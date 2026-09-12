@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import * as store from '../stores/story'
-import { TRAIT_FIELDS, TRAIT_LABELS, nodeLabel } from '../types/story'
+import { TRAIT_FIELDS, TRAIT_LABELS, castInRosterOrder, nodeLabel } from '../types/story'
 
 /**
  * Reference for the passage being written: every cast member's story-wide
@@ -24,11 +24,12 @@ const present = computed(() => new Set((node.value?.characters ?? []).map((c) =>
  *
  * The template reads each field several times per card and the panel re-renders
  * on every keystroke in the body editor, so deriving per-read would re-walk the
- * roster each time. The cast arrives sorted by name (`addPassageCharacter`), so
- * the cards need no sort of their own.
+ * roster each time. The cast arrives sorted by name (`addPassageCharacter`);
+ * `castInRosterOrder` puts the cards back into the author's arrangement, the
+ * same order the passage sidebar shows them in.
  */
 const cards = computed(() =>
-  (node.value?.characters ?? []).map((member) => {
+  castInRosterOrder(node.value?.characters ?? [], store.roster.value).map((member) => {
     const entry = entries.value.get(member.name)
     const groups = entry
       ? TRAIT_FIELDS.filter((f) => entry[f].length > 0).map((f) => ({

@@ -21,7 +21,7 @@ import {
 import { parseDoc, serializeDoc } from '../lib/doc/serialize'
 import * as store from '../stores/story'
 import type { StoryDoc } from '../types/story'
-import { compareNodes, emptyCharacter, emptyDoc } from '../types/story'
+import { castInRosterOrder, compareNodes, emptyCharacter, emptyDoc } from '../types/story'
 import { docFrom, shuffled } from './helpers'
 
 function idOf(doc: StoryDoc, title: string): string {
@@ -246,6 +246,61 @@ describe('roster order', () => {
     // Bandit's junk order falls back to its position in the file, which is 2.
     expect(names(doc)).toEqual(['Bandit', 'Mira', 'Tam'])
     expect(orders(doc)).toEqual([0, 1, 2])
+  })
+
+  describe('a passage cast on screen', () => {
+    /** Three names whose alphabet runs backwards against the roster. */
+    function scene(doc: StoryDoc): StoryDoc {
+      const id = idOf(doc, 'One')
+      let next = doc
+      for (const c of next.characters) next = addPassageCharacter(next, id, c.name)
+      return next
+    }
+
+    const shown = (doc: StoryDoc) =>
+      castInRosterOrder(doc.nodes.find((n) => n.title === 'One')!.characters, doc.characters).map(
+        (c) => c.name,
+      )
+
+    it('follows the roster, not the alphabet', () => {
+      const doc = scene(cast('Zeno', 'Mira', 'Bandit'))
+      // Stored alphabetically, which is exactly what must not reach the screen.
+      expect(doc.nodes.find((n) => n.title === 'One')!.characters.map((c) => c.name)).toEqual([
+        'Bandit',
+        'Mira',
+        'Zeno',
+      ])
+      expect(shown(doc)).toEqual(['Zeno', 'Mira', 'Bandit'])
+    })
+
+    it('re-orders when the roster moves, with the passage untouched', () => {
+      const doc = scene(cast('Zeno', 'Mira', 'Bandit'))
+      const moved = moveCharacter(doc, 'Bandit', -2)
+      expect(shown(moved)).toEqual(['Bandit', 'Zeno', 'Mira'])
+      // The document's own cast array never changed; only the view did.
+      expect(moved.nodes.find((n) => n.title === 'One')!.characters).toEqual(
+        doc.nodes.find((n) => n.title === 'One')!.characters,
+      )
+    })
+
+    it('agrees with the alphabet once the roster is sorted A-Z', () => {
+      const doc = sortCharacters(scene(cast('Zeno', 'Mira', 'Bandit')))
+      expect(shown(doc)).toEqual(['Bandit', 'Mira', 'Zeno'])
+    })
+
+    it('leaves the array it was handed alone', () => {
+      const doc = scene(cast('Zeno', 'Mira', 'Bandit'))
+      const stored = doc.nodes.find((n) => n.title === 'One')!.characters
+      const before = [...stored]
+      castInRosterOrder(stored, doc.characters)
+      expect(stored).toEqual(before)
+    })
+
+    it('sorts anyone off the roster last rather than dropping them', () => {
+      const doc = cast('Zeno', 'Mira')
+      const strays = [{ name: 'Ghost', note: '' }, { name: 'Mira', note: '' }]
+      expect(castInRosterOrder(strays, doc.characters).map((c) => c.name)).toEqual(['Mira', 'Ghost'])
+    })
   })
 })
 

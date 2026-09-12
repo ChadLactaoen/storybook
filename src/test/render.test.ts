@@ -782,6 +782,72 @@ describe('the character cheat sheet', () => {
   })
 })
 
+describe('a passage cast on screen', () => {
+  /**
+   * A roster whose author order runs backwards against the alphabet, cast whole
+   * into one passage — so name order and roster order can never be confused.
+   */
+  async function openOnRoster() {
+    mount()
+    store.newStory('Order Check')
+    const id = store.state.doc.nodes[0]!.id
+    for (const name of ['Zeno', 'Mira', 'Bandit']) {
+      store.characterCreate(name)
+      store.castAdd(id, name)
+    }
+    store.select(id)
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.inspector .cheat-link')!.click()
+    await nextTick()
+    return id
+  }
+
+  const named = (selector: string) =>
+    [...host.querySelectorAll<HTMLElement>(selector)].map((el) => el.textContent!.trim())
+
+  const inSidebar = () => named('.inspector .cast .name')
+  const inCheatSheet = () => named('.cheat .name')
+
+  it('lists the cast in roster order, not alphabetically', async () => {
+    const id = await openOnRoster()
+
+    // Stored alphabetically — the order that must not reach the screen.
+    expect(store.state.doc.nodes.find((n) => n.id === id)!.characters.map((c) => c.name)).toEqual([
+      'Bandit',
+      'Mira',
+      'Zeno',
+    ])
+    expect(inSidebar()).toEqual(['Zeno', 'Mira', 'Bandit'])
+    expect(inCheatSheet()).toEqual(['Zeno', 'Mira', 'Bandit'])
+    expect(problems).toEqual([])
+  })
+
+  it('follows a move in the story index without an edit to the passage', async () => {
+    const id = await openOnRoster()
+    const before = store.state.doc.nodes.find((n) => n.id === id)!.characters
+
+    store.characterMove('Bandit', -2)
+    await nextTick()
+
+    expect(inSidebar()).toEqual(['Bandit', 'Zeno', 'Mira'])
+    expect(inCheatSheet()).toEqual(['Bandit', 'Zeno', 'Mira'])
+    // The passage itself never moved; only the view over it did.
+    expect(store.state.doc.nodes.find((n) => n.id === id)!.characters).toEqual(before)
+    expect(problems).toEqual([])
+  })
+
+  it('falls in with the alphabet once the roster is sorted A-Z', async () => {
+    await openOnRoster()
+
+    store.characterSortByName()
+    await nextTick()
+
+    expect(inSidebar()).toEqual(['Bandit', 'Mira', 'Zeno'])
+    expect(inCheatSheet()).toEqual(['Bandit', 'Mira', 'Zeno'])
+    expect(problems).toEqual([])
+  })
+})
+
 describe('selecting more than one passage', () => {
   /** Cards are laid out by code order, so find by text rather than by index. */
   function card(title: string): HTMLElement {
