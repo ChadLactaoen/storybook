@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { NodeLayout } from '../lib/graph/types'
-import type { NodeState, TagColor } from '../types/story'
+import type { NodeState, SelectMode, TagColor } from '../types/story'
 
 const props = defineProps<{
   node: NodeLayout
@@ -9,7 +9,10 @@ const props = defineProps<{
   tags: string[]
   code: string
   tagColors: Map<string, TagColor>
+  /** In the selection — one card of possibly many. */
   selected: boolean
+  /** The one selected card the inspector is describing. */
+  anchor: boolean
   isStart: boolean
   dimmed: boolean
   detailed: boolean
@@ -17,10 +20,17 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  select: [id: string]
+  select: [id: string, mode: SelectMode]
   open: [id: string]
   create: [title: string]
 }>()
+
+/** Mirrors the `metaKey || ctrlKey` test in useShortcuts, so the guide can say "Cmd/Ctrl" once. */
+function modeOf(e: MouseEvent): SelectMode {
+  if (e.metaKey || e.ctrlKey) return 'subtree'
+  if (e.shiftKey) return 'toggle'
+  return 'replace'
+}
 
 /** Only coloured tags earn a stripe; `none` tags still show as a chip below. */
 const stripes = computed(() =>
@@ -44,6 +54,7 @@ const style = computed(() => ({
       `state-${state ?? 'TODO'}`,
       {
         selected,
+        anchor,
         phantom: node.isPhantom,
         dimmed,
         start: isStart,
@@ -53,7 +64,7 @@ const style = computed(() => ({
     :style="style"
     :title="node.title"
     @pointerdown.stop
-    @click.stop="emit('select', node.id)"
+    @click.stop="emit('select', node.id, modeOf($event))"
     @dblclick.stop="node.isPhantom ? emit('create', node.title) : emit('open', node.id)"
   >
     <div v-if="stripes.length > 0" class="stripes">
@@ -118,6 +129,13 @@ const style = computed(() => ({
 .card.selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent), var(--shadow-md);
+}
+
+/* Every member of a multi-selection is ringed; the anchor is also filled, so
+   "which one is the inspector showing" survives. Deliberately not opacity —
+   that channel belongs to `.dimmed`, the search filter. */
+.card.selected.anchor {
+  background: var(--accent-soft);
 }
 
 .card.start {

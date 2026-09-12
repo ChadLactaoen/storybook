@@ -9,6 +9,7 @@ import { fnv1a } from './hash'
 import { assignLevels } from './layering'
 import { buildLayeredGraph, realKey } from './layered'
 import { orderLayers } from './ordering'
+import { orphanIds } from './reachability'
 import { routeEdges } from './routing'
 import { assignX, assignY } from './xcoord'
 import type {
@@ -121,8 +122,8 @@ export function layoutStory(doc: StoryDoc, config?: Partial<LayoutConfig>): Layo
   }
 
   if (doc.startNodeId) {
-    const reachable = reachableFrom(g, doc.startNodeId)
-    const orphans = g.nodes.filter((n) => !reachable.has(n.id))
+    const stranded = orphanIds(g, doc.startNodeId)
+    const orphans = g.nodes.filter((n) => stranded.has(n.id))
     if (orphans.length > 0) {
       diagnostics.push({
         code: 'orphan',
@@ -188,23 +189,4 @@ function boundsOf(nodes: readonly NodeLayout[], cfg: LayoutConfig): Bounds {
   maxX += cfg.margin
   maxY += cfg.margin
   return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY }
-}
-
-function reachableFrom(
-  g: ReturnType<typeof deriveGraph>,
-  startId: NodeId,
-): Set<NodeId> {
-  const seen = new Set<NodeId>([startId])
-  const stack = [startId]
-  while (stack.length > 0) {
-    const id = stack.pop()!
-    for (const eid of g.outAdj.get(id) ?? []) {
-      const t = g.edgeById.get(eid)!.targetId
-      if (!seen.has(t)) {
-        seen.add(t)
-        stack.push(t)
-      }
-    }
-  }
-  return seen
 }

@@ -4,6 +4,7 @@ import {
   addTag,
   createNode,
   deleteNode,
+  deleteNodes,
   renameNode,
   setBody,
   setCode,
@@ -100,6 +101,32 @@ describe('auto-create and delete', () => {
     // Editing elsewhere in the body must not bring it back.
     doc = setBody(doc, oneId, 'Some prose. [[Go|Cave]]')
     expect(doc.nodes.map((n) => n.title)).toEqual(['One'])
+  })
+
+  it('deletes several passages in one edit, leaving the prose alone', () => {
+    const doc = docFrom({ One: ['Two', 'Three'], Two: [], Three: [] })
+    const next = deleteNodes(doc, [doc.nodes[1]!.id, doc.nodes[2]!.id])
+
+    expect(next.nodes.map((n) => n.title)).toEqual(['One'])
+    // Same rule as a single delete: the author's markup is never rewritten.
+    expect(next.nodes[0]!.body).toBe(doc.nodes[0]!.body)
+    expect(deriveGraph(next).phantoms.map((p) => p.title)).toEqual(['Three', 'Two'])
+  })
+
+  it('returns the same document when nothing matches', () => {
+    // The store's commit compares by reference, so a no-op that cloned would
+    // push an empty undo entry and wipe the redo stack.
+    const doc = docFrom({ One: ['Two'], Two: [] })
+    expect(deleteNodes(doc, [])).toBe(doc)
+    expect(deleteNodes(doc, ['no-such-id'])).toBe(doc)
+    expect(deleteNode(doc, 'no-such-id')).toBe(doc)
+  })
+
+  it('re-roots the story when the start passage is in the batch', () => {
+    const doc = docFrom({ One: ['Two'], Two: ['Three'], Three: [] })
+    const next = deleteNodes(doc, [doc.nodes[0]!.id, doc.nodes[1]!.id])
+    expect(next.startNodeId).toBe(next.nodes[0]!.id)
+    expect(next.nodes.map((n) => n.title)).toEqual(['Three'])
   })
 })
 

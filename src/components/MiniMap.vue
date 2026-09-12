@@ -12,6 +12,7 @@ const props = defineProps<{
   size: { width: number; height: number }
   stateOf: Map<string, NodeState>
   selectedId: string | null
+  selectedIds: Set<string>
 }>()
 
 const emit = defineEmits<{ goto: [x: number, y: number] }>()
@@ -102,7 +103,7 @@ function onUp(e: PointerEvent) {
         <rect
           v-for="node in layout.nodes"
           :key="node.id"
-          :class="[`state-${stateOf.get(node.id) ?? 'TODO'}`, { sel: node.id === selectedId }]"
+          :class="[`state-${stateOf.get(node.id) ?? 'TODO'}`, { sel: node.id === selectedId || selectedIds.has(node.id) }]"
           :x="at(node.x - node.width / 2, 0).x"
           :y="at(0, node.y - node.height / 2).y"
           :width="Math.max(2, node.width * scale)"

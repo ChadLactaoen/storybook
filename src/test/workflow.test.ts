@@ -300,3 +300,108 @@ describe('finding a passage by its code', () => {
     expect(store.state.doc.nodes.map((n) => [xOf(n.title), yOf(n.title)])).toEqual(geometry)
   })
 })
+
+describe('multi-select and mass delete', () => {
+  const picked = () => store.selectedNodes.value.map((n) => n.title)
+
+  it('takes a passage and everything it leads to', () => {
+    // A diamond with a back edge: the walk must visit Four once and terminate.
+    store.editBody(idOf('One'), '[[Go|Two]]')
+    store.editBody(idOf('Two'), '[[Left|Three]]\n[[Right|Four]]')
+    store.editBody(idOf('Three'), '[[On|Four]]')
+    store.editBody(idOf('Four'), '[[Back|Two]]')
+
+    store.selectSubtree(idOf('Two'))
+    expect(picked()).toEqual(['Four', 'Three', 'Two'])
+    expect(store.state.selectedId).toBe(idOf('Two'))
+  })
+
+  it('falls back to a plain select on a phantom card', () => {
+    store.editBody(idOf('One'), '[[Go|Ghost]]')
+    store.removePassage(idOf('Ghost'))
+    const ghost = store.layout.value.nodes.find((n) => n.isPhantom)!.id
+    store.selectSubtree(ghost)
+    expect(store.state.selectedIds).toEqual([])
+    expect(store.state.selectedId).toBe(ghost)
+  })
+
+  it('toggles one passage in and out, re-anchoring when the anchor goes', () => {
+    store.editBody(idOf('One'), '[[Go|Two]]\n[[Stay|Three]]')
+    store.select(idOf('Two'))
+    store.toggleSelected(idOf('Three'))
+    expect(picked()).toEqual(['Three', 'Two'])
+    expect(store.state.selectedId).toBe(idOf('Three'))
+
+    // Dropping the anchor must leave the inspector pointing at something selected.
+    store.toggleSelected(idOf('Three'))
+    expect(picked()).toEqual(['Two'])
+    expect(store.state.selectedId).toBe(idOf('Two'))
+  })
+
+  it('deletes every selected passage in one undo step', () => {
+    store.editBody(idOf('One'), '[[Go|Two]]')
+    store.editBody(idOf('Two'), '[[Left|Three]]\n[[Right|Four]]')
+    const before = serializeDoc(store.state.doc)
+
+    store.selectSubtree(idOf('Two'))
+    expect(store.removeSelected()).toBeNull()
+    expect(store.state.doc.nodes.map((n) => n.title)).toEqual(['One'])
+    // The link from One is left as written, so Two comes back as a phantom.
+    expect(store.state.notice).toBe(
+      'Deleted 3 passages. 1 link now points at nothing and shows as a dashed card.',
+    )
+
+    store.undo()
+    expect(serializeDoc(store.state.doc)).toBe(before)
+  })
+
+  it('refuses a delete that would strand a surviving passage', () => {
+    store.editBody(idOf('One'), '[[Go|Two]]')
+    store.editBody(idOf('Two'), '[[On|Three]]')
+    const before = serializeDoc(store.state.doc)
+
+    store.select(idOf('Two'))
+    const refusal = store.removePassage(idOf('Two'))
+    expect(refusal).toContain('"Three" would no longer be reachable from the start')
+    expect(store.state.notice).toBe(refusal)
+    // Refused means untouched: no commit, and the selection stands so the
+    // author can add the stranded passage to it.
+    expect(serializeDoc(store.state.doc)).toBe(before)
+    expect(store.state.selectedIds).toEqual([idOf('Two')])
+  })
+
+  it('allows the delete once the stranded passage joins the selection', () => {
+    store.editBody(idOf('One'), '[[Go|Two]]')
+    store.editBody(idOf('Two'), '[[On|Three]]')
+    store.selectSubtree(idOf('Two'))
+    expect(store.removeSelected()).toBeNull()
+    expect(store.state.doc.nodes.map((n) => n.title)).toEqual(['One'])
+  })
+
+  it('does not block on a passage that was already unreachable', () => {
+    store.editBody(idOf('One'), '[[Go|Two]]')
+    store.addPassage()
+    expect(store.removePassage(idOf('Two'))).toBeNull()
+  })
+
+  it('re-anchors on the start once the whole selection is gone', () => {
+    store.editBody(idOf('One'), '[[Go|Two]]\n[[Stay|Three]]')
+    store.select(idOf('Two'))
+    store.toggleSelected(idOf('Three'))
+    store.removeSelected()
+    expect(store.state.selectedId).toBe(idOf('One'))
+    expect(store.state.selectedIds).toEqual([idOf('One')])
+  })
+
+  it('drops passages the selection names when history takes them away', () => {
+    store.editBody(idOf('One'), '[[Go|Two]]\n[[Stay|Three]]')
+    store.select(idOf('Two'))
+    store.toggleSelected(idOf('Three'))
+
+    // Undoing the body edit takes both auto-created passages with it.
+    store.undo()
+    expect(store.state.doc.nodes.map((n) => n.title)).toEqual(['One'])
+    expect(store.state.selectedIds).toEqual([])
+    expect(store.state.selectedId).toBeNull()
+  })
+})

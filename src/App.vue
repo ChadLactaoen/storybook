@@ -102,8 +102,10 @@ function openPassage(id: string) {
   if (n) vp.centerOn(n.x, n.y)
 }
 
+// The guard, the notice and the empty-selection case all live in the store, so
+// the keyboard path and the inspector button cannot drift apart.
 function deleteSelected() {
-  if (store.state.selectedId) store.removePassage(store.state.selectedId)
+  store.removeSelected()
 }
 
 async function toggleBodyEditor() {
@@ -214,6 +216,7 @@ function dismissNotices() {
           :detailed="vp.detailed.value"
           :panning="vp.panning.value"
           :selected-id="store.state.selectedId"
+          :selected-ids="store.selectedIdSet.value"
           :start-node-id="store.state.doc.startNodeId"
           :matches="store.matches.value"
           :state-of="stateOf"
@@ -221,7 +224,7 @@ function dismissNotices() {
           :code-of="codeOf"
           :tag-colors="store.tagColors.value"
           :show-levels="showLevels"
-          @select="store.select($event)"
+          @select="store.applySelect"
           @open="openPassage"
           @create="store.createFromPhantom($event)"
           @wheel="vp.onWheel"
@@ -237,6 +240,7 @@ function dismissNotices() {
           :size="vp.size"
           :state-of="stateOf"
           :selected-id="store.state.selectedId"
+          :selected-ids="store.selectedIdSet.value"
           @goto="vp.centerOn"
         />
 

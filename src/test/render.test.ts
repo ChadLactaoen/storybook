@@ -641,3 +641,99 @@ describe('the character cheat sheet', () => {
     expect(problems).toEqual([])
   })
 })
+
+describe('selecting more than one passage', () => {
+  /** Cards are laid out by title order, so find by text rather than by index. */
+  function card(title: string): HTMLElement {
+    const found = [...host.querySelectorAll<HTMLElement>('.card')].find((el) =>
+      el.textContent?.includes(title),
+    )
+    if (!found) throw new Error(`no card for ${title}`)
+    return found
+  }
+
+  const click = async (title: string, init: MouseEventInit = {}) => {
+    card(title).dispatchEvent(new MouseEvent('click', { bubbles: true, ...init }))
+    await nextTick()
+  }
+
+  async function branchingStory() {
+    mount()
+    store.newStory('Select Check')
+    const id = store.state.doc.nodes[0]!.id
+    store.editBody(id, '[[Go|Two]]')
+    store.editBody(store.state.doc.nodes.find((n) => n.title === 'Two')!.id, '[[On|Three]]')
+    await nextTick()
+  }
+
+  it('takes a subtree from a Cmd-click and a single card from Shift-click', async () => {
+    // The whole point of this test: a dropped second emit payload compiles
+    // fine and only shows up when the real chain runs.
+    await branchingStory()
+
+    await click('Two', { metaKey: true })
+    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Three', 'Two'])
+    expect(host.querySelectorAll('.card.selected')).toHaveLength(2)
+    expect(host.querySelectorAll('.card.anchor')).toHaveLength(1)
+
+    await click('Start', { shiftKey: true })
+    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Start', 'Three', 'Two'])
+
+    await click('Start', { shiftKey: true })
+    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Three', 'Two'])
+
+    // A plain click is still a plain click.
+    await click('Start')
+    expect(store.state.selectedIds).toHaveLength(1)
+    expect(problems).toEqual([])
+  })
+
+  it('summarises the selection in the sidebar instead of the passage editor', async () => {
+    await branchingStory()
+    await click('Two', { metaKey: true })
+
+    const inspector = host.querySelector('.inspector')!
+    expect(inspector.querySelector('.eyebrow')!.textContent).toBe('Selection')
+    expect([...inspector.querySelectorAll('.picked .row')].map((el) => el.textContent!.trim()))
+      .toEqual(['Three', 'Two'])
+    expect(inspector.textContent).toContain('Delete 2 passages')
+    expect(problems).toEqual([])
+  })
+
+  it('deletes the whole selection from the keyboard', async () => {
+    await branchingStory()
+    await click('Two', { metaKey: true })
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace' }))
+    await nextTick()
+
+    expect(store.state.doc.nodes.map((n) => n.title)).toEqual(['Start'])
+    expect(problems).toEqual([])
+  })
+
+  it('refuses a delete that would strand a passage and says so in the banner', async () => {
+    await branchingStory()
+    await click('Two')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace' }))
+    await nextTick()
+
+    expect(store.state.doc.nodes.map((n) => n.title)).toEqual(['Start', 'Two', 'Three'])
+    expect(host.querySelector('.notices')!.textContent).toContain('"Three"')
+    expect(problems).toEqual([])
+  })
+
+  it('clears the selection when the background is clicked', async () => {
+    await branchingStory()
+    await click('Two', { metaKey: true })
+
+    host
+      .querySelector('[data-canvas-background]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+
+    expect(store.state.selectedIds).toEqual([])
+    expect(host.querySelector('.card.selected')).toBeNull()
+    expect(problems).toEqual([])
+  })
+})

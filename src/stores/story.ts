@@ -5,17 +5,36 @@ import { serializeDoc } from '../lib/doc/serialize'
 import { clearLocal, loadLocal, localMeta, saveLocal } from '../lib/doc/storage'
 import type { SavedMeta } from '../lib/doc/storage'
 import { fnv1a } from '../lib/graph/hash'
+import { isPhantomId } from '../lib/graph/constants'
 import { layoutStory } from '../lib/graph/layout'
 import { countPaths } from '../lib/graph/paths'
+import { reachableFrom, strandedBy } from '../lib/graph/reachability'
 import type { LayoutResult } from '../lib/graph/types'
-import type { NodeState, StoryDoc, StoryNode, TagColor, TraitField } from '../types/story'
-import { emptyDoc } from '../types/story'
+import type {
+  NodeState,
+  SelectMode,
+  StoryDoc,
+  StoryNode,
+  TagColor,
+  TraitField,
+} from '../types/story'
+import { compareNodes, emptyDoc } from '../types/story'
 
 const HISTORY_LIMIT = 100
 
 interface State {
   doc: StoryDoc
+  /**
+   * The anchor: the card the inspector and the minimap point at. May be a
+   * phantom id or null, neither of which can appear in `selectedIds`.
+   */
   selectedId: string | null
+  /**
+   * The whole selection: real passage ids only, deduped, in click order. A real
+   * anchor is always a member; a null or phantom anchor means this is empty.
+   * Every write to either field goes through `setSelection` to keep that true.
+   */
+  selectedIds: string[]
   started: boolean
   search: string
   tagFilter: string[]
@@ -32,6 +51,7 @@ interface State {
 const state = reactive<State>({
   doc: emptyDoc(),
   selectedId: null,
+  selectedIds: [],
   started: false,
   search: '',
   tagFilter: [],
@@ -125,6 +145,7 @@ export function undo(): void {
   redoStack.push(state.doc)
   setDoc(prev)
   dropDanglingSheet()
+  pruneSelection()
 }
 
 export function redo(): void {
@@ -133,6 +154,7 @@ export function redo(): void {
   undoStack.push(state.doc)
   setDoc(next)
   dropDanglingSheet()
+  pruneSelection()
 }
 
 /** Stepping through history can remove the character the sheet is describing. */
@@ -173,7 +195,7 @@ export function newStory(title = 'Untitled Story'): void {
   })
   resetViewState()
   setDoc(doc)
-  state.selectedId = node.id
+  select(node.id)
   state.started = true
   state.savedAt = saveLocal(doc)?.savedAt ?? null
 }
@@ -183,7 +205,7 @@ export function resumeStory(): boolean {
   if (!loaded) return false
   resetViewState()
   setDoc(loaded)
-  state.selectedId = loaded.startNodeId ?? loaded.nodes[0]?.id ?? null
+  select(loaded.startNodeId ?? loaded.nodes[0]?.id ?? null)
   state.started = true
   state.savedAt = localMeta()?.savedAt ?? null
   return true
@@ -193,7 +215,7 @@ export function loadStory(json: string): void {
   const { doc: loaded, warnings } = importDoc(json)
   resetViewState()
   setDoc(loaded)
-  state.selectedId = loaded.startNodeId ?? loaded.nodes[0]?.id ?? null
+  select(loaded.startNodeId ?? loaded.nodes[0]?.id ?? null)
   state.started = true
   state.warnings = warnings
   state.savedAt = saveLocal(loaded)?.savedAt ?? null
@@ -210,7 +232,7 @@ export function discardStory(): void {
   cancelPendingSave()
   clearLocal()
   state.started = false
-  state.selectedId = null
+  select(null)
   resetViewState()
   lastLayoutKey = ''
   setDoc(emptyDoc())
@@ -218,8 +240,141 @@ export function discardStory(): void {
 
 /* ---------- selection ---------- */
 
+/** The one place both selection fields are written, so the invariant stays local. */
+function setSelection(ids: readonly string[], anchor: string | null): void {
+  state.selectedIds = [...new Set(ids)]
+  state.selectedId = anchor
+}
+
 export function select(id: string | null): void {
-  state.selectedId = id
+  if (id === null || isPhantomId(id)) setSelection([], id)
+  else setSelection([id], id)
+}
+
+/** Cmd/Ctrl click: the passage and everything it leads to. */
+export function selectSubtree(id: string): void {
+  const g = layout.value.graph
+  if (isPhantomId(id) || !g.byId.has(id)) return select(id)
+  // Phantoms are sinks in the walk, so dropping them here cannot cut the
+  // traversal short — it only keeps undeletable ids out of the selection.
+  setSelection(
+    [...reachableFrom(g, id)].filter((n) => !isPhantomId(n)),
+    id,
+  )
+}
+
+/** Shift click: add or drop one passage, leaving the rest of the selection alone. */
+export function toggleSelected(id: string): void {
+  if (isPhantomId(id)) return select(id)
+  if (!state.selectedIds.includes(id)) {
+    return setSelection([...state.selectedIds, id], id)
+  }
+  const rest = state.selectedIds.filter((x) => x !== id)
+  // Dropping the anchor re-anchors on whatever is left, so the inspector never
+  // describes a passage that is no longer selected.
+  setSelection(rest, state.selectedId === id ? (rest[0] ?? null) : state.selectedId)
+}
+
+/** The single entry point the canvas calls; the card decides the mode. */
+export function applySelect(id: string | null, mode: SelectMode): void {
+  if (id === null || mode === 'replace') return select(id)
+  if (mode === 'subtree') return selectSubtree(id)
+  toggleSelected(id)
+}
+
+/** Stepping through history can remove passages the selection names. */
+function pruneSelection(): void {
+  const live = new Set(state.doc.nodes.map((n) => n.id))
+  const kept = state.selectedIds.filter((id) => live.has(id))
+  const anchorLives =
+    state.selectedId !== null && (isPhantomId(state.selectedId) || live.has(state.selectedId))
+  setSelection(kept, anchorLives ? state.selectedId : (kept[0] ?? null))
+}
+
+/* ---------- delete ---------- */
+
+export interface DeleteImpact {
+  /** Passages the delete would remove, canonical order. */
+  removed: StoryNode[]
+  /** Links in surviving prose that would be left pointing at nothing. */
+  dangling: number
+  /** Surviving passages that would lose their route from the start. */
+  stranded: StoryNode[]
+}
+
+/**
+ * What deleting `ids` would do, or null when none of them exist.
+ *
+ * Reuses the graph layout already derived for the current document: `layoutKey`
+ * memoizes on exactly the fields the graph is built from, so it is never stale.
+ */
+function impactOf(ids: readonly string[]): DeleteImpact | null {
+  const drop = new Set(ids)
+  const removed = state.doc.nodes.filter((n) => drop.has(n.id)).sort(compareNodes)
+  if (removed.length === 0) return null
+  const g = layout.value.graph
+  const dangling = g.edges.filter((e) => !drop.has(e.sourceId) && drop.has(e.targetId)).length
+  const next = M.deleteNodes(state.doc, [...drop])
+  return { removed, dangling, stranded: strandedBy(state.doc, next, g) }
+}
+
+/** Non-null only for a multi-selection; the single-passage path is unchanged. */
+export const deleteImpact = computed<DeleteImpact | null>(() =>
+  state.selectedIds.length > 1 ? impactOf(state.selectedIds) : null,
+)
+
+const NAME_LIMIT = 3
+
+/** `"A", "B" and 2 more` — enough to recognise, short enough for a banner. */
+function quoteList(nodes: readonly StoryNode[]): string {
+  const shown = nodes.slice(0, NAME_LIMIT).map((n) => `"${n.title}"`)
+  const rest = nodes.length - shown.length
+  if (rest > 0) shown.push(`${rest} more`)
+  if (shown.length === 1) return shown[0]!
+  return shown.slice(0, -1).join(', ') + ' and ' + shown[shown.length - 1]!
+}
+
+function strandedMessage(stranded: readonly StoryNode[]): string {
+  const who =
+    stranded.length === 1
+      ? `"${stranded[0]!.title}" would no longer be reachable from the start`
+      : `${stranded.length} passages would no longer be reachable from the start — ${quoteList(stranded)}`
+  const fix = stranded.length === 1 ? 'Delete it too' : 'Delete them too'
+  return `Delete refused: ${who}. ${fix}, or link to ${stranded.length === 1 ? 'it' : 'them'} from a passage that survives.`
+}
+
+function deletedMessage(impact: DeleteImpact): string {
+  const what =
+    impact.removed.length === 1
+      ? `Deleted "${impact.removed[0]!.title}".`
+      : `Deleted ${impact.removed.length} passages.`
+  if (impact.dangling === 0) return what
+  const links =
+    impact.dangling === 1
+      ? '1 link now points at nothing and shows as a dashed card.'
+      : `${impact.dangling} links now point at nothing and show as dashed cards.`
+  return `${what} ${links}`
+}
+
+/**
+ * Delete a set of passages as one undo step, or refuse.
+ *
+ * A delete that would cut a surviving passage off from the start splits the
+ * story into two trees, which is a bug rather than an edit — so it is refused
+ * before anything is committed. Returns the refusal message, else null.
+ */
+function removeIds(ids: readonly string[]): string | null {
+  const impact = impactOf(ids)
+  if (!impact) return null
+  if (impact.stranded.length > 0) {
+    state.notice = strandedMessage(impact.stranded)
+    return state.notice
+  }
+  commit(M.deleteNodes(state.doc, [...ids]))
+  state.notice = deletedMessage(impact)
+  pruneSelection()
+  if (state.selectedId === null) select(state.doc.startNodeId)
+  return null
 }
 
 /* ---------- passage edits ---------- */
@@ -241,13 +396,18 @@ export function addPassage(linkFrom?: string): string {
     }
   }
   commit(next)
-  state.selectedId = node.id
+  select(node.id)
   return node.id
 }
 
-export function removePassage(id: string): void {
-  commit(M.deleteNode(state.doc, id))
-  if (state.selectedId === id) state.selectedId = state.doc.startNodeId
+/** Returns the refusal message when the delete would strand a passage, else null. */
+export function removePassage(id: string): string | null {
+  return removeIds([id])
+}
+
+/** Delete everything currently selected, as one undo step. */
+export function removeSelected(): string | null {
+  return removeIds([...state.selectedIds])
 }
 
 export function rename(id: string, title: string): string | null {
@@ -280,7 +440,7 @@ export function renameStory(title: string): void {
 export function createFromPhantom(title: string): void {
   const next = M.materializePhantom(state.doc, title)
   commit(next)
-  state.selectedId = next.nodes.find((n) => n.title === title)?.id ?? state.selectedId
+  select(next.nodes.find((n) => n.title === title)?.id ?? state.selectedId)
 }
 
 /* ---------- tags ---------- */
@@ -430,6 +590,14 @@ export const selected = computed(
 
 export const selectedLayout = computed(() =>
   state.selectedId ? (layout.value.nodeById.get(state.selectedId) ?? null) : null,
+)
+
+/** Membership test for the canvas and the minimap. */
+export const selectedIdSet = computed(() => new Set(state.selectedIds))
+
+/** The selection as passages, canonical order, ids the document lost dropped. */
+export const selectedNodes = computed(() =>
+  state.doc.nodes.filter((n) => state.selectedIds.includes(n.id)).sort(compareNodes),
 )
 
 export const tags = computed(() => M.allTags(state.doc))

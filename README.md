@@ -32,7 +32,7 @@ Twine.
 | Link forms | `[[Target]]`, `[[Text\|Target]]`, `[[Text->Target]]`, `[[Target<-Text]]` |
 | New passages | Linking to a title that doesn't exist creates it, in TODO state |
 | Renaming | Rewrites the target half of every inbound link; display text is untouched. A colliding rename is blocked |
-| Deleting | Leaves inbound `[[...]]` alone — your prose is never rewritten. The link shows as a dashed phantom card you can click to recreate |
+| Deleting | Leaves inbound `[[...]]` alone — your prose is never rewritten. The link shows as a dashed phantom card you can click to recreate. Refused if it would cut a surviving passage off from the start |
 | Tags | Story-global, reusable from a dropdown, colour-coded from Twine's palette. Recolouring a tag repaints every passage carrying it |
 | Setting | Free text, with autocomplete from settings already used. A passage linked from another inherits its setting |
 | Characters | A story-global cast roster, kept in the author's own order — leads first, walk-ons last. A passage picks its cast from the roster and gives each one a note for *that scene* |
@@ -57,7 +57,11 @@ save when it closes.
 Wheel or pinch to zoom at the cursor, drag the background to pan.
 `Cmd +` / `Cmd -` zoom, `Cmd 0` zooms to fit, `Cmd 1` resets to 100%.
 `Cmd F` focuses search, `Cmd Z` / `Cmd Shift Z` undo and redo, `N` adds a
-passage, `Delete` removes the selected one.
+passage, `Delete` removes everything selected.
+
+`Cmd`-click a card to select it and everything it leads to, `Shift`-click to add
+or drop one, and click the background to clear. With more than one selected the
+sidebar lists them and offers a single delete.
 
 Work auto-saves to `localStorage` on a short debounce. **Export** downloads the
 canonical JSON; **Import** reads it back.

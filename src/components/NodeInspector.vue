@@ -14,6 +14,25 @@ const emit = defineEmits<{ close: []; cheatSheet: [] }>()
 const node = store.selected
 const geom = store.selectedLayout
 
+/**
+ * With more than one passage selected the sidebar switches to a summary: the
+ * per-passage editor has no meaning for a set, and the delete that the set is
+ * for needs somewhere to explain itself.
+ */
+const picked = store.selectedNodes
+const impact = store.deleteImpact
+const multi = computed(() => store.state.selectedIds.length > 1)
+const refused = computed(() => (impact.value?.stranded.length ?? 0) > 0)
+
+const pendingDelete = ref(false)
+watch(multi, () => (pendingDelete.value = false))
+
+function confirmDeleteSelection() {
+  pendingDelete.value = false
+  // A refusal surfaces in the notice banner, the same as the keyboard path.
+  store.removeSelected()
+}
+
 const titleDraft = ref('')
 const titleError = ref<string | null>(null)
 const codeDraft = ref('')
@@ -125,7 +144,64 @@ const upBlockedBy = computed(() => store.blockingParent.value)
 </script>
 
 <template>
-  <aside v-if="node && geom" class="inspector">
+  <aside v-if="multi" class="inspector">
+    <header>
+      <span class="eyebrow">Selection</span>
+      <button class="btn btn-ghost btn-icon" title="Close" @click="emit('close')">&times;</button>
+    </header>
+
+    <div class="scroll">
+      <section>
+        <p class="hint">{{ picked.length }} passages selected</p>
+        <ul class="picked">
+          <li v-for="n in picked" :key="n.id">
+            <button class="row" :title="`Show ${n.title}`" @click="store.select(n.id)">
+              {{ n.title }}
+            </button>
+            <button
+              class="btn btn-ghost btn-icon"
+              title="Remove from the selection"
+              @click="store.toggleSelected(n.id)"
+            >
+              &times;
+            </button>
+          </li>
+        </ul>
+
+        <!-- A blocked action says so where the button is, not only in the
+             banner: the Delete below is disabled and this explains why. -->
+        <div v-if="impact && refused" class="confirm">
+          <span>
+            Deleting these would cut
+            {{ impact.stranded.map((n) => `"${n.title}"`).join(', ') }}
+            off from the start. Select them too, or keep a link to them.
+          </span>
+        </div>
+        <div v-else-if="impact && pendingDelete" class="confirm">
+          <span>
+            Delete {{ picked.length }} passages?
+            <template v-if="impact.dangling > 0">
+              {{ impact.dangling }} {{ impact.dangling === 1 ? 'link' : 'links' }} to them will be
+              left as broken links.
+            </template>
+          </span>
+          <button class="btn btn-ghost btn-icon" title="Cancel" @click="pendingDelete = false">
+            &times;
+          </button>
+          <button class="btn danger" @click="confirmDeleteSelection">Delete</button>
+        </div>
+      </section>
+    </div>
+
+    <footer>
+      <button class="btn" title="Deselect everything" @click="store.select(null)">Clear</button>
+      <button class="btn danger" :disabled="refused" @click="pendingDelete = true">
+        Delete {{ picked.length }} passages
+      </button>
+    </footer>
+  </aside>
+
+  <aside v-else-if="node && geom" class="inspector">
     <header>
       <span class="eyebrow">Passage</span>
       <button class="btn btn-ghost btn-icon" title="Close" @click="emit('close')">&times;</button>
@@ -536,5 +612,53 @@ footer .btn {
 .danger:hover:not(:disabled) {
   border-color: var(--todo);
   color: var(--todo);
+}
+
+.picked {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.picked li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.row {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--panel);
+}
+
+.confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  padding: 7px 8px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+  font-size: 11px;
+}
+
+.confirm span {
+  flex: 1;
 }
 </style>
