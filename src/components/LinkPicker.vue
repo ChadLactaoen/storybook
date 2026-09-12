@@ -11,8 +11,8 @@ import { computed, onMounted, ref } from 'vue'
  */
 
 const props = defineProps<{
-  /** Every passage title in the story, in the order they should be offered. */
-  titles: readonly string[]
+  /** Every passage in the story, in the order they should be offered. */
+  targets: readonly { code: string; title: string }[]
   /** The prose the link will be shown as, empty when nothing was selected. */
   label: string
 }>()
@@ -23,21 +23,31 @@ const input = ref<HTMLInputElement | null>(null)
 const draft = ref('')
 const active = ref(0)
 
+/** Matches on either half: authors recall a passage by name or by code. */
 const matches = computed(() => {
   const q = draft.value.trim().toLowerCase()
-  return q.length === 0 ? props.titles : props.titles.filter((t) => t.toLowerCase().includes(q))
+  if (q.length === 0) return props.targets
+  return props.targets.filter(
+    (t) => t.code.toLowerCase().includes(q) || t.title.toLowerCase().includes(q),
+  )
 })
 
-/** Offering to create a title that already exists would just be a duplicate row. */
+/** Offering to create a name that is already on the list would be a duplicate row. */
 const canCreate = computed(() => {
   const name = draft.value.trim()
-  return name.length > 0 && !props.titles.some((t) => t === name)
+  return name.length > 0 && !props.targets.some((t) => t.title === name)
 })
 
-/** One list for the keyboard to walk, so Enter and the arrows agree on the rows. */
+/**
+ * One list for the keyboard to walk, so Enter and the arrows agree on the rows.
+ *
+ * The create row carries no code: it inserts a bare `[[name]]`, and the code is
+ * minted when the body settles. Picking an existing row inserts its code, which
+ * is what the link actually resolves against.
+ */
 const options = computed(() => {
-  const rows = matches.value.map((title) => ({ title, create: false }))
-  if (canCreate.value) rows.push({ title: draft.value.trim(), create: true })
+  const rows = matches.value.map((t) => ({ code: t.code, title: t.title, create: false }))
+  if (canCreate.value) rows.push({ code: '', title: draft.value.trim(), create: true })
   return rows
 })
 
@@ -54,7 +64,9 @@ function choose(target: string) {
 
 function commit() {
   const row = options.value[Math.min(active.value, options.value.length - 1)]
-  if (row) choose(row.title)
+  // A create row has no code yet, so the bare title goes in and `resolveLinks`
+  // mints one on blur.
+  if (row) choose(row.create ? row.title : row.code)
 }
 
 onMounted(() => input.value?.focus())
@@ -78,14 +90,17 @@ onMounted(() => input.value?.focus())
     <div v-if="options.length > 0" class="menu">
       <button
         v-for="(row, i) in options"
-        :key="row.create ? `+${row.title}` : row.title"
+        :key="row.create ? `+${row.title}` : row.code"
         class="item"
         :class="{ active: i === active, create: row.create }"
-        @mousedown.prevent="choose(row.title)"
+        @mousedown.prevent="choose(row.create ? row.title : row.code)"
         @mousemove="active = i"
       >
         <template v-if="row.create">Create &ldquo;{{ row.title }}&rdquo;</template>
-        <template v-else>{{ row.title }}</template>
+        <template v-else>
+          <span class="row-code">{{ row.code }}</span>
+          <span class="row-title">{{ row.title || 'Untitled' }}</span>
+        </template>
       </button>
     </div>
   </div>
@@ -94,6 +109,21 @@ onMounted(() => input.value?.focus())
 <style scoped>
 .link-picker {
   position: relative;
+}
+
+/* Code first and monospaced: it is what the link will actually contain, and a
+   fixed column keeps the titles beside it aligned. */
+.row-code {
+  display: inline-block;
+  min-width: 3.5em;
+  margin-right: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.row-title {
+  opacity: 0.95;
 }
 
 .menu {

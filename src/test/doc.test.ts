@@ -6,6 +6,7 @@ import {
   deleteNode,
   deleteNodes,
   renameNode,
+  resolveLinks,
   setBody,
   setCode,
   setTagColor,
@@ -36,7 +37,7 @@ describe('link parsing', () => {
   })
 })
 
-describe('rename cascade', () => {
+describe('code cascade', () => {
   it('rewrites the target half of every link form, leaving display text alone', () => {
     const body = 'a [[Cave]] b [[Go north|Cave]] c [[Go north->Cave]] d [[Cave<-Go north]] e'
     expect(retargetLinks(body, 'Cave', 'Dark Cave')).toBe(
@@ -50,56 +51,134 @@ describe('rename cascade', () => {
     )
   })
 
-  it('updates every parent that linked to the renamed passage', () => {
-    const doc = docFrom({ One: ['Cave'], Two: ['Cave'], Cave: [] })
+  it('updates every parent that linked to the recoded passage', () => {
+    const doc = docFrom({ One: ['Cave'], Two: ['Cave'], Cave: [] }, { codes: { Cave: 'Cave' } })
     const caveId = doc.nodes.find((n) => n.title === 'Cave')!.id
-    const { doc: next, error } = renameNode(doc, caveId, 'Grotto')
+    const { doc: next, error } = setCode(doc, caveId, 'Grotto')
     expect(error).toBeNull()
 
     const g = deriveGraph(next)
     expect(g.phantoms).toHaveLength(0)
     for (const title of ['One', 'Two']) {
       const body = next.nodes.find((n) => n.title === title)!.body
+      // Only the target half moves; the display text the author wrote stays put.
       expect(body).toContain('[[Go to Cave|Grotto]]')
     }
   })
 
-  it('refuses a colliding rename and changes nothing', () => {
+  it('refuses a colliding code and changes nothing', () => {
     const doc = docFrom({ One: [], Two: [] })
     const id = doc.nodes.find((n) => n.title === 'One')!.id
-    const { doc: next, error } = renameNode(doc, id, 'Two')
-    expect(error).toBe('A passage named "Two" already exists.')
+    const { doc: next, error } = setCode(doc, id, 'P2')
+    expect(error).toBe('Code "P2" is already used by "Two".')
     expect(next).toBe(doc)
   })
 
-  it('refuses an empty rename', () => {
+  it('refuses an empty code', () => {
     const doc = docFrom({ One: [] })
     const id = doc.nodes[0]!.id
-    expect(renameNode(doc, id, '   ').error).toBe('A passage needs a title.')
+    expect(setCode(doc, id, '   ').error).toBe('A passage needs a code.')
+  })
+
+  it('treats codes as case-sensitive, so 3a and 3A are different passages', () => {
+    const doc = docFrom({ One: [], Two: [] }, { codes: { One: '3A' } })
+    const two = doc.nodes.find((n) => n.title === 'Two')!.id
+    const { error } = setCode(doc, two, '3a')
+    expect(error).toBeNull()
+  })
+
+  it('renames a title without touching a single link', () => {
+    const doc = docFrom({ One: ['Two'], Two: [] })
+    const two = doc.nodes.find((n) => n.title === 'Two')!.id
+    const next = renameNode(doc, two, 'The Cave')
+
+    expect(next.nodes.find((n) => n.id === two)!.title).toBe('The Cave')
+    expect(next.nodes.find((n) => n.title === 'One')!.body).toBe(
+      doc.nodes.find((n) => n.title === 'One')!.body,
+    )
+    expect(deriveGraph(next).phantoms).toHaveLength(0)
+  })
+
+  it('lets two passages share a title', () => {
+    const doc = docFrom({ One: ['Two'], Two: [] })
+    const next = renameNode(doc, doc.nodes.find((n) => n.title === 'Two')!.id, 'One')
+
+    expect(next.nodes.map((n) => n.title)).toEqual(['One', 'One'])
+    // Structure is untouched: the link still names a code, and codes are unique.
+    const g = deriveGraph(next)
+    expect(g.phantoms).toHaveLength(0)
+    expect(g.edges).toHaveLength(1)
   })
 })
 
 describe('auto-create and delete', () => {
-  it('creates a passage when a body links somewhere new', () => {
+  it('creates nothing while the author is still typing', () => {
     const { doc: withOne } = createNode(emptyDoc(), { title: 'One' })
-    const next = setBody(withOne, withOne.nodes[0]!.id, '[[Go|Cave]]')
-    expect(next.nodes.map((n) => n.title).sort()).toEqual(['Cave', 'One'])
+    const typed = setBody(withOne, withOne.nodes[0]!.id, '[[Go|Cave]]')
+    expect(typed.nodes).toHaveLength(1)
+  })
+
+  it('creates a passage when a body that links somewhere new settles', () => {
+    const { doc: withOne } = createNode(emptyDoc(), { title: 'One' })
+    const id = withOne.nodes[0]!.id
+    const next = resolveLinks(setBody(withOne, id, '[[Go|Cave]]'), id, '')
+
+    // The author named the code; the link's display text becomes the title.
+    const made = next.nodes.find((n) => n.id !== id)!
+    expect(made.code).toBe('Cave')
+    expect(made.title).toBe('Go')
+  })
+
+  it('mints a code for a bare link and writes it back into the prose', () => {
+    const { doc: withOne } = createNode(emptyDoc(), { title: 'One' })
+    const id = withOne.nodes[0]!.id
+    const next = resolveLinks(setBody(withOne, id, 'Go on. [[Head north]] or stay.'), id, '')
+
+    const made = next.nodes.find((n) => n.id !== id)!
+    expect(made.title).toBe('Head north')
+    expect(made.code).toBe('P2')
+    // Only the target half is spliced; the prose around it is byte-identical.
+    expect(next.nodes.find((n) => n.id === id)!.body).toBe('Go on. [[Head north|P2]] or stay.')
+  })
+
+  it('gives two bare links to the same name one passage', () => {
+    const { doc: withOne } = createNode(emptyDoc(), { title: 'One' })
+    const id = withOne.nodes[0]!.id
+    const next = resolveLinks(setBody(withOne, id, '[[Head north]] and [[Head north]]'), id, '')
+
+    expect(next.nodes).toHaveLength(2)
+    expect(next.nodes.find((n) => n.id === id)!.body).toBe(
+      '[[Head north|P2]] and [[Head north|P2]]',
+    )
+  })
+
+  it('does not match a bare link against a title', () => {
+    const doc = docFrom({ One: [], Cave: [] })
+    const id = doc.nodes.find((n) => n.title === 'One')!.id
+    const next = resolveLinks(setBody(doc, id, '[[Cave]]'), id, '')
+
+    // Titles are cosmetic, so the existing "Cave" is not a link target. A second
+    // passage is created, and the two share a title quite legally.
+    expect(next.nodes.filter((n) => n.title === 'Cave')).toHaveLength(2)
+    expect(deriveGraph(next).phantoms).toHaveLength(0)
   })
 
   it('does not resurrect a passage that was deleted while still linked', () => {
     let doc = createNode(emptyDoc(), { title: 'One' }).doc
     const oneId = doc.nodes[0]!.id
-    doc = setBody(doc, oneId, '[[Go|Cave]]')
-    const caveId = doc.nodes.find((n) => n.title === 'Cave')!.id
+    doc = resolveLinks(setBody(doc, oneId, '[[Go|Cave]]'), oneId, '')
+    const caveId = doc.nodes.find((n) => n.code === 'Cave')!.id
 
     doc = deleteNode(doc, caveId)
     expect(doc.nodes.map((n) => n.title)).toEqual(['One'])
     // The author's prose is untouched; the link surfaces as a phantom instead.
     expect(doc.nodes[0]!.body).toBe('[[Go|Cave]]')
-    expect(deriveGraph(doc).phantoms.map((p) => p.title)).toEqual(['Cave'])
+    expect(deriveGraph(doc).phantoms.map((p) => p.code)).toEqual(['Cave'])
 
-    // Editing elsewhere in the body must not bring it back.
-    doc = setBody(doc, oneId, 'Some prose. [[Go|Cave]]')
+    // Settling again must not bring it back — `[[Go|Cave]]` reads as an
+    // instruction to create "Cave", and only the guard stops it.
+    const before = doc.nodes[0]!.body
+    doc = resolveLinks(setBody(doc, oneId, 'Some prose. [[Go|Cave]]'), oneId, before)
     expect(doc.nodes.map((n) => n.title)).toEqual(['One'])
   })
 
@@ -110,7 +189,7 @@ describe('auto-create and delete', () => {
     expect(next.nodes.map((n) => n.title)).toEqual(['One'])
     // Same rule as a single delete: the author's markup is never rewritten.
     expect(next.nodes[0]!.body).toBe(doc.nodes[0]!.body)
-    expect(deriveGraph(next).phantoms.map((p) => p.title)).toEqual(['Three', 'Two'])
+    expect(deriveGraph(next).phantoms.map((p) => p.code)).toEqual(['P2', 'P3'])
   })
 
   it('returns the same document when nothing matches', () => {
@@ -176,10 +255,16 @@ describe('save file', () => {
       }),
     )
     expect(doc.nodes).toHaveLength(2)
-    expect(doc.nodes.map((n) => n.title).sort()).toEqual(['One', 'One (2)'])
+    // Duplicate titles are legal now, so the repair leaves both alone.
+    expect(doc.nodes.map((n) => n.title)).toEqual(['One', 'One'])
     expect(doc.nodes.every((n) => n.state === 'TODO')).toBe(true)
     expect(doc.nodes.every((n) => n.levelOffset <= 1)).toBe(true)
     expect(warnings.length).toBeGreaterThan(0)
+  })
+
+  it('leaves an untitled passage untitled rather than inventing a name', () => {
+    const { doc } = parseDoc(JSON.stringify({ nodes: [{ id: '1', code: 'A3', body: '' }] }))
+    expect(doc.nodes[0]!.title).toBe('')
   })
 })
 
@@ -187,8 +272,17 @@ describe('passage code', () => {
   const doc = docFrom({ One: ['Two'], Two: [] })
   const [one, two] = [doc.nodes[0]!.id, doc.nodes[1]!.id]
 
-  it('has no default', () => {
-    expect(doc.nodes.every((n) => n.code === '')).toBe(true)
+  it('is minted from the id, so every passage has one', () => {
+    const made = createNode(emptyDoc(), { title: 'One' })
+    expect(made.node.code).toBe('P1')
+    expect(createNode(made.doc, {}).node.code).toBe('P2')
+  })
+
+  it('steps past a code the author already typed by hand', () => {
+    // `P2` is the code the counter is about to reach; minting must skip it
+    // rather than hand out a duplicate link target.
+    const taken = setCode(createNode(emptyDoc(), {}).doc, '1', 'P2').doc
+    expect(createNode(taken, {}).node.code).toBe('P3')
   })
 
   it('sets and trims a code', () => {
@@ -196,11 +290,17 @@ describe('passage code', () => {
     expect(next.nodes.find((n) => n.id === one)!.code).toBe('A3')
   })
 
-  it('clears a code with an empty value', () => {
+  it('refuses to clear a code, since an uncoded passage is unreachable', () => {
     const set = setCode(doc, one, 'A3').doc
     const cleared = setCode(set, one, '   ')
-    expect(cleared.error).toBeNull()
-    expect(cleared.doc.nodes.find((n) => n.id === one)!.code).toBe('')
+    expect(cleared.error).toBe('A passage needs a code.')
+    expect(cleared.doc).toBe(set)
+  })
+
+  it('refuses a code carrying link syntax', () => {
+    // Spliced into every inbound `[[...]]`, such a code would re-point the link.
+    expect(setCode(doc, one, 'A->B').error).toContain('->')
+    expect(setCode(doc, one, 'A|B').error).toContain('|')
   })
 
   it('rejects a duplicate, naming the passage that holds it', () => {
@@ -210,9 +310,9 @@ describe('passage code', () => {
     expect(clash.doc).toBe(set)
   })
 
-  it('treats codes differing only in case as the same code', () => {
+  it('treats codes differing only in case as different codes', () => {
     const set = setCode(doc, one, 'A3').doc
-    expect(setCode(set, two, 'a3').error).not.toBeNull()
+    expect(setCode(set, two, 'a3').error).toBeNull()
   })
 
   it('keeps the author\'s capitalisation', () => {
@@ -220,15 +320,9 @@ describe('passage code', () => {
     expect(set.nodes.find((n) => n.id === one)!.code).toBe('a3')
   })
 
-  it('lets many passages have no code at once', () => {
-    expect(setCode(doc, one, '').error).toBeNull()
-    expect(setCode(doc, two, '').error).toBeNull()
-  })
-
   it('returns the identical document for a no-op, protecting the undo stack', () => {
     const set = setCode(doc, one, 'A3').doc
     expect(setCode(set, one, 'A3').doc).toBe(set)
-    expect(setCode(doc, one, '').doc).toBe(doc)
   })
 
   it('survives a save-file round trip', () => {
@@ -238,26 +332,47 @@ describe('passage code', () => {
     expect(serializeDoc(back)).toBe(serializeDoc(set))
   })
 
-  it('loads a file that predates codes with every code empty', () => {
+  it('invents a code for a file that has none, reusing the id', () => {
     const { doc: loaded, warnings } = parseDoc(
       JSON.stringify({ nodes: [{ id: '1', title: 'One', body: '' }] }),
     )
-    expect(loaded.nodes[0]!.code).toBe('')
-    expect(warnings).toEqual([])
+    // `P<id>` is what `createNode` would have minted, so a file stripped of its
+    // codes reloads with the codes it started with.
+    expect(loaded.nodes[0]!.code).toBe('P1')
+    expect(warnings.length).toBeGreaterThan(0)
   })
 
-  it('clears a duplicated code in a hand-edited file, with a warning', () => {
+  it('keeps a hand-edited duplicate code for the first passage only', () => {
     const { doc: loaded, warnings } = parseDoc(
       JSON.stringify({
         nodes: [
           { id: '1', title: 'One', body: '', code: 'A3' },
-          { id: '2', title: 'Two', body: '', code: 'a3' },
+          { id: '2', title: 'Two', body: '', code: 'A3' },
         ],
       }),
     )
-    const byTitle = new Map(loaded.nodes.map((n) => [n.title, n.code]))
-    expect(byTitle.get('One')).toBe('A3')
-    expect(byTitle.get('Two')).toBe('')
-    expect(warnings.some((w) => w.includes('A3') || w.includes('a3'))).toBe(true)
+    const byId = new Map(loaded.nodes.map((n) => [n.id, n.code]))
+    expect(byId.get('1')).toBe('A3')
+    // The loser cannot simply be cleared: a passage with no code is unreachable.
+    expect(byId.get('2')).toBe('P2')
+    expect(warnings.some((w) => w.includes('A3'))).toBe(true)
+  })
+
+  it('bumps nextId past every code it invents', () => {
+    // Non-numeric ids, so `P<id>` is unavailable and the counter is the only
+    // source of codes.
+    const { doc: loaded } = parseDoc(
+      JSON.stringify({ nodes: [{ id: 'a', title: 'One' }, { id: 'b', title: 'Two' }] }),
+    )
+    expect(loaded.nodes.map((n) => n.code)).toEqual(['P1', 'P2'])
+    // Left at 1, the next passage added would be minted a code already in use.
+    expect(loaded.nextId).toBe(3)
+  })
+
+  it('skips a code the author typed by hand when minting the next one', () => {
+    const { doc: loaded } = parseDoc(
+      JSON.stringify({ nodes: [{ id: '1', title: 'One', code: 'P2' }], nextId: 2 }),
+    )
+    expect(createNode(loaded, {}).node.code).toBe('P3')
   })
 })

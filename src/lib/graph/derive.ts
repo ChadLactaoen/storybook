@@ -8,34 +8,42 @@ import type { DerivedEdge, DerivedGraph, EdgeId, GraphNode, PhantomNode } from '
  * Build the edge set by parsing every body. Edges are never stored in the
  * document; body text is the sole source of truth for structure.
  *
- * Link targets that do not resolve become *phantoms*: dashed placeholder cards
- * that participate fully in layout. Deriving never creates real nodes — that is
- * a document mutation triggered by editing a body (see lib/doc/mutations.ts).
- * Keeping the two separate is what lets a deleted-but-still-linked passage stay
- * deleted instead of being resurrected by the next re-derive.
+ * Links resolve against `StoryNode.code`, never the title: a title is cosmetic
+ * and two passages may share one. Targets that resolve to nothing become
+ * *phantoms*: dashed placeholder cards that participate fully in layout.
+ * Deriving never creates real nodes — that is a document mutation triggered by
+ * editing a body (see lib/doc/mutations.ts). Keeping the two separate is what
+ * lets a deleted-but-still-linked passage stay deleted instead of being
+ * resurrected by the next re-derive.
  */
 export function deriveGraph(doc: StoryDoc): DerivedGraph {
   const nodes = [...doc.nodes].sort(compareNodes)
 
-  const idByTitle = new Map<string, NodeId>()
+  // Built from the canonically sorted nodes rather than `doc.nodes`, so that
+  // "first wins" means "first in canonical order". A hand-edited file carrying
+  // a duplicate code would otherwise resolve its links one way or the other
+  // depending on array order, and layout would stop being shuffle-invariant.
+  const idByCode = new Map<string, NodeId>()
   for (const n of nodes) {
-    if (!idByTitle.has(n.title)) idByTitle.set(n.title, n.id)
+    if (n.code.length > 0 && !idByCode.has(n.code)) idByCode.set(n.code, n.id)
   }
 
-  const phantomByTitle = new Map<string, PhantomNode>()
+  const phantomByCode = new Map<string, PhantomNode>()
   const edges: DerivedEdge[] = []
 
   for (const node of nodes) {
     for (const link of parseLinks(node.body)) {
-      let targetId = idByTitle.get(link.target)
+      let targetId = idByCode.get(link.target)
       let dangling = false
 
       if (targetId === undefined) {
         dangling = true
-        let phantom = phantomByTitle.get(link.target)
+        let phantom = phantomByCode.get(link.target)
         if (phantom === undefined) {
-          phantom = { id: PHANTOM_PREFIX + link.target, title: link.target }
-          phantomByTitle.set(link.target, phantom)
+          // The first link to reach a phantom names it. Last-wins would make the
+          // card's caption change whenever an unrelated passage was edited.
+          phantom = { id: PHANTOM_PREFIX + link.target, code: link.target, label: link.label }
+          phantomByCode.set(link.target, phantom)
         }
         targetId = phantom.id
       }
@@ -44,7 +52,7 @@ export function deriveGraph(doc: StoryDoc): DerivedGraph {
         id: `${node.id}|${link.ordinal}`,
         sourceId: node.id,
         targetId,
-        targetTitle: link.target,
+        targetCode: link.target,
         label: link.label,
         ordinal: link.ordinal,
         span: link.span,
@@ -54,24 +62,28 @@ export function deriveGraph(doc: StoryDoc): DerivedGraph {
     }
   }
 
-  const phantoms = [...phantomByTitle.values()].sort((a, b) =>
-    compareStr(a.title, b.title) || compareStr(a.id, b.id),
+  const phantoms = [...phantomByCode.values()].sort((a, b) =>
+    compareStr(a.code, b.code) || compareStr(a.id, b.id),
   )
 
   const byId = new Map<NodeId, GraphNode>()
+  const codeOf = new Map<NodeId, string>()
   const titleOf = new Map<NodeId, string>()
   const stateOf = new Map<NodeId, StoryNode['state'] | null>()
   const ids: NodeId[] = []
 
   for (const n of nodes) {
     byId.set(n.id, n)
+    codeOf.set(n.id, n.code)
     titleOf.set(n.id, n.title)
     stateOf.set(n.id, n.state)
     ids.push(n.id)
   }
   for (const p of phantoms) {
     byId.set(p.id, p)
-    titleOf.set(p.id, p.title)
+    codeOf.set(p.id, p.code)
+    // A phantom has no title, only the display text some link proposed for it.
+    titleOf.set(p.id, p.label ?? '')
     stateOf.set(p.id, null)
     ids.push(p.id)
   }
@@ -101,18 +113,20 @@ export function deriveGraph(doc: StoryDoc): DerivedGraph {
     byId,
     outAdj,
     inAdj,
+    codeOf,
     titleOf,
     stateOf,
   }
 }
 
-/** Titles used by more than one node — invalid, but possible in a hand-edited file. */
-export function duplicateTitles(doc: StoryDoc): string[] {
+/** Codes used by more than one node — invalid, but possible in a hand-edited file. */
+export function duplicateCodes(doc: StoryDoc): string[] {
   const seen = new Set<string>()
   const dupes = new Set<string>()
   for (const n of doc.nodes) {
-    if (seen.has(n.title)) dupes.add(n.title)
-    seen.add(n.title)
+    if (n.code.length === 0) continue
+    if (seen.has(n.code)) dupes.add(n.code)
+    seen.add(n.code)
   }
   return [...dupes].sort(compareStr)
 }

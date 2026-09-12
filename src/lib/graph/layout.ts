@@ -1,10 +1,10 @@
 import type { NodeId, StoryDoc } from '../../types/story'
-import { compareStr } from '../../types/story'
+import { compareStr, nodeLabel } from '../../types/story'
 import { findBackEdges } from './acyclic'
 import { findComponents } from './components'
 import { DEFAULT_CONFIG, isPhantomId } from './constants'
 import { countCrossings } from './crossings'
-import { deriveGraph, duplicateTitles } from './derive'
+import { deriveGraph, duplicateCodes } from './derive'
 import { fnv1a } from './hash'
 import { assignLevels } from './layering'
 import { buildLayeredGraph, realKey } from './layered'
@@ -14,12 +14,18 @@ import { routeEdges } from './routing'
 import { assignX, assignY } from './xcoord'
 import type {
   Bounds,
+  DerivedGraph,
   Diagnostic,
   LayoutConfig,
   LayoutResult,
   LevelBand,
   NodeLayout,
 } from './types'
+
+/** How a passage is named inside a diagnostic. Works for phantoms too. */
+function label(g: DerivedGraph, id: NodeId): string {
+  return nodeLabel(g.codeOf.get(id) ?? '', g.titleOf.get(id) ?? '') || id
+}
 
 function round(v: number, precision: number): number {
   const f = 10 ** precision
@@ -42,12 +48,14 @@ export function layoutStory(doc: StoryDoc, config?: Partial<LayoutConfig>): Layo
 
   const g = deriveGraph(doc)
 
-  for (const title of duplicateTitles(doc)) {
+  for (const dupe of duplicateCodes(doc)) {
     diagnostics.push({
-      code: 'duplicate-title',
+      code: 'duplicate-code',
       severity: 'error',
-      message: `More than one passage is titled "${title}". Links to it are ambiguous.`,
-      nodeIds: doc.nodes.filter((n) => n.title === title).map((n) => n.id),
+      // `g.nodes`, not `doc.nodes`: filtering the document would put these ids in
+      // array order, and layout has to be identical for any shuffle of the nodes.
+      message: `More than one passage uses the code "${dupe}". Links to it are ambiguous.`,
+      nodeIds: g.nodes.filter((n) => n.code === dupe).map((n) => n.id),
       edgeIds: [],
     })
   }
@@ -58,7 +66,7 @@ export function layoutStory(doc: StoryDoc, config?: Partial<LayoutConfig>): Layo
     diagnostics.push({
       code: 'cycle',
       severity: 'info',
-      message: `Loop: ${cycle.map((id) => g.titleOf.get(id) ?? id).join(' → ')}`,
+      message: `Loop: ${cycle.map((id) => label(g, id)).join(' → ')}`,
       nodeIds: [...cycle],
       edgeIds: [],
     })
@@ -83,7 +91,8 @@ export function layoutStory(doc: StoryDoc, config?: Partial<LayoutConfig>): Layo
     if (!ln) continue
     nodes.push({
       id,
-      title: g.titleOf.get(id) ?? id,
+      code: g.codeOf.get(id) ?? id,
+      title: g.titleOf.get(id) ?? '',
       level: lv.level.get(id) ?? 1,
       layer: ln.layer,
       order: ln.order,
@@ -96,7 +105,7 @@ export function layoutStory(doc: StoryDoc, config?: Partial<LayoutConfig>): Layo
       levelOffset: Math.min(1, Math.max(0, Math.trunc(offsets.get(id) ?? 0))),
     })
   }
-  nodes.sort((a, b) => compareStr(a.title, b.title) || compareStr(a.id, b.id))
+  nodes.sort((a, b) => compareStr(a.code, b.code) || compareStr(a.id, b.id))
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
 
@@ -104,7 +113,7 @@ export function layoutStory(doc: StoryDoc, config?: Partial<LayoutConfig>): Layo
     diagnostics.push({
       code: 'dangling-link',
       severity: 'warn',
-      message: `No passage titled "${p.title}" exists.`,
+      message: `No passage has the code "${p.code}".`,
       nodeIds: [p.id],
       edgeIds: g.edges.filter((e) => e.targetId === p.id).map((e) => e.id),
     })
@@ -115,7 +124,7 @@ export function layoutStory(doc: StoryDoc, config?: Partial<LayoutConfig>): Layo
     diagnostics.push({
       code: 'self-loop',
       severity: 'info',
-      message: `"${g.titleOf.get(e.sourceId)}" links to itself.`,
+      message: `"${label(g, e.sourceId)}" links to itself.`,
       nodeIds: [e.sourceId],
       edgeIds: [e.id],
     })
@@ -130,7 +139,7 @@ export function layoutStory(doc: StoryDoc, config?: Partial<LayoutConfig>): Layo
         severity: 'info',
         message:
           orphans.length === 1
-            ? `"${orphans[0]!.title}" is not reachable from the start.`
+            ? `"${label(g, orphans[0]!.id)}" is not reachable from the start.`
             : `${orphans.length} passages are not reachable from the start.`,
         nodeIds: orphans.map((n) => n.id),
         edgeIds: [],

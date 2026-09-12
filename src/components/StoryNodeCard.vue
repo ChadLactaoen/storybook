@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { NodeLayout } from '../lib/graph/types'
+import { nodeLabel } from '../types/story'
 import type { NodeState, SelectMode, TagColor } from '../types/story'
 
 const props = defineProps<{
   node: NodeLayout
   state: NodeState | null
   tags: string[]
-  code: string
   tagColors: Map<string, TagColor>
   /** In the selection — one card of possibly many. */
   selected: boolean
@@ -22,7 +22,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [id: string, mode: SelectMode]
   open: [id: string]
-  create: [title: string]
+  create: [phantomId: string]
 }>()
 
 /** Mirrors the `metaKey || ctrlKey` test in useShortcuts, so the guide can say "Cmd/Ctrl" once. */
@@ -33,6 +33,9 @@ function modeOf(e: MouseEvent): SelectMode {
 }
 
 /** Only coloured tags earn a stripe; `none` tags still show as a chip below. */
+/** Hover text: titles repeat, so the code has to be in here to identify the card. */
+const label = computed(() => nodeLabel(props.node.code, props.node.title))
+
 const stripes = computed(() =>
   props.tags
     .map((t) => props.tagColors.get(t) ?? 'none')
@@ -62,10 +65,10 @@ const style = computed(() => ({
       },
     ]"
     :style="style"
-    :title="node.title"
+    :title="label"
     @pointerdown.stop
     @click.stop="emit('select', node.id, modeOf($event))"
-    @dblclick.stop="node.isPhantom ? emit('create', node.title) : emit('open', node.id)"
+    @dblclick.stop="node.isPhantom ? emit('create', node.id) : emit('open', node.id)"
   >
     <div v-if="stripes.length > 0" class="stripes">
       <span
@@ -79,8 +82,9 @@ const style = computed(() => ({
     <span v-if="!node.isPhantom" class="badge" :title="state ?? 'TODO'" />
 
     <div class="body">
-      <div v-if="code" class="code">{{ code }}</div>
-      <div class="title">{{ node.title }}</div>
+      <div class="code">{{ node.code }}</div>
+      <div v-if="node.title" class="title">{{ node.title }}</div>
+      <div v-else class="title untitled">Untitled</div>
 
       <template v-if="detailed">
         <div v-if="node.isPhantom" class="missing">No such passage &mdash; double-click to create</div>
@@ -219,6 +223,11 @@ const style = computed(() => ({
   -webkit-box-orient: vertical;
   overflow: hidden;
   overflow-wrap: anywhere;
+}
+
+.title.untitled {
+  opacity: 0.45;
+  font-style: italic;
 }
 
 .card.plain .title {

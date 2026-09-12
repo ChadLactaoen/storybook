@@ -3,7 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, ref } from 'vue'
 import type { App as VueApp } from 'vue'
 import TraitList from '../components/TraitList.vue'
-import { renameNode, renameSetting, setStartNode, setStoryTitle, setTagColor } from '../lib/doc/mutations'
+import {
+  renameNode,
+  renameSetting,
+  setCode,
+  setStartNode,
+  setStoryTitle,
+  setTagColor,
+} from '../lib/doc/mutations'
+import { deriveGraph } from '../lib/graph/derive'
 import { serializeDoc } from '../lib/doc/serialize'
 import * as store from '../stores/story'
 import { docFrom } from './helpers'
@@ -141,16 +149,28 @@ describe('mutations that should be no-ops', () => {
   })
 })
 
-describe('passage titles and link syntax', () => {
-  it('refuses a title that would corrupt the links pointing at it', () => {
+describe('passage codes and link syntax', () => {
+  it('refuses a code that would corrupt the links pointing at it', () => {
     const doc = docFrom({ North: [], Start: ['North'] })
     const id = doc.nodes.find((n) => n.title === 'North')!.id
 
     for (const bad of ['North->South', 'South<-North', 'North|South', 'North]]']) {
-      const { doc: after, error } = renameNode(doc, id, bad)
+      const { doc: after, error } = setCode(doc, id, bad)
       expect(error).toMatch(/link/i)
       expect(after).toBe(doc)
     }
+  })
+
+  it('accepts the same strings as a title, which no link ever reads', () => {
+    const doc = docFrom({ North: [], Start: ['North'] })
+    const id = doc.nodes.find((n) => n.title === 'North')!.id
+    const before = doc.nodes.find((n) => n.title === 'Start')!.body
+
+    const after = renameNode(doc, id, 'North->South')
+    expect(after.nodes.find((n) => n.id === id)!.title).toBe('North->South')
+    // The parent's prose is untouched, so the link still resolves.
+    expect(after.nodes.find((n) => n.title === 'Start')!.body).toBe(before)
+    expect(deriveGraph(after).phantoms).toHaveLength(0)
   })
 })
 

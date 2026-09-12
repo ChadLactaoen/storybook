@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import * as store from '../stores/story'
-import { TRAIT_FIELDS, TRAIT_LABELS } from '../types/story'
+import { TRAIT_FIELDS, TRAIT_LABELS, nodeLabel } from '../types/story'
 
 /**
  * Reference for the passage being written: every cast member's story-wide
@@ -88,7 +88,7 @@ watch(
 
     <div class="scroll">
       <p v-if="node" class="where">
-        Cast of <strong>{{ node.title }}</strong>
+        Cast of <strong>{{ nodeLabel(node.code, node.title) }}</strong>
       </p>
 
       <article v-for="card in cards" :key="card.name" class="member">

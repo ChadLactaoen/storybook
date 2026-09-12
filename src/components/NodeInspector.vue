@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { formatCount } from '../lib/graph/paths'
 import * as store from '../stores/story'
 import type { NodeState, TagColor } from '../types/story'
-import { NODE_STATES, compareStr } from '../types/story'
+import { NODE_STATES, compareNodes, nodeLabel } from '../types/story'
 import BodyDialog from './BodyDialog.vue'
 import CharacterPicker from './CharacterPicker.vue'
 import HarloweEditor from './HarloweEditor.vue'
@@ -34,7 +34,6 @@ function confirmDeleteSelection() {
 }
 
 const titleDraft = ref('')
-const titleError = ref<string | null>(null)
 const codeDraft = ref('')
 const codeError = ref<string | null>(null)
 
@@ -42,29 +41,25 @@ watch(
   node,
   (n) => {
     titleDraft.value = n?.title ?? ''
-    titleError.value = null
     codeDraft.value = n?.code ?? ''
     codeError.value = null
   },
   { immediate: true },
 )
 
+// Nothing to validate: titles are cosmetic, repeatable and may be left empty.
 function commitTitle() {
   if (!node.value) return
-  if (titleDraft.value.trim() === node.value.title) {
-    titleError.value = null
-    return
-  }
-  titleError.value = store.rename(node.value.id, titleDraft.value)
+  store.rename(node.value.id, titleDraft.value)
 }
 
 function revertTitle() {
   titleDraft.value = node.value?.title ?? ''
-  titleError.value = null
 }
 
 // Committed on blur rather than per keystroke, because a code has to be unique:
-// typing "A3" over an existing "A" would otherwise fail on every character.
+// typing "A3" over an existing "A" would otherwise fail on every character. The
+// commit also rewrites every inbound link, which is not a per-keystroke job.
 function commitCode() {
   if (!node.value) return
   if (codeDraft.value.trim() === node.value.code) {
@@ -84,8 +79,41 @@ const body = computed({
   set: (v: string) => node.value && store.editBody(node.value.id, v),
 })
 
+/**
+ * The body as it stood when the author started editing.
+ *
+ * `resolveLinks` needs it to tell a link they just wrote from one that was
+ * already there and deliberately left dangling. Captured lazily on the first
+ * keystroke after a settle, because focus alone is not an edit.
+ */
+const bodyAtFocus = ref<string | null>(null)
+
+// Keyed on the id, not the node: every mutation clones, so watching the object
+// would reset this on the author's own keystroke and the body would never settle.
+watch(
+  () => node.value?.id,
+  () => {
+    bodyAtFocus.value = null
+  },
+)
+
+function onBodyInput(v: string) {
+  if (!node.value) return
+  if (bodyAtFocus.value === null) bodyAtFocus.value = node.value.body
+  store.editBody(node.value.id, v)
+}
+
+/** The author has left the editor: bind the links they wrote. */
+function settleBody() {
+  const was = bodyAtFocus.value
+  bodyAtFocus.value = null
+  if (node.value && was !== null) store.resolveBody(node.value.id, was)
+}
+
 /** What the editor's link picker offers, here and in the pop-out. */
-const titles = computed(() => store.state.doc.nodes.map((n) => n.title).sort(compareStr))
+const targets = computed(() =>
+  [...store.state.doc.nodes].sort(compareNodes).map((n) => ({ code: n.code, title: n.title })),
+)
 
 const pathCount = computed(() =>
   node.value ? formatCount(store.pathsFrom(node.value.id)) : '0',
@@ -158,8 +186,12 @@ const upBlockedBy = computed(() => store.blockingParent.value)
         <p class="hint">{{ picked.length }} passages selected</p>
         <ul class="picked">
           <li v-for="n in picked" :key="n.id">
-            <button class="row" :title="`Show ${n.title}`" @click="store.select(n.id)">
-              {{ n.title }}
+            <button
+              class="row"
+              :title="`Show ${nodeLabel(n.code, n.title)}`"
+              @click="store.select(n.id)"
+            >
+              {{ nodeLabel(n.code, n.title) }}
             </button>
             <button
               class="btn btn-ghost btn-icon"
@@ -176,7 +208,7 @@ const upBlockedBy = computed(() => store.blockingParent.value)
         <div v-if="impact && refused" class="confirm">
           <span>
             Deleting these would cut
-            {{ impact.stranded.map((n) => `"${n.title}"`).join(', ') }}
+            {{ impact.stranded.map((n) => `"${nodeLabel(n.code, n.title)}"`).join(', ') }}
             off from the start. Select them too, or keep a link to them.
           </span>
         </div>
@@ -212,19 +244,35 @@ const upBlockedBy = computed(() => store.blockingParent.value)
 
     <div class="scroll">
       <section>
+        <label class="label" for="passage-code">Code</label>
+        <input
+          id="passage-code"
+          v-model="codeDraft"
+          class="field"
+          :class="{ 'field-error': codeError }"
+          @blur="commitCode"
+          @keydown.enter.prevent="commitCode"
+          @keydown.esc="revertCode"
+        />
+        <p v-if="codeError" class="hint hint-error">{{ codeError }}</p>
+        <p v-else class="hint">
+          What links point at, unique across the story and case-sensitive. Changing it
+          updates every <code>[[link]]</code> pointing here.
+        </p>
+      </section>
+
+      <section>
         <label class="label" for="passage-title">Title</label>
         <input
           id="passage-title"
           v-model="titleDraft"
           class="field"
-          :class="{ 'field-error': titleError }"
           @blur="commitTitle"
           @keydown.enter.prevent="commitTitle"
           @keydown.esc="revertTitle"
         />
-        <p v-if="titleError" class="hint hint-error">{{ titleError }}</p>
-        <p v-else class="hint">
-          Links use this title. Renaming updates every <code>[[link]]</code> pointing here.
+        <p class="hint">
+          A name for you. Two passages may share one, and it never affects links.
         </p>
       </section>
 
@@ -236,29 +284,16 @@ const upBlockedBy = computed(() => store.blockingParent.value)
           </button>
         </div>
         <p class="hint above">
-          Link with <code>[[Text|Target]]</code>, <code>[[Text-&gt;Target]]</code> or
-          <code>[[Target&lt;-Text]]</code>. Linking to a passage that doesn&rsquo;t exist creates it.
+          Link with <code>[[Text|Code]]</code>, <code>[[Text-&gt;Code]]</code> or
+          <code>[[Code&lt;-Text]]</code>. A link to a code that doesn&rsquo;t exist creates the
+          passage when you leave the editor.
         </p>
-        <HarloweEditor v-model="body" :titles="titles" />
-      </section>
-
-      <section>
-        <label class="label" for="passage-code">Code</label>
-        <input
-          id="passage-code"
-          v-model="codeDraft"
-          class="field"
-          :class="{ 'field-error': codeError }"
-          placeholder="Short reference, e.g. A3"
-          @blur="commitCode"
-          @keydown.enter.prevent="commitCode"
-          @keydown.esc="revertCode"
+        <HarloweEditor
+          :model-value="body"
+          :targets="targets"
+          @update:model-value="onBodyInput"
+          @settle="settleBody"
         />
-        <p v-if="codeError" class="hint hint-error">{{ codeError }}</p>
-        <p v-else class="hint">
-          Optional short handle for this passage, unique across the story. Searching for
-          it jumps straight here. Leave blank for none.
-        </p>
       </section>
 
       <section>
@@ -341,7 +376,7 @@ const upBlockedBy = computed(() => store.blockingParent.value)
                 pushedDown
                   ? `Return to level ${geom.minLevel}`
                   : upBlockedBy
-                    ? `Blocked by “${upBlockedBy.title}” at level ${upBlockedBy.level}`
+                    ? `Blocked by “${nodeLabel(upBlockedBy.code, upBlockedBy.title)}” at level ${upBlockedBy.level}`
                     : 'Already at the earliest possible level'
               "
               @click="setOffset(0)"
@@ -363,7 +398,7 @@ const upBlockedBy = computed(() => store.blockingParent.value)
             Sitting one level below its natural spot ({{ geom.minLevel }}).
           </template>
           <template v-else-if="upBlockedBy">
-            Can&rsquo;t move up: &ldquo;{{ upBlockedBy.title }}&rdquo; links here from level
+            Can&rsquo;t move up: &ldquo;{{ nodeLabel(upBlockedBy.code, upBlockedBy.title) }}&rdquo; links here from level
             {{ upBlockedBy.level }}.
           </template>
           <template v-else>
@@ -410,7 +445,15 @@ const upBlockedBy = computed(() => store.blockingParent.value)
       </button>
     </footer>
 
-    <BodyDialog v-if="expanded" v-model="body" :title="node.title" @close="expanded = false" />
+    <BodyDialog
+      v-if="expanded"
+      :model-value="body"
+      :label="nodeLabel(node.code, node.title)"
+      :targets="targets"
+      @update:model-value="onBodyInput"
+      @settle="settleBody"
+      @close="expanded = false"
+    />
   </aside>
 </template>
 

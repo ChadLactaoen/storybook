@@ -217,10 +217,13 @@ export function parseDoc(json: string): ParsedDoc {
 
   const warnings: string[] = []
   const legacyLevels = new Map<string, number>()
-  const usedTitles = new Set<string>()
   const usedIds = new Set<string>()
   const usedCodes = new Set<string>()
   const nodes: StoryNode[] = []
+  /** Nodes whose code was missing or taken; given one once `nextId` is known. */
+  const needsCode: StoryNode[] = []
+  /** Codes a second passage also claimed, for one aggregate warning. */
+  const contested: string[] = []
   let maxNumericId = 0
 
   for (const entry of obj.nodes as RawNode[]) {
@@ -228,16 +231,12 @@ export function parseDoc(json: string): ParsedDoc {
 
     // `name` is accepted for forward compatibility with files that separated
     // an internal name from a display title.
-    let title = str(entry.title) ?? str(entry.name) ?? ''
-    title = title.trim()
-    if (title.length === 0) title = 'Untitled Passage'
-    if (usedTitles.has(title)) {
-      let n = 2
-      while (usedTitles.has(`${title} (${n})`)) n++
-      warnings.push(`Renamed a duplicate passage "${title}" to "${title} (${n})".`)
-      title = `${title} (${n})`
-    }
-    usedTitles.add(title)
+    //
+    // Titles are cosmetic, so duplicates are legal and an empty one is left
+    // empty — `nodeLabel` falls back to the code, and inventing a name would be
+    // a lie about a file the author wrote. `createNode` still supplies a
+    // placeholder for passages the app itself makes.
+    const title = (str(entry.title) ?? str(entry.name) ?? '').trim()
 
     let id = str(entry.id) ?? ''
     if (id.length === 0 || usedIds.has(id)) {
@@ -252,19 +251,15 @@ export function parseDoc(json: string): ParsedDoc {
       ? [...new Set(entry.tags.filter((t): t is string => typeof t === 'string' && t.length > 0))]
       : []
 
-    // Unlike a duplicate title, a duplicate code cannot be repaired by inventing
-    // a replacement — codes have no default and are the author's to choose — so
-    // the later one is dropped and the author told which passage kept it.
+    // A code is the link target, so a passage without a usable one is
+    // unreachable. First claim wins; anyone who loses gets a fresh code in the
+    // second pass below, once `nextId` is known.
     let code = (str(entry.code) ?? '').trim()
-    if (code.length > 0) {
-      const folded = code.toLowerCase()
-      if (usedCodes.has(folded)) {
-        warnings.push(`Cleared the duplicate code "${code}" on passage "${title}".`)
-        code = ''
-      } else {
-        usedCodes.add(folded)
-      }
+    if (code.length > 0 && usedCodes.has(code)) {
+      contested.push(code)
+      code = ''
     }
+    if (code.length > 0) usedCodes.add(code)
 
     let levelOffset = 0
     if (typeof entry.levelOffset === 'number' && Number.isFinite(entry.levelOffset)) {
@@ -273,7 +268,7 @@ export function parseDoc(json: string): ParsedDoc {
       legacyLevels.set(id, Math.trunc(entry.level))
     }
 
-    nodes.push({
+    const node: StoryNode = {
       id,
       title,
       body: str(entry.body) ?? '',
@@ -283,7 +278,9 @@ export function parseDoc(json: string): ParsedDoc {
       setting: (str(entry.setting) ?? '').trim(),
       code,
       characters: readSceneCharacters(entry.characters),
-    })
+    }
+    nodes.push(node)
+    if (code.length === 0) needsCode.push(node)
   }
 
   const tagColors: TagColorEntry[] = []
@@ -332,10 +329,47 @@ export function parseDoc(json: string): ParsedDoc {
   if (!startNodeId || !ids.has(startNodeId)) startNodeId = nodes[0]?.id ?? null
 
   const nextIdRaw = obj.nextId
-  const nextId =
+  let nextId =
     typeof nextIdRaw === 'number' && Number.isFinite(nextIdRaw) && nextIdRaw > maxNumericId
       ? Math.trunc(nextIdRaw)
       : maxNumericId + 1
+
+  // Second pass: hand out the codes that could not be read. It has to run here
+  // rather than inline above, because `nextId` is only known once every id has
+  // been seen.
+  //
+  // `P<id>` is tried first because that is exactly what `createNode` would have
+  // minted, so a file this app wrote and someone then stripped of codes reloads
+  // with the codes it started with. `nextId` is bumped past everything invented:
+  // leave it behind and the next passage the author adds would mint a code that
+  // already exists, silently giving two passages the same link target.
+  const invented: string[] = []
+  for (const node of needsCode) {
+    let candidate = /^\d+$/.test(node.id) ? `P${node.id}` : ''
+    if (candidate.length === 0 || usedCodes.has(candidate)) {
+      do {
+        candidate = `P${nextId}`
+        nextId += 1
+      } while (usedCodes.has(candidate))
+    }
+    usedCodes.add(candidate)
+    node.code = candidate
+    invented.push(candidate)
+  }
+
+  if (contested.length > 0) {
+    contested.sort(compareStr)
+    warnings.push(
+      `${contested.map((c) => `"${c}"`).join(', ')} ${contested.length === 1 ? 'was' : 'were'} ` +
+        'used by more than one passage; the first kept the code and the rest were given new ones.',
+    )
+  }
+  if (invented.length > 0) {
+    warnings.push(
+      `Gave ${invented.length === 1 ? 'a passage' : `${invented.length} passages`} a code ` +
+        `(${invented.map((c) => `"${c}"`).join(', ')}) — a passage without one cannot be linked to.`,
+    )
+  }
 
   return {
     doc: {

@@ -14,6 +14,7 @@ import {
   emptyCharacter,
   orderRoster,
 } from '../../types/story'
+import type { Span } from '../harlowe/links'
 import { parseLinks, retargetLinks } from '../harlowe/links'
 
 /**
@@ -55,28 +56,42 @@ function replaceNode(doc: StoryDoc, id: string, patch: Partial<StoryNode>): Stor
   return next
 }
 
-export function uniqueTitle(doc: StoryDoc, base: string, exceptId?: string): string {
-  const taken = new Set(doc.nodes.filter((n) => n.id !== exceptId).map((n) => n.title))
-  if (!taken.has(base)) return base
-  let n = 2
-  while (taken.has(`${base} ${n}`)) n++
-  return `${base} ${n}`
+/**
+ * The first free code of the form `P<n>`, starting at `seed`.
+ *
+ * `P<id>` is the shape so that an auto-created passage's code and id agree, which
+ * is what lets `parseDoc` reproduce the same code for a file that lost one. The
+ * loop is not redundant: an author may have typed `P7` by hand long before the
+ * counter ever reached 7.
+ */
+function freeCode(taken: ReadonlySet<string>, seed: number): string {
+  let n = seed
+  while (taken.has(`P${n}`)) n++
+  return `P${n}`
 }
 
+/**
+ * Create a passage. `opts.code` asks for a specific code and is honoured only if
+ * it is free — a caller passing one got it from author text, which may collide.
+ */
 export function createNode(
   doc: StoryDoc,
-  opts: { title?: string; body?: string; setting?: string } = {},
+  opts: { title?: string; code?: string; body?: string; setting?: string } = {},
 ): { doc: StoryDoc; node: StoryNode } {
   const next = clone(doc)
+  const taken = new Set(next.nodes.map((n) => n.code))
+  const wanted = opts.code?.trim() ?? ''
   const node: StoryNode = {
     id: String(next.nextId),
-    title: uniqueTitle(next, opts.title?.trim() || 'Untitled Passage'),
+    // A passage the app makes deserves a placeholder name. A passage the author
+    // wrote by hand does not get one invented for it — see `parseDoc`.
+    title: opts.title?.trim() || 'Untitled Passage',
+    code: wanted.length > 0 && !taken.has(wanted) ? wanted : freeCode(taken, next.nextId),
     body: opts.body ?? '',
     tags: [],
     state: 'TODO',
     levelOffset: 0,
     setting: opts.setting?.trim() ?? '',
-    code: '',
     characters: [],
   }
   next.nextId += 1
@@ -113,75 +128,108 @@ export function deleteNode(doc: StoryDoc, id: string): StoryDoc {
 /** Sequences that change how a `[[...]]` link is parsed. */
 const LINK_SYNTAX = ['->', '<-', '|', '[[', ']]'] as const
 
-export interface RenameResult {
+export interface CodeResult {
   doc: StoryDoc
   error: string | null
 }
 
 /**
- * Rename a passage, retargeting every inbound link.
+ * Rename a passage.
  *
- * This is the mirror image of the delete rule, and deliberately so: a rename is
- * intent-preserving — the author wants those links to keep working — whereas a
- * delete is not. Only the target half of each `[[...]]` is rewritten; display
- * text and surrounding prose are untouched.
+ * A plain field write, and deliberately so: a title is a name for the author's
+ * benefit, nothing structural reads it, and two passages may share one. There is
+ * nothing to validate and nothing to cascade. The cascade that used to live here
+ * belongs to `setCode` now, because the code is what links actually name.
  *
- * Validated before it commits, so the document never holds duplicate titles and
- * the derive step can assume uniqueness.
+ * An empty title is allowed — such a passage is identified by its code alone.
  */
-export function renameNode(doc: StoryDoc, id: string, rawTitle: string): RenameResult {
+export function renameNode(doc: StoryDoc, id: string, rawTitle: string): StoryDoc {
   const node = doc.nodes.find((n) => n.id === id)
-  if (!node) return { doc, error: 'That passage no longer exists.' }
-
   const title = rawTitle.trim()
-  if (title.length === 0) return { doc, error: 'A passage needs a title.' }
-  if (title === node.title) return { doc, error: null }
-
-  // The title is spliced into every inbound `[[...]]`, so link punctuation in
-  // it would silently re-point those links somewhere else. `[[Go|North]]`
-  // renamed to `North->South` parses back out as a link to "South".
-  const offending = LINK_SYNTAX.find((token) => title.includes(token))
-  if (offending) {
-    return {
-      doc,
-      error: `A title cannot contain "${offending}" — it is link syntax, and would break the links pointing here.`,
-    }
-  }
-
-  const clash = doc.nodes.find((n) => n.id !== id && n.title === title)
-  if (clash) return { doc, error: `A passage named "${title}" already exists.` }
-
-  const next = clone(doc)
-  for (const n of next.nodes) {
-    if (n.id === id) n.title = title
-    else n.body = retargetLinks(n.body, node.title, title)
-  }
-  return { doc: next, error: null }
+  // Returning the same object matters: `commit` compares by reference, so a
+  // fresh document here would push an empty undo entry and wipe the redo stack.
+  if (!node || title === node.title) return doc
+  return replaceNode(doc, id, { title })
 }
 
 /**
- * Apply a body edit, creating any passage the author just linked to.
+ * Apply a body edit. A plain field write — link resolution is `resolveLinks`.
  *
- * Auto-creation lives here rather than in the derive step on purpose: if
- * deriving created nodes, deleting a still-linked passage would resurrect it on
- * the very next re-derive. Creating only in response to an actual edit means a
- * deleted passage stays deleted and shows up as a phantom.
+ * The two are separate because this runs on every keystroke. Creating passages
+ * and rewriting link text here would splice `|P8` in under the author's caret
+ * mid-word, and the editor's textarea is value-bound, so the caret would then
+ * jump to the end of the field.
  */
 export function setBody(doc: StoryDoc, id: string, body: string): StoryDoc {
+  if (!doc.nodes.some((n) => n.id === id)) return doc
+  return replaceNode(doc, id, { body })
+}
+
+/**
+ * Create the passages this body links to, and bind its bare links to the codes
+ * just minted for them.
+ *
+ * Runs when the author leaves the editor, not while they type. `bodyAtFocus` is
+ * the body as it stood when they entered it, which is the only way to tell a
+ * link they just wrote from one that was already there.
+ *
+ * Creation lives here rather than in the derive step on purpose: if deriving
+ * created nodes, deleting a still-linked passage would resurrect it on the very
+ * next re-derive. That guard matters twice over now, because `[[Go|3A]]` is
+ * itself an instruction to create `3A` — without it, merely opening a passage
+ * that linked to a deleted one would bring it back.
+ *
+ * Bare links are rewritten in place: `[[Head north]]` names no code, so the
+ * passage it creates gets a minted one and the link becomes
+ * `[[Head north|P7]]`. Only the target half of the `[[...]]` is spliced, and the
+ * splices run right-to-left so earlier spans stay valid — the same discipline
+ * `retargetLinks` follows.
+ */
+export function resolveLinks(doc: StoryDoc, id: string, bodyAtFocus: string): StoryDoc {
   const before = doc.nodes.find((n) => n.id === id)
   if (!before) return doc
+  const body = before.body
 
-  const known = new Set(doc.nodes.map((n) => n.title))
-  const previous = new Set(parseLinks(before.body).map((l) => l.target))
+  const byCode = new Set(doc.nodes.map((n) => n.code))
+  const previous = new Set(parseLinks(bodyAtFocus).map((l) => l.target))
+  /** Bare link target -> the code minted for it, so `[[X]]` twice is one passage. */
+  const minted = new Map<string, string>()
+  const splices: { span: Span; text: string }[] = []
 
-  let next = replaceNode(doc, id, { body })
+  let next = doc
   for (const link of parseLinks(body)) {
-    if (known.has(link.target) || previous.has(link.target)) continue
-    known.add(link.target)
-    // A passage written from here starts in the same place, until told otherwise.
-    next = createNode(next, { title: link.target, setting: before.setting }).doc
+    const target = link.target
+    if (byCode.has(target)) continue
+    if (previous.has(target)) continue
+
+    if (link.label === null) {
+      // `[[Head north]]`: the text is a title, and the code is ours to mint.
+      let code = minted.get(target)
+      if (code === undefined) {
+        // A passage written from here starts in the same place, until told otherwise.
+        const made = createNode(next, { title: target, setting: before.setting })
+        next = made.doc
+        code = made.node.code
+        minted.set(target, code)
+        byCode.add(code)
+      }
+      splices.push({ span: link.targetSpan, text: `${target}|${code}` })
+    } else {
+      // `[[Head north|3A]]`: the author named the code; the label is the title.
+      const made = createNode(next, { code: target, title: link.label, setting: before.setting })
+      next = made.doc
+      byCode.add(made.node.code)
+    }
   }
-  return next
+
+  if (splices.length === 0) return next
+
+  let rewritten = body
+  for (let i = splices.length - 1; i >= 0; i--) {
+    const { span, text } = splices[i]!
+    rewritten = rewritten.slice(0, span.start) + text + rewritten.slice(span.end)
+  }
+  return replaceNode(next, id, { body: rewritten })
 }
 
 /**
@@ -192,20 +240,34 @@ export function setBody(doc: StoryDoc, id: string, body: string): StoryDoc {
  * passages set in different places, and picking one arbitrarily would plant
  * wrong metadata silently — ambiguity means don't guess.
  */
-export function inheritedSetting(doc: StoryDoc, title: string): string {
+export function inheritedSetting(doc: StoryDoc, code: string): string {
   let agreed: string | null = null
   for (const n of doc.nodes) {
-    if (!parseLinks(n.body).some((l) => l.target === title)) continue
+    if (!parseLinks(n.body).some((l) => l.target === code)) continue
     if (agreed === null) agreed = n.setting
     else if (agreed !== n.setting) return ''
   }
   return agreed ?? ''
 }
 
-/** Turn a phantom (a link with no passage behind it) into a real passage. */
-export function materializePhantom(doc: StoryDoc, title: string): StoryDoc {
-  if (doc.nodes.some((n) => n.title === title)) return doc
-  return createNode(doc, { title, setting: inheritedSetting(doc, title) }).doc
+/**
+ * Turn a phantom (a link with no passage behind it) into a real passage.
+ *
+ * `label` is the display text some link proposed for it, which becomes the
+ * title. A phantom reached only by bare `[[3A]]` links has none, so it is named
+ * after its code until the author says otherwise.
+ */
+export function materializePhantom(
+  doc: StoryDoc,
+  code: string,
+  label?: string | null,
+): StoryDoc {
+  if (doc.nodes.some((n) => n.code === code)) return doc
+  return createNode(doc, {
+    code,
+    title: label?.trim() || code,
+    setting: inheritedSetting(doc, code),
+  }).doc
 }
 
 export function setState(doc: StoryDoc, id: string, state: NodeState): StoryDoc {
@@ -299,42 +361,48 @@ export function tagColorMap(doc: StoryDoc): Map<string, TagColor> {
 /* ---------- code ---------- */
 
 /**
- * Set a passage's short reference code, or clear it with an empty value.
+ * Set a passage's code, retargeting every inbound link.
  *
- * Validated like `renameNode` rather than written blind like `setSetting`: a
- * code is an identifier, and two passages sharing one would defeat the whole
- * point of quoting it. Comparison is case-insensitive — `a3` and `A3` reading
- * as different passages is a trap for anyone copying a code by eye — but the
- * author's own capitalisation is what gets stored.
+ * This is the operation renaming a title used to be, and for the same reason: a
+ * code change is intent-preserving — the author wants those links to keep
+ * working — whereas a delete is not. Only the target half of each `[[...]]` is
+ * rewritten; display text and surrounding prose are untouched.
+ *
+ * Comparison is exact. `a3` and `A3` are different passages, so a code copied by
+ * eye has to be copied exactly.
  */
-export function setCode(doc: StoryDoc, id: string, rawCode: string): RenameResult {
+export function setCode(doc: StoryDoc, id: string, rawCode: string): CodeResult {
   const node = doc.nodes.find((n) => n.id === id)
   if (!node) return { doc, error: 'That passage no longer exists.' }
 
   const code = rawCode.trim()
+  if (code.length === 0) return { doc, error: 'A passage needs a code.' }
   // Returning the same object matters: `commit` compares by reference, so a
   // fresh document here would push an empty undo entry and wipe the redo stack.
   if (code === node.code) return { doc, error: null }
 
-  // Clearing is always allowed; uniqueness only constrains non-empty codes.
-  if (code.length > 0) {
-    const folded = code.toLowerCase()
-    const clash = doc.nodes.find((n) => n.id !== id && n.code.toLowerCase() === folded)
-    if (clash) {
-      return { doc, error: `Code "${clash.code}" is already used by "${clash.title}".` }
+  // The code is spliced into every inbound `[[...]]`, so link punctuation in it
+  // would silently re-point those links somewhere else. `[[Go|North]]` recoded
+  // to `North->South` parses back out as a link to "South".
+  const offending = LINK_SYNTAX.find((token) => code.includes(token))
+  if (offending) {
+    return {
+      doc,
+      error: `A code cannot contain "${offending}" — it is link syntax, and would break the links pointing here.`,
     }
   }
 
-  return { doc: replaceNode(doc, id, { code }), error: null }
+  const clash = doc.nodes.find((n) => n.id !== id && n.code === code)
+  if (clash) return { doc, error: `Code "${code}" is already used by "${clash.title}".` }
+
+  const next = clone(doc)
+  for (const n of next.nodes) {
+    if (n.id === id) n.code = code
+    else n.body = retargetLinks(n.body, node.code, code)
+  }
+  return { doc: next, error: null }
 }
 
-/** Every code in use, for the inspector hint and the story index. */
-export function allCodes(doc: StoryDoc): string[] {
-  return doc.nodes
-    .map((n) => n.code)
-    .filter((c) => c.length > 0)
-    .sort(compareStr)
-}
 
 /* ---------- setting ---------- */
 

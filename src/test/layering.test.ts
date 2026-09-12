@@ -105,7 +105,7 @@ describe('dangling links', () => {
   it('resolves an unknown target to a phantom that still gets a level', () => {
     const doc = docFrom({ One: ['Ghost'] })
     const g = deriveGraph(doc)
-    expect(g.phantoms.map((p) => p.title)).toEqual(['Ghost'])
+    expect(g.phantoms.map((p) => p.code)).toEqual(['Ghost'])
     const { backEdges } = findBackEdges(g, doc.startNodeId)
     const res = assignLevels(g, backEdges, () => 0)
     expect(res.level.get(g.phantoms[0]!.id)).toBe(2)

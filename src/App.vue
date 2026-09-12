@@ -78,10 +78,6 @@ const stateOf = computed(
 const tagsOf = computed(
   () => new Map<string, string[]>(store.state.doc.nodes.map((n) => [n.id, n.tags])),
 )
-const codeOf = computed(
-  () => new Map<string, string>(store.state.doc.nodes.map((n) => [n.id, n.code])),
-)
-
 function fit() {
   vp.zoomToFit(layout.value.bounds)
 }
@@ -221,7 +217,6 @@ function dismissNotices() {
           :matches="store.matches.value"
           :state-of="stateOf"
           :tags-of="tagsOf"
-          :code-of="codeOf"
           :tag-colors="store.tagColors.value"
           :show-levels="showLevels"
           @select="store.applySelect"

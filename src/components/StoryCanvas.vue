@@ -18,7 +18,6 @@ const props = defineProps<{
   matches: Set<string> | null
   stateOf: Map<string, NodeState>
   tagsOf: Map<string, string[]>
-  codeOf: Map<string, string>
   tagColors: Map<string, TagColor>
   showLevels: boolean
 }>()
@@ -26,7 +25,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [id: string | null, mode: SelectMode]
   open: [id: string]
-  create: [title: string]
+  create: [phantomId: string]
   wheel: [e: WheelEvent]
   pointerdown: [e: PointerEvent]
   pointermove: [e: PointerEvent]
@@ -147,7 +146,6 @@ const levelLabels = computed(() =>
         :node="node"
         :state="stateOf.get(node.id) ?? null"
         :tags="tagsOf.get(node.id) ?? []"
-        :code="codeOf.get(node.id) ?? ''"
         :tag-colors="tagColors"
         :selected="inSelection(node.id)"
         :anchor="node.id === selectedId"

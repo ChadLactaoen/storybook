@@ -55,6 +55,13 @@ function mount() {
   app.mount(host)
 }
 
+/** What the editor does: type into the body, then leave the field. */
+function writeBody(nodeId: string, body: string): void {
+  const before = store.state.doc.nodes.find((n) => n.id === nodeId)!.body
+  store.editBody(nodeId, body)
+  store.resolveBody(nodeId, before)
+}
+
 describe('the app renders', () => {
   it('opens on the startup dialog when there is nothing saved', async () => {
     mount()
@@ -69,7 +76,7 @@ describe('the app renders', () => {
     mount()
     store.newStory('Render Check')
     const startId = store.state.doc.nodes[0]!.id
-    store.editBody(startId, '[[Go|Two]]\n[[Stay|Three]]')
+    writeBody(startId, '[[Two]]\n[[Three]]')
     store.tagAdd(startId, 'opening')
     store.tagRecolor('opening', 'purple')
     store.select(startId)
@@ -106,7 +113,7 @@ describe('the app renders', () => {
     mount()
     store.newStory('Render Check')
     const id = store.state.doc.nodes[0]!.id
-    store.editBody(id, '(set: $gold to 5)\n<!-- note -->\n[[Onward|Two]]')
+    writeBody(id, '(set: $gold to 5)\n<!-- note -->\n[[Two]]')
     store.select(id)
     await nextTick()
 
@@ -114,7 +121,8 @@ describe('the app renders', () => {
     expect(pre.querySelector('.hl-macro')!.textContent).toBe('(set:')
     expect(pre.querySelector('.hl-variable')!.textContent).toBe('$gold')
     expect(pre.querySelector('.hl-comment')!.textContent).toBe('<!-- note -->')
-    expect(pre.querySelector('.hl-link')!.textContent).toBe('[[Onward|Two]]')
+    // Settling bound the bare link to the code it minted.
+    expect(pre.querySelector('.hl-link')!.textContent).toBe('[[Two|P2]]')
     expect(problems).toEqual([])
   })
 
@@ -122,7 +130,7 @@ describe('the app renders', () => {
     mount()
     store.newStory('Render Check')
     const id = store.state.doc.nodes[0]!.id
-    store.editBody(id, '[[Go|Cave]]')
+    writeBody(id, '[[Cave]]')
     store.removePassage(store.state.doc.nodes.find((n) => n.title === 'Cave')!.id)
     await nextTick()
 
@@ -159,7 +167,7 @@ describe('the app renders', () => {
     mount()
     store.newStory('Render Check')
     const start = store.state.doc.nodes[0]!.id
-    store.editBody(start, '[[Go|Two]]')
+    writeBody(start, '[[Two]]')
     const two = store.state.doc.nodes.find((n) => n.title === 'Two')!.id
     store.settingSet(start, 'Tavern')
     store.settingSet(two, 'Tavern')
@@ -210,7 +218,7 @@ describe('the app renders', () => {
     mount()
     store.newStory('Render Check')
     const start = store.state.doc.nodes[0]!.id
-    store.editBody(start, '[[Go|Two]]')
+    writeBody(start, '[[Two]]')
     store.settingSet(start, 'Tavern')
     await nextTick()
 
@@ -239,7 +247,7 @@ describe('the app renders', () => {
     const text = panel.textContent!.replace(/\s+/g, ' ')
     // The three things a tooltip has nowhere to say.
     expect(text).toContain('cards can’t be dragged')
-    expect(text).toContain('[[Go north|Cave]]')
+    expect(text).toContain('[[Go north|3A]]')
     expect(text).toMatch(/New passage, linked from the selected one/)
     expect(problems).toEqual([])
   })
@@ -257,13 +265,14 @@ describe('the app renders', () => {
 
     const dialog = host.querySelector('[aria-label="Edit passage body"]')!
     expect(dialog).not.toBeNull()
-    // Titled by the passage, so it is clear which body is open.
-    expect(dialog.querySelector('.name')!.textContent).toBe('Start')
+    // Named by code and title, so it is clear which body is open even when two
+    // passages share a title.
+    expect(dialog.querySelector('.name')!.textContent).toBe('P1 · Start')
 
     // Typing in the pop-out edits the document directly — there is no draft to
     // commit, so closing can never lose text.
     const area = dialog.querySelector<HTMLTextAreaElement>('textarea.input')!
-    area.value = 'Rewritten here.\n[[Onward|Two]]'
+    area.value = 'Rewritten here.\n[[Two]]'
     area.dispatchEvent(new Event('input'))
     await nextTick()
     expect(store.state.doc.nodes.find((n) => n.id === id)!.body).toContain('Rewritten here.')
@@ -281,7 +290,7 @@ describe('the app renders', () => {
     mount()
     store.newStory('Toolbar')
     const id = store.state.doc.nodes[0]!.id
-    store.editBody(id, 'She ran home.')
+    writeBody(id, 'She ran home.')
     store.select(id)
     await nextTick()
 
@@ -310,7 +319,7 @@ describe('the app renders', () => {
     mount()
     store.newStory('Keys')
     const id = store.state.doc.nodes[0]!.id
-    store.editBody(id, 'She ran home.')
+    writeBody(id, 'She ran home.')
     store.select(id)
     await nextTick()
 
@@ -338,7 +347,7 @@ describe('the app renders', () => {
     mount()
     store.newStory('Linking')
     const id = store.state.doc.nodes[0]!.id
-    store.editBody(id, 'Two ways out.\n[[Cave]]')
+    writeBody(id, 'Two ways out.\n[[Cave]]')
     store.select(id)
     await nextTick()
     const before = store.state.doc.nodes.length
@@ -355,15 +364,18 @@ describe('the app renders', () => {
     // Plain Cmd K is the cheat sheet's; the shifted one stops before reaching it.
     expect(host.querySelector('.cheat')).toBeNull()
 
+    // Rows carry both halves: the code the link will contain, and the title the
+    // author recognises.
     const rows = [...picker.querySelectorAll<HTMLButtonElement>('.item')]
-    const cave = rows.find((r) => r.textContent!.trim() === 'Cave')!
+    const cave = rows.find((r) => r.textContent!.includes('Cave'))!
     expect(cave).not.toBeUndefined()
+    expect(cave.textContent).toContain('P2')
     cave.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
     await nextTick()
 
-    // The selected words became the display text, and picking a passage that
-    // already exists left no stray passage behind.
-    expect(store.state.doc.nodes.find((n) => n.id === id)!.body).toContain('[[Two|Cave]]')
+    // The selected words became the display text, the code became the target,
+    // and picking a passage that already exists left no stray passage behind.
+    expect(store.state.doc.nodes.find((n) => n.id === id)!.body).toContain('[[Two|P2]]')
     expect(store.state.doc.nodes).toHaveLength(before)
     expect(host.querySelector('[aria-label="Link to a passage"]')).toBeNull()
     expect(problems).toEqual([])
@@ -409,7 +421,7 @@ describe('the app renders', () => {
     await press('e')
 
     // A phantom is selectable but is not a passage: neither panel should open.
-    store.editBody(id, '[[Go|Cave]]')
+    writeBody(id, '[[Cave]]')
     store.removePassage(store.state.doc.nodes.find((n) => n.title === 'Cave')!.id)
     store.select(store.layout.value.nodes.find((n) => n.isPhantom)!.id)
     await nextTick()
@@ -449,7 +461,7 @@ describe('the app renders', () => {
   it('auto-saves, and a reload reproduces the identical drawing', async () => {
     mount()
     store.newStory('Persisted Story')
-    store.editBody(store.state.doc.nodes[0]!.id, '[[Go|Two]]')
+    writeBody(store.state.doc.nodes[0]!.id, '[[Two]]')
     const hash = store.layout.value.stats.hash
 
     // The store writes on a debounce; wait it out rather than reaching inside.
@@ -468,6 +480,37 @@ describe('the app renders', () => {
     expect(problems).toEqual([])
   })
 
+  it('creates a passage only once the author leaves the body editor', async () => {
+    mount()
+    store.newStory('Render Check')
+    const id = store.state.doc.nodes[0]!.id
+    writeBody(id, '')
+    store.select(id)
+    await nextTick()
+
+    const area = host.querySelector<HTMLTextAreaElement>('.inspector textarea.input')!
+    area.value = 'Two ways out. [[Head north]]'
+    area.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    // Still typing: the text is in the document, but nothing has been created and
+    // the prose is exactly as written. Rewriting here would move the caret.
+    expect(store.state.doc.nodes).toHaveLength(1)
+    expect(store.state.doc.nodes[0]!.body).toBe('Two ways out. [[Head north]]')
+
+    area.dispatchEvent(new FocusEvent('blur', { relatedTarget: null }))
+    await nextTick()
+
+    // Blur settles it: the passage exists, and the bare link now names its code.
+    expect(store.state.doc.nodes).toHaveLength(2)
+    const made = store.state.doc.nodes.find((n) => n.id !== id)!
+    expect([made.code, made.title]).toEqual(['P2', 'Head north'])
+    expect(store.state.doc.nodes.find((n) => n.id === id)!.body).toBe(
+      'Two ways out. [[Head north|P2]]',
+    )
+    expect(problems).toEqual([])
+  })
+
   it('shows a passage code in the inspector and on its card', async () => {
     mount()
     store.newStory('Render Check')
@@ -479,32 +522,37 @@ describe('the app renders', () => {
     const inspector = host.querySelector('.inspector')!
     expect(inspector.querySelector<HTMLInputElement>('#passage-code')!.value).toBe('A3')
 
+    // 'P2' is the starter story's dashed card, which the sample link points at.
     const codes = [...host.querySelectorAll('.card .code')].map((el) => el.textContent)
-    expect(codes).toEqual(['A3'])
+    expect(codes).toEqual(['A3', 'P2'])
     expect(problems).toEqual([])
   })
 
-  it('draws no code element for a passage without one', async () => {
+  it('draws a code on every card, since a passage cannot be without one', async () => {
+    mount()
+    store.newStory('Render Check')
+    const id = store.state.doc.nodes[0]!.id
+    writeBody(id, '[[Two]]')
+    store.select(id)
+    await nextTick()
+
+    const codes = [...host.querySelectorAll('.card .code')].map((el) => el.textContent)
+    expect(codes).toEqual(['P1', 'P2'])
+    expect(problems).toEqual([])
+  })
+
+  it('puts Code first, then Title, then the body', async () => {
     mount()
     store.newStory('Render Check')
     store.select(store.state.doc.nodes[0]!.id)
     await nextTick()
 
-    expect(host.querySelectorAll('.card .code')).toHaveLength(0)
-    expect(problems).toEqual([])
-  })
-
-  it('puts the body field directly under the title', async () => {
-    mount()
-    store.newStory('Render Check')
-    store.select(store.state.doc.nodes[0]!.id)
-    await nextTick()
-
+    // Code leads because it is the passage's identity — what links name, and
+    // what every banner and picker row shows. The title is a label beneath it.
     const sections = [...host.querySelectorAll('.inspector .scroll > section')]
-    expect(sections[0]!.querySelector('#passage-title')).not.toBeNull()
-    expect(sections[1]!.querySelector('.editor')).not.toBeNull()
-    // Everything else, Code included, sits below the editor.
-    expect(sections[1]!.querySelector('#passage-code')).toBeNull()
+    expect(sections[0]!.querySelector('#passage-code')).not.toBeNull()
+    expect(sections[1]!.querySelector('#passage-title')).not.toBeNull()
+    expect(sections[2]!.querySelector('.editor')).not.toBeNull()
     expect(problems).toEqual([])
   })
 })
@@ -551,7 +599,7 @@ describe('the character cheat sheet', () => {
     expect(host.querySelector('main')!.firstElementChild).toBe(panel)
 
     const text = panel.textContent!.replace(/\s+/g, ' ')
-    expect(text).toContain('Cast of Start')
+    expect(text).toContain('Cast of P1 · Start')
     expect(text).toContain('Mira')
     expect(text).toContain('Tam')
     expect(text).toContain("The innkeeper's daughter")
@@ -622,7 +670,7 @@ describe('the character cheat sheet', () => {
     await nextTick()
     expect(groupLabel('Personality').nextElementSibling).toBeNull()
 
-    store.editBody(id, '[[Go|Two]]')
+    writeBody(id, '[[Two]]')
     const two = store.state.doc.nodes.find((n) => n.title === 'Two')!.id
     store.castAdd(two, 'Mira')
     store.select(two)
@@ -630,7 +678,7 @@ describe('the character cheat sheet', () => {
 
     const panel = host.querySelector('.cheat')!
     expect(panel).not.toBeNull()
-    expect(panel.textContent).toContain('Cast of Two')
+    expect(panel.textContent).toContain('Cast of P2 · Two')
     expect(groupLabel('Personality').nextElementSibling!.textContent).toContain('Guarded')
     expect(problems).toEqual([])
   })
@@ -666,7 +714,7 @@ describe('the character cheat sheet', () => {
     const id = await openOnCast()
 
     // A passage casting Mira alone: both her relations now point off stage.
-    store.editBody(id, '[[Go|Two]]')
+    writeBody(id, '[[Two]]')
     const two = store.state.doc.nodes.find((n) => n.title === 'Two')!.id
     store.castAdd(two, 'Mira')
     store.select(two)
@@ -674,7 +722,7 @@ describe('the character cheat sheet', () => {
 
     const panel = host.querySelector('.cheat')!
     const text = panel.textContent!.replace(/\s+/g, ' ')
-    expect(text).toContain('Cast of Two')
+    expect(text).toContain('Cast of P2 · Two')
     expect(text).toContain('Guarded')
     expect(text).not.toContain('Relations')
     expect(text).not.toContain('Owes him nothing')
@@ -735,7 +783,7 @@ describe('the character cheat sheet', () => {
 })
 
 describe('selecting more than one passage', () => {
-  /** Cards are laid out by title order, so find by text rather than by index. */
+  /** Cards are laid out by code order, so find by text rather than by index. */
   function card(title: string): HTMLElement {
     const found = [...host.querySelectorAll<HTMLElement>('.card')].find((el) =>
       el.textContent?.includes(title),
@@ -753,8 +801,8 @@ describe('selecting more than one passage', () => {
     mount()
     store.newStory('Select Check')
     const id = store.state.doc.nodes[0]!.id
-    store.editBody(id, '[[Go|Two]]')
-    store.editBody(store.state.doc.nodes.find((n) => n.title === 'Two')!.id, '[[On|Three]]')
+    writeBody(id, '[[Two]]')
+    writeBody(store.state.doc.nodes.find((n) => n.title === 'Two')!.id, '[[Three]]')
     await nextTick()
   }
 
@@ -764,15 +812,15 @@ describe('selecting more than one passage', () => {
     await branchingStory()
 
     await click('Two', { metaKey: true })
-    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Three', 'Two'])
+    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Two', 'Three'])
     expect(host.querySelectorAll('.card.selected')).toHaveLength(2)
     expect(host.querySelectorAll('.card.anchor')).toHaveLength(1)
 
     await click('Start', { shiftKey: true })
-    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Start', 'Three', 'Two'])
+    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Start', 'Two', 'Three'])
 
     await click('Start', { shiftKey: true })
-    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Three', 'Two'])
+    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Two', 'Three'])
 
     // A plain click is still a plain click.
     await click('Start')
@@ -787,7 +835,7 @@ describe('selecting more than one passage', () => {
     const inspector = host.querySelector('.inspector')!
     expect(inspector.querySelector('.eyebrow')!.textContent).toBe('Selection')
     expect([...inspector.querySelectorAll('.picked .row')].map((el) => el.textContent!.trim()))
-      .toEqual(['Three', 'Two'])
+      .toEqual(['P2 · Two', 'P3 · Three'])
     expect(inspector.textContent).toContain('Delete 2 passages')
     expect(problems).toEqual([])
   })
@@ -811,7 +859,7 @@ describe('selecting more than one passage', () => {
     await nextTick()
 
     expect(store.state.doc.nodes.map((n) => n.title)).toEqual(['Start', 'Two', 'Three'])
-    expect(host.querySelector('.notices')!.textContent).toContain('"Three"')
+    expect(host.querySelector('.notices')!.textContent).toContain('"P3 · Three"')
     expect(problems).toEqual([])
   })
 

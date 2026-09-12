@@ -4,6 +4,11 @@ import { emptyDoc } from '../types/story'
 /**
  * Build a document from a compact adjacency spec: `{ One: ['Two', 'Three'] }`
  * creates a passage titled `One` whose body links to `Two` and `Three`.
+ *
+ * Spec keys are titles; each gets the code `P1`, `P2`, ... in declaration order
+ * unless `opts.codes` names one, and bodies link by code. A target that is not
+ * itself a spec key is written verbatim, so `{ A: ['Ghost'] }` yields a phantom
+ * whose code is `Ghost`.
  */
 export function docFrom(
   spec: Record<string, string[]>,
@@ -16,16 +21,17 @@ export function docFrom(
 ): StoryDoc {
   const doc = emptyDoc('Test Story')
   const titles = Object.keys(spec)
+  const codeOf = new Map(titles.map((t, i) => [t, opts.codes?.[t] ?? `P${i + 1}`]))
 
   const nodes: StoryNode[] = titles.map((title, i) => ({
     id: String(i + 1),
     title,
-    body: spec[title]!.map((t) => `[[Go to ${t}|${t}]]`).join('\n'),
+    body: spec[title]!.map((t) => `[[Go to ${t}|${codeOf.get(t) ?? t}]]`).join('\n'),
     tags: [],
     state: 'TODO' as const,
     levelOffset: opts.offsets?.[title] ?? 0,
     setting: opts.settings?.[title] ?? '',
-    code: opts.codes?.[title] ?? '',
+    code: codeOf.get(title)!,
     characters: [],
   }))
 
