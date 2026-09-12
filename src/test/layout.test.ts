@@ -3,7 +3,9 @@ import { findBackEdges } from '../lib/graph/acyclic'
 import { deriveGraph } from '../lib/graph/derive'
 import { layoutStory } from '../lib/graph/layout'
 import { countPaths } from '../lib/graph/paths'
+import { orphanIds, reachableFrom, strandedBy } from '../lib/graph/reachability'
 import { NODE_GAP } from '../lib/graph/constants'
+import { deleteNodes } from '../lib/doc/mutations'
 import { docFrom, minCardGap, shuffled } from './helpers'
 
 const BINARY_3 = {
@@ -279,5 +281,46 @@ describe('fields outside the layout inputs', () => {
     // Codes are authoring metadata: they must not reach the geometry, or every
     // code edit would reflow the board.
     expect(layoutStory(coded).nodes).toEqual(layoutStory(plain).nodes)
+  })
+})
+
+describe('reachability', () => {
+  const titles = (doc: ReturnType<typeof docFrom>, ids: Set<string>) =>
+    doc.nodes.filter((n) => ids.has(n.id)).map((n) => n.title)
+
+  it('walks a cycle without looping forever', () => {
+    // Back edges are normal in CYOA writing, so the walk has to tolerate them.
+    const doc = docFrom({ A: ['B'], B: ['C'], C: ['A'] })
+    const reached = reachableFrom(deriveGraph(doc), doc.startNodeId!)
+    expect(titles(doc, reached).sort()).toEqual(['A', 'B', 'C'])
+  })
+
+  it('does not count a phantom as an orphan', () => {
+    const doc = docFrom({ A: ['Ghost'] })
+    expect(orphanIds(deriveGraph(doc), doc.startNodeId)).toEqual(new Set())
+  })
+
+  it('has no orphans when the story has no start', () => {
+    const doc = docFrom({ A: [], B: [] })
+    expect(orphanIds(deriveGraph(doc), null)).toEqual(new Set())
+  })
+
+  it('names the tail a deleted middle passage would strand', () => {
+    const doc = docFrom({ A: ['B'], B: ['C'], C: [] })
+    const after = deleteNodes(doc, [doc.nodes[1]!.id])
+    expect(strandedBy(doc, after).map((n) => n.title)).toEqual(['C'])
+  })
+
+  it('ignores a passage that was already unreachable', () => {
+    // Blocking on a pre-existing orphan would make a broken story uneditable.
+    const doc = docFrom({ A: ['B'], B: [], C: [] })
+    const after = deleteNodes(doc, [doc.nodes[1]!.id])
+    expect(strandedBy(doc, after)).toEqual([])
+  })
+
+  it('strands nothing when the whole subtree goes together', () => {
+    const doc = docFrom({ A: ['B'], B: ['C', 'D'], C: [], D: [] })
+    const ids = doc.nodes.filter((n) => n.title !== 'A').map((n) => n.id)
+    expect(strandedBy(doc, deleteNodes(doc, ids))).toEqual([])
   })
 })

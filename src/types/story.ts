@@ -5,6 +5,12 @@ export type NodeId = string
 export const NODE_STATES = ['TODO', 'Draft', 'Done'] as const
 export type NodeState = (typeof NODE_STATES)[number]
 
+/**
+ * How a click on a card changes the selection: plain click replaces it,
+ * Cmd/Ctrl takes the passage and everything downstream, Shift toggles one.
+ */
+export type SelectMode = 'replace' | 'subtree' | 'toggle'
+
 export const TAG_COLORS = [
   'none',
   'red',

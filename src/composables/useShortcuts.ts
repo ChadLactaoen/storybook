@@ -8,6 +8,7 @@ export interface ShortcutHandlers {
   undo: () => void
   redo: () => void
   addPassage: () => void
+  /** Deletes the whole selection, not just the anchor. */
   deletePassage: () => void
   focusSearch: () => void
   toggleBodyEditor: () => void
@@ -100,6 +101,7 @@ export function useShortcuts(handlers: ShortcutHandlers) {
       handlers.openHelp()
       return
     }
+    // Selection-wide: one passage or a Cmd/Shift-built set, the same key.
     if (e.key === 'Backspace' || e.key === 'Delete') {
       e.preventDefault()
       handlers.deletePassage()

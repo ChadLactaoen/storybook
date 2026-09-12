@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { EdgeLayout, LayoutResult, NodeLayout } from '../lib/graph/types'
-import type { NodeState, TagColor } from '../types/story'
+import type { NodeState, SelectMode, TagColor } from '../types/story'
 import StoryNodeCard from './StoryNodeCard.vue'
 
 const props = defineProps<{
@@ -10,7 +10,10 @@ const props = defineProps<{
   svgTransform: string
   detailed: boolean
   panning: boolean
+  /** The anchor card: the one the inspector describes. May be a phantom. */
   selectedId: string | null
+  /** Every selected passage, the anchor included when it is a real one. */
+  selectedIds: Set<string>
   startNodeId: string | null
   matches: Set<string> | null
   stateOf: Map<string, NodeState>
@@ -21,7 +24,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  select: [id: string | null]
+  select: [id: string | null, mode: SelectMode]
   open: [id: string]
   create: [title: string]
   wheel: [e: WheelEvent]
@@ -34,13 +37,17 @@ const hoveredEdge = ref<string | null>(null)
 
 const dimmed = (n: NodeLayout) => props.matches !== null && !props.matches.has(n.id)
 
+/** Anchor or member — a phantom anchor is never in `selectedIds`. */
+const inSelection = (id: string) => id === props.selectedId || props.selectedIds.has(id)
+
 /** Edges touching the selection are drawn heavier so a branch reads at a glance. */
 function edgeClass(e: EdgeLayout) {
-  const active =
-    props.selectedId !== null &&
-    (e.sourceId === props.selectedId || e.targetId === props.selectedId)
+  const active = inSelection(e.sourceId) || inSelection(e.targetId)
   return [e.kind, { active, hovered: hoveredEdge.value === e.edgeId }]
 }
+
+const edgeLabelled = (e: EdgeLayout) =>
+  hoveredEdge.value === e.edgeId || inSelection(e.sourceId) || inSelection(e.targetId)
 
 const levelLabels = computed(() =>
   props.layout.levels.map((band) => ({
@@ -61,7 +68,7 @@ const levelLabels = computed(() =>
     @pointerup="emit('pointerup', $event)"
     @pointercancel="emit('pointerup', $event)"
   >
-    <div class="backdrop" data-canvas-background @click="emit('select', null)" />
+    <div class="backdrop" data-canvas-background @click="emit('select', null, 'replace')" />
 
     <!-- Edges sit beneath the card layer so cards always occlude lines. Both
          layers consume the same transform, so they stay glued together. -->
@@ -114,7 +121,7 @@ const levelLabels = computed(() =>
               :d="edge.d"
               @pointerenter="hoveredEdge = edge.edgeId"
               @pointerleave="hoveredEdge = null"
-              @click.stop="emit('select', edge.sourceId)"
+              @click.stop="emit('select', edge.sourceId, 'replace')"
             />
             <path class="wire" :d="edge.d" marker-end="url(#arrow)" />
           </g>
@@ -123,13 +130,7 @@ const levelLabels = computed(() =>
         <g v-if="detailed" class="labels">
           <template v-for="edge in layout.edges" :key="edge.edgeId">
             <g
-              v-if="
-                edge.label &&
-                edge.labelPoint &&
-                (hoveredEdge === edge.edgeId ||
-                  edge.sourceId === selectedId ||
-                  edge.targetId === selectedId)
-              "
+              v-if="edge.label && edge.labelPoint && edgeLabelled(edge)"
               :transform="`translate(${edge.labelPoint.x}, ${edge.labelPoint.y})`"
             >
               <text class="edge-label">{{ edge.label }}</text>
@@ -148,12 +149,13 @@ const levelLabels = computed(() =>
         :tags="tagsOf.get(node.id) ?? []"
         :code="codeOf.get(node.id) ?? ''"
         :tag-colors="tagColors"
-        :selected="node.id === selectedId"
+        :selected="inSelection(node.id)"
+        :anchor="node.id === selectedId"
         :is-start="node.id === startNodeId"
         :dimmed="dimmed(node)"
         :detailed="detailed"
         :path-count="null"
-        @select="emit('select', $event)"
+        @select="(id, mode) => emit('select', id, mode)"
         @open="emit('open', $event)"
         @create="emit('create', $event)"
       />

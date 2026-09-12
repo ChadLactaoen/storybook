@@ -22,7 +22,9 @@ const SHORTCUTS: { keys: string; what: string }[] = [
   { keys: `${MOD} Z`, what: 'Undo' },
   { keys: `${MOD} ⇧ Z`, what: 'Redo' },
   { keys: 'N', what: 'New passage, linked from the selected one' },
-  { keys: 'Delete', what: 'Delete the selected passage' },
+  { keys: `${MOD} click`, what: 'Select a passage and everything it leads to' },
+  { keys: '⇧ click', what: 'Add or remove one passage from the selection' },
+  { keys: 'Delete', what: 'Delete every selected passage' },
 ]
 
 const LINKS: { syntax: string; what: string }[] = [
@@ -77,7 +79,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           <p class="note">
             Link to a passage that doesn&rsquo;t exist yet and it is created for you. Delete a
             passage and the links to it stay as written &mdash; they show up as a dashed card you
-            can double-click to bring back.
+            can double-click to bring back. A delete is refused if it would cut a surviving
+            passage off from the start &mdash; select that passage too, or leave a link to it from
+            somewhere that survives.
           </p>
         </section>
 
@@ -85,7 +89,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           <h3>Getting around</h3>
           <ul class="plain">
             <li>Scroll to zoom, drag the background to pan.</li>
-            <li>Click a card to open it; double-click to centre on it.</li>
+            <li>
+              Click a card to open it; double-click to centre on it.
+              <kbd>{{ MOD }}</kbd>-click takes it and everything downstream,
+              <kbd>⇧</kbd>-click adds or drops one card, and clicking the background clears the
+              selection.
+            </li>
             <li><strong>Fit</strong> in the toolbar frames the whole story.</li>
             <li>
               <strong>Expand</strong>, above a passage&rsquo;s body, opens the same editor over the

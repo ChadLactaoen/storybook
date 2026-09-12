@@ -85,14 +85,29 @@ export function createNode(
   return { doc: next, node }
 }
 
-export function deleteNode(doc: StoryDoc, id: string): StoryDoc {
+/**
+ * Delete several passages in one document edit, so a multi-select delete lands
+ * as a single undo step rather than one entry per passage.
+ *
+ * Returns `doc` itself when no id matches, so the store's reference compare can
+ * tell a real edit from a no-op and never pushes an empty history entry.
+ */
+export function deleteNodes(doc: StoryDoc, ids: readonly string[]): StoryDoc {
+  const drop = new Set(ids)
+  if (!doc.nodes.some((n) => drop.has(n.id))) return doc
   const next = clone(doc)
-  next.nodes = next.nodes.filter((n) => n.id !== id)
+  next.nodes = next.nodes.filter((n) => !drop.has(n.id))
   // Inbound [[...]] markup is deliberately left alone: the author wrote that
   // prose, and a delete is not a statement about what the text should say. The
   // dangling links surface as phantom cards instead.
-  if (next.startNodeId === id) next.startNodeId = next.nodes[0]?.id ?? null
+  if (next.startNodeId !== null && drop.has(next.startNodeId)) {
+    next.startNodeId = next.nodes[0]?.id ?? null
+  }
   return next
+}
+
+export function deleteNode(doc: StoryDoc, id: string): StoryDoc {
+  return deleteNodes(doc, [id])
 }
 
 /** Sequences that change how a `[[...]]` link is parsed. */
