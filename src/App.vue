@@ -13,6 +13,7 @@ import HelpPanel from './components/HelpPanel.vue'
 import StoryIndexPanel from './components/StoryIndexPanel.vue'
 import { useShortcuts } from './composables/useShortcuts'
 import { useViewport } from './composables/useViewport'
+import { prefs } from './stores/prefs'
 import * as store from './stores/story'
 import type { NodeState } from './types/story'
 
@@ -88,6 +89,9 @@ const stateOf = computed(
 )
 const tagsOf = computed(
   () => new Map<string, string[]>(store.state.doc.nodes.map((n) => [n.id, n.tags])),
+)
+const tokenOf = computed(
+  () => new Map<string, string>(store.state.doc.nodes.map((n) => [n.id, n.token])),
 )
 function fit() {
   vp.zoomToFit(layout.value.bounds)
@@ -232,6 +236,8 @@ function dismissNotices() {
           :tags-of="tagsOf"
           :tag-colors="store.tagColors.value"
           :show-levels="showLevels"
+          :show-codes="prefs.showCodes"
+          :token-of="tokenOf"
           @select="store.applySelect"
           @open="openPassage"
           @create="store.createFromPhantom($event)"

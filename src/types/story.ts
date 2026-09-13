@@ -49,6 +49,15 @@ export interface StoryNode {
    * is the mirror of what renaming a title used to do.
    */
   code: string
+  /**
+   * A note to yourself about this passage. Free text, at most 15 characters,
+   * empty when unused.
+   *
+   * Nothing structural reads one: notes may repeat, and no link, layout or
+   * export resolves against them. They show on their own passage's card and
+   * they are searchable — that is the whole of it.
+   */
+  token: string
   /** Harlowe source. The single source of truth for this passage's outgoing links. */
   body: string
   tags: string[]

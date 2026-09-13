@@ -20,7 +20,33 @@ const props = defineProps<{
   tagsOf: Map<string, string[]>
   tagColors: Map<string, TagColor>
   showLevels: boolean
+  /** Draw each passage's code above its card. */
+  showCodes: boolean
+  tokenOf: Map<string, string>
 }>()
+
+/**
+ * Clear of the card's top edge, inside the gap between levels.
+ *
+ * The code is drawn in its own layer rather than inside the card because the
+ * card sets `overflow: hidden` and `contain: paint` — a child could not leave
+ * it, and growing the card is not an option: `NODE_H` is a layout constant.
+ * The in-card line belongs to the author's note now.
+ */
+const CODE_GAP = 13
+
+const codeLabels = computed(() => {
+  // Both halves of the template guard: at a zoomed-out view nothing is drawn,
+  // and building the list anyway would allocate per node on every relayout.
+  if (!props.detailed || !props.showCodes) return []
+  return props.layout.nodes.map((node) => ({
+    id: node.id,
+    x: node.x - node.width / 2,
+    y: node.y - node.height / 2 - CODE_GAP,
+    width: node.width,
+    text: node.code,
+  }))
+})
 
 const emit = defineEmits<{
   select: [id: string | null, mode: SelectMode]
@@ -139,6 +165,17 @@ const levelLabels = computed(() =>
       </g>
     </svg>
 
+    <div v-if="codeLabels.length > 0" class="codes" :style="{ transform }">
+      <div
+        v-for="label in codeLabels"
+        :key="label.id"
+        class="code-tag"
+        :style="{ left: `${label.x}px`, top: `${label.y}px`, width: `${label.width}px` }"
+      >
+        {{ label.text }}
+      </div>
+    </div>
+
     <div class="nodes" :style="{ transform }">
       <StoryNodeCard
         v-for="node in layout.nodes"
@@ -146,6 +183,7 @@ const levelLabels = computed(() =>
         :node="node"
         :state="stateOf.get(node.id) ?? null"
         :tags="tagsOf.get(node.id) ?? []"
+        :token="tokenOf.get(node.id) ?? ''"
         :tag-colors="tagColors"
         :selected="inSelection(node.id)"
         :anchor="node.id === selectedId"
@@ -196,7 +234,8 @@ const levelLabels = computed(() =>
 
 .edges,
 .nodes,
-.gutter {
+.gutter,
+.codes {
   position: absolute;
   inset: 0;
   pointer-events: none;
@@ -208,8 +247,27 @@ const levelLabels = computed(() =>
 }
 
 .nodes,
-.gutter {
+.gutter,
+.codes {
   transform-origin: 0 0;
+}
+
+.code-tag {
+  position: absolute;
+  /* Matches the card's own `.token` line in size and weight: a code above and
+     a note inside say different things about a passage, but neither is the
+     subordinate one, so they should not read as different tiers. */
+  font-size: 10px;
+  line-height: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  /* Truncated rather than wrapped: a second line would reach into the level
+     above. The card's own hover title carries the code in full. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .edges {

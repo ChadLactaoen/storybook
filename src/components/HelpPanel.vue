@@ -100,6 +100,34 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         </section>
 
         <section>
+          <h3>Story codes</h3>
+          <p class="note">
+            Every passage has a code, and the codes of the passages a reader visited are
+            their story&rsquo;s identity &mdash; <code>P1-&gt;P3-&gt;P7</code>. It is exact:
+            two readers who made different choices cannot land on the same code, however
+            often their routes merge.
+          </p>
+          <p class="note">
+            Harlowe already knows the route. <code>(history:)</code> lists the passages
+            visited, and because links point at codes, that list <em>is</em> the code:
+          </p>
+          <pre class="snippet">Your story code: (joined: "-&gt;", ...(history:), (passage:)'s name)</pre>
+          <p class="note">
+            <code>(history:)</code> leaves out the passage the reader is on, which is why
+            the current one is added at the end. A reader who loops back appears twice,
+            which is right &mdash; they did. <code>(joined:)</code> needs Harlowe&nbsp;3.3;
+            before that, fold the list instead:
+            <code>(folded: _p making _t via _t + "-&gt;" + _p, ..._list)</code>.
+          </p>
+          <p class="note">
+            Conditional links are read too. If every link into a passage is guarded by the
+            same <code>(if: $v is "x")</code>, and one passage supplies that value, the
+            sidebar says so. If <em>nothing</em> supplies it, it says the passage is
+            unreachable &mdash; which is usually a mistyped value.
+          </p>
+        </section>
+
+        <section>
           <h3>Formatting</h3>
           <table class="syntax">
             <tbody>
@@ -194,6 +222,20 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 </template>
 
 <style scoped>
+/* One line of Harlowe to paste into a passage, so it has to survive being
+   copied: no wrapping, and scroll rather than reflow on a narrow panel. */
+.snippet {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-alt);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
 .veil {
   position: fixed;
   inset: 0;

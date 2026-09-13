@@ -65,6 +65,24 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             passage never re-inherits when its parent does.
           </p>
         </section>
+
+        <section>
+          <h3>Canvas</h3>
+          <label class="pref">
+            <input
+              type="checkbox"
+              :checked="prefs.showCodes"
+              @change="setPref('showCodes', ($event.target as HTMLInputElement).checked)"
+            />
+            <span class="text">
+              Show codes above cards
+              <span class="hint">
+                A card shows your note; this puts its code in the gap above it. Codes are
+                what links point at, and what a reader’s story code is made of.
+              </span>
+            </span>
+          </label>
+        </section>
       </div>
 
       <footer>

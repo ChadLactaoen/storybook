@@ -21,13 +21,19 @@ export interface Prefs {
    * forward would put words in the author's mouth.
    */
   inheritCharacters: boolean
+  /** Draw each passage's code in the gap above its card. */
+  showCodes: boolean
 }
 
 /**
  * Both off. Inheritance rewrites a passage the author has not looked at yet, so
  * it is something they opt into rather than something they discover.
  */
-const DEFAULTS: Prefs = { inheritSetting: false, inheritCharacters: false }
+const DEFAULTS: Prefs = {
+  inheritSetting: false,
+  inheritCharacters: false,
+  showCodes: false,
+}
 
 /**
  * Anything but a boolean is ignored rather than rejected, and a missing or

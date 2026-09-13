@@ -184,6 +184,12 @@ select {
   color: var(--text-dim);
 }
 
+/* A warning, not a refusal: the edit stood, but the trail it produces is
+   ambiguous. Distinct from `.hint-error`, which means the edit was rejected. */
+.hint-warn {
+  color: var(--draft);
+}
+
 .hint-error {
   color: var(--todo);
 }

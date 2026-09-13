@@ -40,7 +40,7 @@ defineExpose({ focus: () => input.value?.focus() })
       v-model="store.state.search"
       class="field search"
       type="search"
-      placeholder="Search titles, codes and prose…  (Cmd F)"
+      placeholder="Search titles, notes, codes and prose…  (Cmd F)"
       @keydown.esc="clear"
     />
 

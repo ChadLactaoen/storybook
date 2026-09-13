@@ -289,6 +289,19 @@ describe('fields outside the layout inputs', () => {
       layoutStory(d).nodes.map(({ title, ...rest }) => rest)
     expect(geometry(retitled)).toEqual(geometry(plain))
   })
+
+  it('lays out identically whatever the notes are', () => {
+    const plain = docFrom(BINARY_3)
+    const tokened = {
+      ...plain,
+      nodes: plain.nodes.map((n, i) => ({ ...n, token: String.fromCharCode(65 + i) })),
+    }
+    // A note is authoring metadata: it moves nothing. This is the guard on
+    // that — put it in `layoutKey` and every keystroke in the field would
+    // re-derive the graph, re-parsing every body in the story.
+    expect(layoutStory(tokened).nodes).toEqual(layoutStory(plain).nodes)
+    expect(layoutStory(tokened).stats.hash).toBe(layoutStory(plain).stats.hash)
+  })
 })
 
 describe('reachability', () => {
