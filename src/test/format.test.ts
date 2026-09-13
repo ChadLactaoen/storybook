@@ -159,7 +159,30 @@ describe('highlighting the formatting markup', () => {
   })
 
   it('needs a closing marker on the same line', () => {
-    expect(kinds("''unclosed\nbold''")).toEqual(["string:''", "string:''"])
+    expect(kinds("''unclosed\nbold''")).toEqual([])
+  })
+
+  // The apostrophes in ordinary prose are punctuation, not a pair of quotes
+  // with a sentence of "string" between them.
+  it('reads an apostrophe in prose as prose', () => {
+    expect(kinds("He'll make it up to Grant's good side.")).toEqual([])
+  })
+
+  it('still reads a single-quoted string inside a macro', () => {
+    expect(kinds("(if: $v is 'x')[go]")).toEqual([
+      'macro:(if:',
+      'variable:$v',
+      'keyword:is',
+      "string:'x'",
+    ])
+  })
+
+  it('paints a double-quoted string that closes on its line', () => {
+    expect(kinds('She said "wait" and left.')).toEqual(['string:"wait"'])
+  })
+
+  it('leaves a dangling double quote alone rather than painting the rest', () => {
+    expect(kinds('She said "wait\nand left.')).toEqual([])
   })
 
   it('only quotes at the start of a line', () => {

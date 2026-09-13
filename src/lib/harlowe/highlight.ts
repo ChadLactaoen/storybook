@@ -101,14 +101,31 @@ export function tokenize(src: string): Token[] {
       }
     }
 
+    // Prose is full of apostrophes — `he'll`, `Grant's` — so a single quote
+    // only opens a string inside a macro's arguments, where `'x'` is one. And
+    // outside a macro even `"` has to close on its own line, or an opening
+    // quote left dangling would paint the rest of the passage.
     if (c === '"' || c === "'") {
-      let j = i + 1
-      while (j < src.length && src[j] !== c) {
-        if (src[j] === '\\') j++
-        j++
+      const inMacro = insideMacro(src, i)
+      if (inMacro || c === '"') {
+        const lineBreak = src.indexOf('\n', i)
+        const limit = inMacro || lineBreak === -1 ? src.length : lineBreak
+        let j = i + 1
+        while (j < limit && src[j] !== c) {
+          if (src[j] === '\\') j++
+          j++
+        }
+        if (j < limit) {
+          emit('string', i, j + 1)
+          continue
+        }
+        // Unterminated. Inside a macro that is a typo worth showing; outside
+        // one it is ordinary punctuation, so leave it as text.
+        if (inMacro) {
+          emit('string', i, src.length)
+          continue
+        }
       }
-      emit('string', i, Math.min(j + 1, src.length))
-      continue
     }
 
     if (c >= '0' && c <= '9') {
