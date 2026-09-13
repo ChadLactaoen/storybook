@@ -137,10 +137,20 @@ Mira→Tam records only how Mira regards Tam; the reverse is a separate entry.
 layout costs more than computing it. `setDoc` recomputes layout synchronously (not in a
 watcher, which would flush a tick late and leave `layout` describing the previous
 document) and memoizes on a hash of only the fields layout depends on — id, code, title,
-`levelOffset`, body, `startNodeId` — so tag/state edits are pure re-renders. `code` is in
+`levelOffset`, body, `startNodeId` — so tag, state and story-notes edits are pure
+re-renders. `code` is in
 there because links resolve against it; leave it out and a recode goes unnoticed while
 every inbound edge re-resolves to a phantom.
 `layoutVersion` is a stale-result guard so layout can later move into a Web Worker.
+
+**The left gutter is lit through the editor's veil only when nothing in it can move the
+selection.** `--veil-inset` stops `BodyDialog`'s veil at the gutter so the cheat sheet
+stays readable beside an expanded editor; `StoryNotes` qualifies too, since it writes a
+story-level field. `StoryIndexPanel` does not — its rows call `select`, and the open
+dialog is bound to the selection, so exposing it would let one click swap the passage
+being edited mid-keystroke. While the index is up the whole column dims, notes included.
+`App.vue` owns the stack: `.left-gutter` sets the width and the stage's edge, and its
+occupants only take a share of the height (`flex: 1 1 0`).
 
 **Gate inference runs outside `layoutStory`, and must stay there.** A gate moves
 nothing on the canvas, so the macro read is wanted only when something asks. The `gates`
@@ -160,7 +170,7 @@ empty target without consuming an ordinal, so the caller maps guards to links by
 
 The memo is about the parse, not about render identity: `gates` reaches no card — only
 `selectedGate` and the inspector read it. It exists so that an edit reaching no macro (a
-tag, a state, a note) does not re-scan every body in the story.
+tag, a state, a note, the story's scratchpad) does not re-scan every body in the story.
 
 ### Tests
 

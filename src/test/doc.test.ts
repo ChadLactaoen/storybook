@@ -9,6 +9,7 @@ import {
   resolveLinks,
   setBody,
   setCode,
+  setStoryNotes,
   setTagColor,
   setToken,
 } from '../lib/doc/mutations'
@@ -77,6 +78,60 @@ describe('passage note', () => {
       JSON.stringify({ nodes: [{ id: '1', title: 'One', code: 'P1', body: '' }] }),
     )
     expect(back.nodes[0]!.token).toBe('')
+    expect(warnings).toEqual([])
+  })
+})
+
+describe('story notes', () => {
+  const doc = docFrom({ One: ['Two'], Two: [] })
+
+  it('keeps whatever the author typed, trailing newline and all', () => {
+    // Nothing normalizes on the way out or back in, so the round trip is
+    // identity rather than a fixed point. A scratchpad's trailing newline is
+    // where the caret is parked; trimming would eat it mid-sentence.
+    const typed = '  the ending\n\n'
+    const set = setStoryNotes(doc, typed)
+    expect(set.notes).toBe(typed)
+    expect(parseDoc(serializeDoc(set)).doc.notes).toBe(typed)
+  })
+
+  it('returns the identical document for a no-op, protecting the undo stack', () => {
+    const set = setStoryNotes(doc, 'Mira never learns the truth.')
+    // Committed on every keystroke, so a no-op would push an empty undo entry
+    // and wipe the redo stack.
+    expect(setStoryNotes(set, 'Mira never learns the truth.')).toBe(set)
+    expect(setStoryNotes(set, 'Mira never learns the truth!')).not.toBe(set)
+  })
+
+  it('survives a save-file round trip', () => {
+    const set = setStoryNotes(doc, 'Loose end: who pays the innkeeper?')
+    const back = parseDoc(serializeDoc(set)).doc
+    expect(back.notes).toBe('Loose end: who pays the innkeeper?')
+    expect(serializeDoc(back)).toBe(serializeDoc(set))
+  })
+
+  it('serializes byte-identically however the nodes are ordered', () => {
+    const set = setStoryNotes(doc, 'A paragraph about the ending.')
+    const base = serializeDoc(set)
+    for (let i = 0; i < 4; i++) {
+      expect(serializeDoc({ ...set, nodes: shuffled(set.nodes, i + 7) })).toBe(base)
+    }
+  })
+
+  it('loads a save file written before story notes existed', () => {
+    const { doc: back, warnings } = parseDoc(
+      JSON.stringify({ nodes: [{ id: '1', title: 'One', code: 'P1', body: '' }] }),
+    )
+    expect(back.notes).toBe('')
+    expect(warnings).toEqual([])
+  })
+
+  it('repairs a notes field that is not a string, without a warning', () => {
+    // Repairing something nobody wrote is not news.
+    const { doc: back, warnings } = parseDoc(
+      JSON.stringify({ notes: 42, nodes: [{ id: '1', code: 'P1', body: '' }] }),
+    )
+    expect(back.notes).toBe('')
     expect(warnings).toEqual([])
   })
 })

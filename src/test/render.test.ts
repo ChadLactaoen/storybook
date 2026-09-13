@@ -809,7 +809,10 @@ describe('the character cheat sheet', () => {
 
     const panel = host.querySelector('.cheat')!
     expect(panel).not.toBeNull()
-    expect(host.querySelector('main')!.firstElementChild).toBe(panel)
+    // The gutter is on the left of the stage, and the cheat sheet is in it.
+    const gutter = host.querySelector('main')!.firstElementChild!
+    expect(gutter.classList.contains('left-gutter')).toBe(true)
+    expect(gutter.firstElementChild).toBe(panel)
 
     const text = panel.textContent!.replace(/\s+/g, ' ')
     expect(text).toContain('Cast of P1 · Start')
@@ -1153,6 +1156,114 @@ describe('selecting more than one passage', () => {
 
     expect(store.state.selectedIds).toEqual([])
     expect(host.querySelector('.card.selected')).toBeNull()
+    expect(problems).toEqual([])
+  })
+})
+
+describe('story notes', () => {
+  async function withStory() {
+    mount()
+    store.newStory('Notes Check')
+    await nextTick()
+  }
+
+  function toolbarButton(label: string) {
+    return [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === label)!
+  }
+
+  function type(text: string) {
+    const pad = host.querySelector<HTMLTextAreaElement>('.notes .pad')!
+    pad.value = text
+    pad.dispatchEvent(new Event('input'))
+  }
+
+  it('opens from the toolbar and writes straight to the document', async () => {
+    await withStory()
+    expect(host.querySelector('.left-gutter')).toBeNull()
+
+    toolbarButton('Notes').click()
+    await nextTick()
+    expect(host.querySelector('.notes')).not.toBeNull()
+
+    type('Mira never learns the truth.')
+    await nextTick()
+    expect(store.state.doc.notes).toBe('Mira never learns the truth.')
+    expect(problems).toEqual([])
+  })
+
+  it('closes on a second Cmd J pressed from inside its own textarea', async () => {
+    await withStory()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', metaKey: true }))
+    await nextTick()
+    const pad = host.querySelector<HTMLTextAreaElement>('.notes .pad')!
+    expect(pad).not.toBeNull()
+
+    // The panel focuses its own field, so a shortcut that stood down while
+    // typing could open it and never close it again.
+    pad.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', metaKey: true, bubbles: true }))
+    await nextTick()
+    expect(host.querySelector('.notes')).toBeNull()
+    expect(host.querySelector('.left-gutter')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('stacks under the index, always at the bottom, and outlives it', async () => {
+    await withStory()
+    toolbarButton('Notes').click()
+    toolbarButton('Cast & Settings').click()
+    await nextTick()
+
+    const gutter = host.querySelector('.left-gutter')!
+    expect(gutter.children).toHaveLength(2)
+    expect(gutter.firstElementChild!.classList.contains('index')).toBe(true)
+    expect(gutter.lastElementChild!.classList.contains('notes')).toBe(true)
+
+    toolbarButton('Cast & Settings').click()
+    await nextTick()
+    expect(host.querySelector('.index')).toBeNull()
+    expect(host.querySelector('.notes')).not.toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('survives a cleared selection that closes the cheat sheet', async () => {
+    await withStory()
+    const id = store.state.doc.nodes[0]!.id
+    store.select(id)
+    toolbarButton('Notes').click()
+    await nextTick()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))
+    await nextTick()
+    expect(host.querySelector('.cheat')).not.toBeNull()
+
+    store.select(null)
+    await nextTick()
+    // The cheat sheet belongs to a passage; the notes belong to the story.
+    expect(host.querySelector('.cheat')).toBeNull()
+    expect(host.querySelector('.notes')).not.toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('stays lit beside the body editor, unless the index is up beside it', async () => {
+    await withStory()
+    const id = store.state.doc.nodes[0]!.id
+    store.select(id)
+    toolbarButton('Notes').click()
+    await nextTick()
+
+    const inset = () =>
+      host.querySelector<HTMLElement>('.app')!.style.getPropertyValue('--veil-inset')
+
+    host.querySelector<HTMLButtonElement>('.inspector .expand')!.click()
+    await nextTick()
+    expect(host.querySelector('.veil')).not.toBeNull()
+    expect(inset()).toBe('var(--left-panel-w)')
+
+    // The index selects passages, and the open dialog is bound to the
+    // selection — so while it is up the whole column dims, notes included.
+    toolbarButton('Cast & Settings').click()
+    await nextTick()
+    expect(inset()).toBe('0px')
     expect(problems).toEqual([])
   })
 })

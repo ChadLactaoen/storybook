@@ -154,14 +154,15 @@ watch(
 </template>
 
 <style scoped>
-/* --left-panel-w, not --sidebar-w: this and StoryIndexPanel share the left
-   gutter, and swapping between them must not reflow the stage. */
+/* Width and the gutter's right edge belong to .left-gutter in App.vue. This
+   panel only says how it fills the share of height it is handed — `min-height:
+   0` so .scroll scrolls inside that share instead of growing past it and
+   squeezing whatever is stacked below. */
 .cheat {
   display: flex;
   flex-direction: column;
-  width: var(--left-panel-w);
-  flex: 0 0 var(--left-panel-w);
-  border-right: 1px solid var(--border);
+  flex: 1 1 0;
+  min-height: 0;
   background: var(--panel-alt);
 }
 
