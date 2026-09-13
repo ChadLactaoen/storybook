@@ -130,6 +130,7 @@ export function createNode(
     // wrote by hand does not get one invented for it — see `parseDoc`.
     title: opts.title?.trim() || 'Untitled Passage',
     code: wanted.length > 0 && !taken.has(wanted) ? wanted : freeCode(taken, next.nextId),
+    token: '',
     body: opts.body ?? '',
     tags: [],
     state: 'TODO',
@@ -503,6 +504,48 @@ export function setCode(doc: StoryDoc, id: string, rawCode: string): CodeResult 
   return { doc: next, error: null }
 }
 
+
+/* ---------- token ---------- */
+
+/** Long enough for a phrase, short enough to sit on a card. */
+export const TOKEN_MAX = 15
+
+/**
+ * Cap, then trim. Nothing else reads a note, so nothing else constrains it.
+ *
+ * That order matters twice over. Trimming last makes this idempotent — cut a
+ * note mid-space and a second pass would trim again, so a hand-edited file
+ * would not re-serialize to itself and the canonical-JSON invariant breaks.
+ * And the cut counts characters, not UTF-16 units, or a note ending in an
+ * emoji is truncated into half a surrogate pair.
+ */
+export function normalizeToken(raw: string): string {
+  return [...raw.trim()].slice(0, TOKEN_MAX).join('').trim()
+}
+
+/**
+ * Set a passage's note.
+ *
+ * Free text, and deliberately so. This field once carried a grammar — a case
+ * rule that let per-passage tokens concatenate into a route like `D-LY` — and
+ * the concatenation turned out to be noise: in a real story an early branch is
+ * often irrelevant to a later one, so the leading characters were something to
+ * mentally strip rather than context to read. What survived is the useful half,
+ * a note to yourself, which needs no grammar at all.
+ *
+ * Nothing structural reads one. Notes may repeat, may be empty, and are only
+ * ever shown on their own passage — see `searchableText`, which is the other
+ * place they matter.
+ */
+export function setToken(doc: StoryDoc, id: string, value: string): StoryDoc {
+  const node = doc.nodes.find((n) => n.id === id)
+  const token = normalizeToken(value)
+  // Returning the same object matters: `commit` compares by reference, and this
+  // commits on every keystroke — past the cap, every further character would
+  // otherwise push an empty undo entry and wipe the redo stack.
+  if (!node || token === node.token) return doc
+  return replaceNode(doc, id, { token })
+}
 
 /* ---------- setting ---------- */
 

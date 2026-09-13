@@ -8,8 +8,11 @@ import { buildLink } from '../lib/harlowe/links'
 import { fnv1a } from '../lib/graph/hash'
 import { isPhantomId } from '../lib/graph/constants'
 import { layoutStory } from '../lib/graph/layout'
+import { gatesOf } from '../lib/graph/gates'
+import type { GateEntry } from '../lib/graph/gates'
 import { countPaths } from '../lib/graph/paths'
 import { reachableFrom, strandedBy } from '../lib/graph/reachability'
+import { readStoryMacros } from '../lib/harlowe/macros'
 import type { LayoutResult } from '../lib/graph/types'
 import type {
   NodeState,
@@ -515,6 +518,12 @@ export function codeSet(id: string, value: string): string | null {
   return null
 }
 
+/* ---------- token ---------- */
+
+export function tokenSet(id: string, value: string): void {
+  commit(M.setToken(state.doc, id, value))
+}
+
 /* ---------- scene: setting and cast ---------- */
 
 export function settingSet(id: string, value: string): void {
@@ -689,15 +698,82 @@ export function pathsFrom(id: string): bigint {
   return countPaths(graph, backEdges, id)
 }
 
+let lastGateKey = ''
+let lastGates = new Map<string, GateEntry>()
+
+/**
+ * What the story's `(if:)` macros say about which routes exist.
+ *
+ * Deliberately not part of `layoutStory`: a gate moves nothing on the canvas,
+ * and the macro read is only wanted when something asks. Same reasoning as
+ * `pathsFrom`, and safe for the same reason — layout is memoized on exactly the
+ * fields the graph is built from, so the graph it retains is never stale.
+ *
+ * Memoized on `layoutVersion` alone, because this reads `state.doc`, which
+ * *every* edit replaces. Without the key a tag edit — which reaches no macro —
+ * would re-parse every body in the story. No reset is needed on a new story:
+ * `layoutVersion` only ever increments, so a stale key cannot be matched again.
+ */
+export const gates = computed(() => {
+  const key = String(layoutVersion.value)
+  if (key === lastGateKey) return lastGates
+  lastGateKey = key
+
+  const { graph, backEdges, nodeById } = layout.value
+  const { guardOf, assignersOf, opaqueVars } = readStoryMacros(state.doc.nodes)
+
+  // Memoized per gate: a story has few gates and they are asked about
+  // repeatedly, once per passage the gate covers.
+  const reach = new Map<string, Set<string>>()
+  const isAncestor = (gate: string, node: string): boolean => {
+    let seen = reach.get(gate)
+    if (!seen) {
+      seen = reachableFrom(graph, gate)
+      reach.set(gate, seen)
+    }
+    return seen.has(node)
+  }
+
+  lastGates = gatesOf(graph, {
+    backEdges,
+    levelOf: new Map(graph.ids.map((id) => [id, nodeById.get(id)?.level ?? 1])),
+    guardOf,
+    assignersOf,
+    opaqueVars,
+    isAncestor,
+  })
+  return lastGates
+})
+
+/**
+ * What the macros say about the selected passage.
+ *
+ * `gate` is the passage every route here provably passes; `dead` means no route
+ * can satisfy its condition at all. Both are inferences the author never asked
+ * for and cannot see in the body, so the inspector shows them rather than
+ * quietly acting on them.
+ */
+export const selectedGate = computed<{ gate: StoryNode | null; dead: boolean }>(() => {
+  const id = state.selectedId
+  const entry = id ? gates.value.get(id) : undefined
+  if (!entry) return { gate: null, dead: false }
+  return {
+    gate: entry.gateId ? (state.doc.nodes.find((n) => n.id === entry.gateId) ?? null) : null,
+    dead: entry.dead,
+  }
+})
+
 /**
  * Everything free-text search looks at. Setting, cast names and scene notes are
- * included so typing a character's name finds their scenes, and the code so a
- * partial code still turns something up when it is not an exact hit.
+ * included so typing a character's name finds their scenes, the note so a passage
+ * can be found by what you wrote about it, and the code so a partial code still
+ * turns something up when it is not an exact hit.
  */
 function searchableText(n: StoryNode): string {
   return [
     n.title,
     n.code,
+    n.token,
     n.body,
     n.setting,
     ...n.characters.map((c) => c.name + ' ' + c.note),

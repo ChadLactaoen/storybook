@@ -22,6 +22,7 @@ export function docFrom(
     settings?: Record<string, string>
     casts?: Record<string, string[]>
     codes?: Record<string, string>
+    tokens?: Record<string, string>
   } = {},
 ): StoryDoc {
   const doc = emptyDoc('Test Story')
@@ -43,6 +44,7 @@ export function docFrom(
     levelOffset: opts.offsets?.[title] ?? 0,
     setting: opts.settings?.[title] ?? '',
     code: codeOf.get(title)!,
+    token: opts.tokens?.[title] ?? '',
     // Name order, matching how a node's cast is always stored.
     characters: (opts.casts?.[title] ?? [])
       .map((name) => ({ name, note: '' }))

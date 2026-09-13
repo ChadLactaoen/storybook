@@ -13,6 +13,8 @@ const props = defineProps<{
   selected: boolean
   /** The one selected card the inspector is describing. */
   anchor: boolean
+  /** The author's note, shown in place of an identifier. Empty for most passages. */
+  token: string
   isStart: boolean
   dimmed: boolean
   detailed: boolean
@@ -82,7 +84,7 @@ const style = computed(() => ({
     <span v-if="!node.isPhantom" class="badge" :title="state ?? 'TODO'" />
 
     <div class="body">
-      <div class="code">{{ node.code }}</div>
+      <div v-if="token" class="token">{{ token }}</div>
       <div v-if="node.title" class="title">{{ node.title }}</div>
       <div v-else class="title untitled">Untitled</div>
 
@@ -186,7 +188,7 @@ const style = computed(() => ({
   gap: 5px;
 }
 
-.code {
+.token {
   /* Tight by design: the detailed card has almost no spare height, so this line
      borrows as little of it as possible. */
   font-size: 10px;
@@ -200,13 +202,13 @@ const style = computed(() => ({
   text-overflow: ellipsis;
 }
 
-.card.plain .code {
+.card.plain .token {
   font-size: 11px;
 }
 
-/* A coded passage is identified by its code, so the title can give up a line
-   rather than let the two together overflow the fixed card height. */
-.card:not(.plain) .code + .title {
+/* Only when a note is actually there: an untokened card has the line collapsed,
+   and the title should take the space rather than clamp for nothing. */
+.card:not(.plain) .token + .title {
   -webkit-line-clamp: 1;
   line-clamp: 1;
 }

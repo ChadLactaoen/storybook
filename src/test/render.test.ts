@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import type { App as VueApp } from 'vue'
 import App from '../App.vue'
-import { resetPrefs } from '../stores/prefs'
+import { resetPrefs, setPref } from '../stores/prefs'
 import * as store from '../stores/story'
 
 /**
@@ -526,37 +526,141 @@ describe('the app renders', () => {
     const inspector = host.querySelector('.inspector')!
     expect(inspector.querySelector<HTMLInputElement>('#passage-code')!.value).toBe('A3')
 
+    setPref('showCodes', true)
+    await nextTick()
     // 'P2' is the starter story's dashed card, which the sample link points at.
-    const codes = [...host.querySelectorAll('.card .code')].map((el) => el.textContent)
+    const codes = [...host.querySelectorAll('.code-tag')].map((el) => el.textContent?.trim())
     expect(codes).toEqual(['A3', 'P2'])
     expect(problems).toEqual([])
   })
 
-  it('draws a code on every card, since a passage cannot be without one', async () => {
+  it('draws a code above every card, since a passage cannot be without one', async () => {
     mount()
     store.newStory('Render Check')
     const id = store.state.doc.nodes[0]!.id
     writeBody(id, '[[Two]]')
-    store.select(id)
+    setPref('showCodes', true)
     await nextTick()
 
-    const codes = [...host.querySelectorAll('.card .code')].map((el) => el.textContent)
+    const codes = [...host.querySelectorAll('.code-tag')].map((el) => el.textContent?.trim())
     expect(codes).toEqual(['P1', 'P2'])
     expect(problems).toEqual([])
   })
 
-  it('puts Code first, then Title, then the body', async () => {
+  it('gives the in-card line to the note, and collapses it when there is none', async () => {
+    mount()
+    store.newStory('Render Check')
+    const id = store.state.doc.nodes[0]!.id
+    writeBody(id, '[[Two]]')
+    await nextTick()
+
+    // Nothing noted yet, so no card spends a line on one.
+    expect(host.querySelectorAll('.card .token')).toHaveLength(0)
+
+    store.tokenSet(id, 'turning point')
+    await nextTick()
+    const notes = [...host.querySelectorAll('.card .token')].map((el) => el.textContent)
+    expect(notes).toEqual(['turning point'])
+    expect(problems).toEqual([])
+  })
+
+  it('puts Title first, then the body, then the Note, with Code tucked away', async () => {
     mount()
     store.newStory('Render Check')
     store.select(store.state.doc.nodes[0]!.id)
     await nextTick()
 
-    // Code leads because it is the passage's identity — what links name, and
-    // what every banner and picker row shows. The title is a label beneath it.
+    // The body is the work, so it sits as high as a title allows. A note is
+    // about the passage rather than part of it, so it follows. Code is still
+    // editable — links name it — but it is set for you and changing it rewrites
+    // prose, so it sits behind a disclosure further down.
     const sections = [...host.querySelectorAll('.inspector .scroll > section')]
-    expect(sections[0]!.querySelector('#passage-code')).not.toBeNull()
-    expect(sections[1]!.querySelector('#passage-title')).not.toBeNull()
-    expect(sections[2]!.querySelector('.editor')).not.toBeNull()
+    expect(sections[0]!.querySelector('#passage-title')).not.toBeNull()
+    expect(sections[1]!.querySelector('.editor')).not.toBeNull()
+    expect(sections[2]!.querySelector('#passage-token')).not.toBeNull()
+    expect(host.querySelector('.inspector details #passage-code')).not.toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('opens the code disclosure when a recode is refused', async () => {
+    mount()
+    store.newStory('Render Check')
+    const first = store.state.doc.nodes[0]!.id
+    writeBody(first, '[[Two]]')
+    store.select(first)
+    await nextTick()
+
+    const details = host.querySelector<HTMLDetailsElement>('.inspector details')!
+    expect(details.open).toBe(false)
+
+    // Collide with the code the linked passage just took.
+    const taken = store.state.doc.nodes.find((n) => n.id !== first)!.code
+    const field = host.querySelector<HTMLInputElement>('#passage-code')!
+    field.value = taken
+    field.dispatchEvent(new Event('input'))
+    field.dispatchEvent(new Event('blur'))
+    await nextTick()
+
+    // A collapsed disclosure would swallow the refusal and leave the author
+    // wondering why the code never changed.
+    expect(details.open).toBe(true)
+    expect(host.querySelector('.inspector .hint-error')!.textContent).toContain(taken)
+
+    // And it survives the author's next keystroke. The Note field sits directly
+    // above and commits live, so a watcher on the node object rather than its
+    // id would clear the refusal the moment they typed anything.
+    store.tokenSet(first, 'a')
+    await nextTick()
+    expect(details.open).toBe(true)
+    expect(host.querySelector('.inspector .hint-error')!.textContent).toContain(taken)
+    expect(problems).toEqual([])
+  })
+
+  it('says which passage a conditional link locks a route to', async () => {
+    mount()
+    store.newStory('Render Check')
+    const first = store.state.doc.nodes[0]!.id
+    const byTitle = (t: string) => store.state.doc.nodes.find((n) => n.title === t)!.id
+    writeBody(first, '[[Pick]]\n(set:$idol to "p")')
+    writeBody(byTitle('Pick'), '(if:$idol is "p")[[Onward]]')
+    store.select(byTitle('Onward'))
+    await nextTick()
+
+    const hints = [...host.querySelectorAll('.inspector .hint')].map((h) =>
+      h.textContent?.replace(/\s+/g, ' ').trim(),
+    )
+    expect(hints.some((h) => h?.startsWith('Only reached after'))).toBe(true)
+    expect(problems).toEqual([])
+  })
+
+  it('says so when no route can satisfy a passage’s condition', async () => {
+    mount()
+    store.newStory('Render Check')
+    const first = store.state.doc.nodes[0]!.id
+    // The classic typo: the guard tests a value nothing ever assigns.
+    writeBody(first, '(if:$idol is "nope")[[Onward]]')
+    store.select(store.state.doc.nodes.find((n) => n.title === 'Onward')!.id)
+    await nextTick()
+
+    const warn = host.querySelector('.inspector .hint-warn')
+    expect(warn?.textContent).toContain('Nothing reaches this passage')
+
+    expect(problems).toEqual([])
+  })
+
+  it('keeps a dashed card naming the passage it cannot find', async () => {
+    mount()
+    store.newStory('Render Check')
+    const first = store.state.doc.nodes[0]!.id
+    // A link to a code nothing carries: the phantom is never created.
+    store.editBody(first, '[[Go on|Nowhere]]')
+    setPref('showCodes', true)
+    await nextTick()
+
+    // A dashed card still names the target it could not find, so you can
+    // double-click and create it.
+    const codes = [...host.querySelectorAll('.code-tag')].map((c) => c.textContent?.trim())
+    expect(codes).toContain('Nowhere')
     expect(problems).toEqual([])
   })
 })
@@ -581,8 +685,8 @@ describe('editor settings', () => {
     await openSettings()
 
     expect(panel()).not.toBeNull()
-    expect(boxes()).toHaveLength(2)
-    expect(boxes().map((b) => b.checked)).toEqual([false, false])
+    expect(boxes()).toHaveLength(3)
+    expect(boxes().map((b) => b.checked)).toEqual([false, false, false])
     expect(problems).toEqual([])
   })
 

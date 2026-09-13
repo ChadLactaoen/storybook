@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { TOKEN_MAX } from '../lib/doc/mutations'
 import { formatCount } from '../lib/graph/paths'
 import { prefs } from '../stores/prefs'
 import * as store from '../stores/story'
@@ -37,16 +38,61 @@ function confirmDeleteSelection() {
 const titleDraft = ref('')
 const codeDraft = ref('')
 const codeError = ref<string | null>(null)
+const codeOpen = ref(false)
 
 watch(
   node,
   (n) => {
     titleDraft.value = n?.title ?? ''
     codeDraft.value = n?.code ?? ''
-    codeError.value = null
   },
   { immediate: true },
 )
+
+// Keyed on the id, not the node: every mutation clones, so watching the object
+// would clear a refusal on the author's next keystroke anywhere — including in
+// the Note field directly above, which commits live. A rejected code has to
+// stand until the author does something about it.
+watch(
+  () => node.value?.id,
+  () => {
+    codeError.value = null
+    codeOpen.value = false
+  },
+  { immediate: true },
+)
+
+// A refusal must never be hidden by a collapsed disclosure: the field would
+// silently keep the old code and the author would have no idea why.
+watch(codeError, (e) => {
+  if (e) codeOpen.value = true
+})
+
+/**
+ * A draft synced on blur, not a computed writing through on every keystroke.
+ *
+ * `setToken` trims, so a write-through would let the input and the document
+ * disagree: typing a leading space normalises away, the document does not
+ * change, nothing re-renders, and the field keeps showing text the story does
+ * not have — until the next character commits and Vue snaps the caret to the
+ * end. The same reason `titleDraft` and `codeDraft` exist.
+ */
+const tokenDraft = ref('')
+watch(
+  () => node.value?.id,
+  () => {
+    tokenDraft.value = node.value?.token ?? ''
+  },
+  { immediate: true },
+)
+
+function commitToken() {
+  if (!node.value) return
+  store.tokenSet(node.value.id, tokenDraft.value)
+  tokenDraft.value = node.value.token
+}
+
+const inferred = store.selectedGate
 
 // Nothing to validate: titles are cosmetic, repeatable and may be left empty.
 function commitTitle() {
@@ -259,24 +305,6 @@ const upBlockedBy = computed(() => store.blockingParent.value)
 
     <div class="scroll">
       <section>
-        <label class="label" for="passage-code">Code</label>
-        <input
-          id="passage-code"
-          v-model="codeDraft"
-          class="field"
-          :class="{ 'field-error': codeError }"
-          @blur="commitCode"
-          @keydown.enter.prevent="commitCode"
-          @keydown.esc="revertCode"
-        />
-        <p v-if="codeError" class="hint hint-error">{{ codeError }}</p>
-        <p v-else class="hint">
-          What links point at, unique across the story and case-sensitive. Changing it
-          updates every <code>[[link]]</code> pointing here.
-        </p>
-      </section>
-
-      <section>
         <label class="label" for="passage-title">Title</label>
         <input
           id="passage-title"
@@ -309,6 +337,38 @@ const upBlockedBy = computed(() => store.blockingParent.value)
           @update:model-value="onBodyInput"
           @settle="settleBody"
         />
+      </section>
+
+      <section>
+        <label class="label" for="passage-token">Note</label>
+        <input
+          id="passage-token"
+          v-model="tokenDraft"
+          class="field field-token"
+          :maxlength="TOKEN_MAX"
+          placeholder="A word or two, for you"
+          @blur="commitToken"
+          @keydown.enter.prevent="commitToken"
+        />
+        <p v-if="inferred.dead" class="hint hint-warn">
+          Nothing reaches this passage: no route satisfies the condition on the links
+          that point here. Check the spelling of the value against the
+          <code>(set:)</code> that should supply it.
+        </p>
+        <p v-else-if="inferred.gate" class="hint">
+          Only reached after &ldquo;{{ nodeLabel(inferred.gate.code, inferred.gate.title) }}&rdquo;
+          &mdash; read from the <code>(if:)</code> on the links that point here, which no
+          other passage can satisfy.
+        </p>
+        <p class="hint">
+          A note to yourself &mdash; what this scene is for, what you still owe it, whatever
+          you want to find it by later. It shows on the card in place of the code, and the
+          search box looks at it.
+        </p>
+        <p class="hint">
+          Nothing structural reads it. Notes may repeat, may be blank, and never affect
+          links, levels or export &mdash; that is the Code below.
+        </p>
       </section>
 
       <section>
@@ -423,6 +483,36 @@ const upBlockedBy = computed(() => store.blockingParent.value)
         </p>
       </section>
 
+      <section>
+        <details
+          class="disclose"
+          :open="codeOpen"
+          @toggle="codeOpen = ($event.target as HTMLDetailsElement).open"
+        >
+          <summary>
+            <span class="label">Code</span>
+            <code class="summary-value">{{ node.code }}</code>
+          </summary>
+          <input
+            id="passage-code"
+            v-model="codeDraft"
+            aria-label="Code"
+            class="field"
+            :class="{ 'field-error': codeError }"
+            @blur="commitCode"
+            @keydown.enter.prevent="commitCode"
+            @keydown.esc="revertCode"
+          />
+          <p v-if="codeError" class="hint hint-error">{{ codeError }}</p>
+          <p v-else class="hint">
+            What links point at, unique across the story and case-sensitive. Changing it
+            updates every <code>[[link]]</code> pointing here. Most stories never need to
+            &mdash; it is set for you. Codes are also what a reader&rsquo;s story code is
+            made of: the ones they visited, in order.
+          </p>
+        </details>
+      </section>
+
       <section class="stats">
         <div class="stat">
           <span class="muted">Unique paths from here</span>
@@ -473,6 +563,52 @@ const upBlockedBy = computed(() => store.blockingParent.value)
 </template>
 
 <style scoped>
+.disclose > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  /* `display: flex` suppresses the native marker, and without one the row reads
+     as a plain label rather than something that opens. */
+  list-style: none;
+}
+
+.disclose > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclose > summary::before {
+  content: '\25B8';
+  font-size: 9px;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+
+.disclose[open] > summary::before {
+  content: '\25BE';
+}
+
+.disclose > summary .label {
+  display: inline;
+}
+
+.disclose > summary .summary-value {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disclose[open] > summary {
+  margin-bottom: 6px;
+}
+
+/* Wide enough for the fifteen characters it accepts, and no wider. */
+.field-token {
+  width: 14em;
+}
+
 .inspector {
   display: flex;
   flex-direction: column;

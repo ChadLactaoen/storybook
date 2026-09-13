@@ -10,11 +10,76 @@ import {
   setBody,
   setCode,
   setTagColor,
+  setToken,
 } from '../lib/doc/mutations'
 import { parseDoc, serializeDoc } from '../lib/doc/serialize'
 import { deriveGraph } from '../lib/graph/derive'
 import { compareNodes, emptyDoc } from '../types/story'
 import { docFrom, shuffled } from './helpers'
+
+describe('passage note', () => {
+  const doc = docFrom({ One: ['Two'], Two: [] })
+  const one = doc.nodes[0]!.id
+  const noteOf = (d: typeof doc) => d.nodes.find((n) => n.id === one)!.token
+
+  it('keeps whatever the author typed', () => {
+    // Free text now. The field once carried a grammar so that per-passage
+    // tokens could concatenate into a route; the concatenation turned out to
+    // be noise, and what survived needs no grammar at all.
+    expect(noteOf(setToken(doc, one, 'ate dragonfruit'))).toBe('ate dragonfruit')
+    expect(noteOf(setToken(doc, one, '*-?!'))).toBe('*-?!')
+  })
+
+  it('trims and caps at fifteen characters', () => {
+    expect(noteOf(setToken(doc, one, '  spaced  '))).toBe('spaced')
+    expect(noteOf(setToken(doc, one, 'a'.repeat(40)))).toBe('a'.repeat(15))
+  })
+
+  it('normalizes to something it would not change again', () => {
+    // Cut mid-space and a second pass would trim, so a hand-edited file would
+    // not re-serialize to itself — which is the canonical-JSON invariant.
+    const cut = setToken(doc, one, 'aaaaaaaaaaaaaa b')
+    const back = parseDoc(serializeDoc(cut)).doc
+    expect(serializeDoc(back)).toBe(serializeDoc(cut))
+  })
+
+  it('counts characters, not UTF-16 units, so an emoji is never halved', () => {
+    expect(noteOf(setToken(doc, one, 'a'.repeat(14) + '\u{1F525}'))).toBe(
+      'a'.repeat(14) + '\u{1F525}',
+    )
+  })
+
+  it('returns the identical document for a no-op, protecting the undo stack', () => {
+    const set = setToken(doc, one, 'a note')
+    // Committed on every keystroke, so past the cap every further character
+    // would otherwise push an empty undo entry.
+    expect(setToken(set, one, 'a note ')).toBe(set)
+    expect(setToken(set, one, 'a note!')).not.toBe(set)
+  })
+
+  it('survives a save-file round trip', () => {
+    const set = setToken(doc, one, 'turning point')
+    const back = parseDoc(serializeDoc(set)).doc
+    expect(back.nodes.find((n) => n.id === one)!.token).toBe('turning point')
+    expect(serializeDoc(back)).toBe(serializeDoc(set))
+  })
+
+  it('serializes byte-identically however the nodes are ordered', () => {
+    const set = setToken(setToken(doc, one, 'first'), doc.nodes[1]!.id, 'second')
+    const base = serializeDoc(set)
+    for (let i = 0; i < 4; i++) {
+      expect(serializeDoc({ ...set, nodes: shuffled(set.nodes, i + 7) })).toBe(base)
+    }
+  })
+
+  it('loads a save file written before notes existed', () => {
+    const { doc: back, warnings } = parseDoc(
+      JSON.stringify({ nodes: [{ id: '1', title: 'One', code: 'P1', body: '' }] }),
+    )
+    expect(back.nodes[0]!.token).toBe('')
+    expect(warnings).toEqual([])
+  })
+})
 
 describe('link parsing', () => {
   it('reads all four Twine link forms', () => {

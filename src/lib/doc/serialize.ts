@@ -16,6 +16,7 @@ import {
   isTagColor,
   orderRoster,
 } from '../../types/story'
+import { normalizeToken } from './mutations'
 
 /**
  * Canonical serialization.
@@ -58,6 +59,7 @@ function canonicalNode(n: StoryNode) {
     state: n.state,
     tags: [...n.tags].sort(compareStr),
     title: n.title,
+    token: n.token,
   }
 }
 
@@ -105,6 +107,7 @@ interface RawNode {
   level?: unknown
   setting?: unknown
   code?: unknown
+  token?: unknown
   characters?: unknown
 }
 
@@ -277,6 +280,7 @@ export function parseDoc(json: string): ParsedDoc {
       levelOffset,
       setting: (str(entry.setting) ?? '').trim(),
       code,
+      token: normalizeToken(str(entry.token) ?? ''),
       characters: readSceneCharacters(entry.characters),
     }
     nodes.push(node)

@@ -24,7 +24,7 @@ Vitest runs in `node` by default; `src/test/render.test.ts` is the one file rout
 ## Architecture
 
 A Vue 3 SPA that draws a Twine-style choose-your-own-adventure story as a level-aligned
-tree. Two invariants drive nearly every design decision in the repo:
+tree. Five invariants drive nearly every design decision in the repo:
 
 **1. The document is the only persisted state; layout is a pure function of it.**
 `StoryDoc` (`src/types/story.ts`) is exactly what is serialized. No coordinate, level,
@@ -43,7 +43,46 @@ create real nodes, or a deleted-but-still-linked passage would be resurrected on
 next re-derive. Unresolved targets become *phantoms* (`phantom:`-prefixed ids) that
 participate fully in layout but exist only in the derived graph.
 
-**3. Writing a body and resolving its links are separate mutations.** `setBody` is a
+**3. `code` is identity, and a route's identity is a sequence of them.** A reader's
+story is identified by the ordered codes of the passages they visited — `P1->P3->P7`.
+Exact by construction: two readers who chose differently cannot collide, however often
+their routes merge. Nothing in the repo generates it — links resolve by code, so codes are
+the Twine passage names, so Harlowe's `(history:)` already returns exactly that sequence.
+`->` is the delimiter because `setCode` bans it from codes (`LINK_SYNTAX`), so it cannot
+collide the way `-` or `.` could.
+
+`token` is unrelated to any of that. It is a free-text note of at most 15 characters, for
+the author alone: repeatable, optional, read by nothing but `searchableText` and the card
+it sits on. It once carried a grammar so per-passage tokens could concatenate into a route
+(`D-LY`); that was removed because the concatenation was noise — in a real story an early
+branch is usually irrelevant to a later one, so the leading characters were something to
+strip rather than context to read. Do not reintroduce structure here; a route's identity
+is the code sequence.
+
+**4. A macro may be read, never executed.** `deriveGraph` sees only `[[...]]`, so a
+link gated by `(if: $v is "x")` looks unconditional and the graph over-reports what is
+reachable. `macros.ts`
+closes that by pattern-matching source text — the same kind of read `links.ts` does — to
+learn which passage assigns a variable and which condition guards a link. `gatesOf`
+turns that into a *gate*: the passage every route to another provably passes. The same
+read proves the opposite case — when nothing assigns the value a condition tests, the
+branch is dead, which nothing else in the tool would catch.
+
+The inference is sound only under five conditions (enumerated in `gates.ts`, in
+`gateOf`). **Every one of them fails closed**: no gate, which is what the tool said
+before it could read macros at all. That asymmetry is the design — a missing gate costs
+nothing but precision, a wrong one states something false about the story. Three rules exist purely to hold it:
+
+- **Conditions are matched anchored, whole.** An unanchored search reads
+  `(if: $v is not "x")` as its exact negation.
+- **Only `if` and `else-if` are read.** `(unless:)` is identical on the surface and means
+  the opposite. `(else-if:)` is safe despite running only when earlier tests failed —
+  its own condition is still *necessary* to take the branch, and a gate needs necessity,
+  not sufficiency.
+- **Any unreadable write to a variable disqualifies it.** `(put:)`, `(move:)`, a computed
+  right-hand side — one unseen write and a route exists that never passed the gate.
+
+**5. Writing a body and resolving its links are separate mutations.** `setBody` is a
 plain field write and runs on every keystroke; `resolveLinks(doc, id, bodyAtFocus)` runs
 on blur, creates the passages the links name, and rewrites a bare `[[Head north]]` into
 `[[Head north|P7]]`. Folding the two together would splice text in under the author's
@@ -56,14 +95,15 @@ dangling on purpose, so it must be captured when the editor takes focus, not re-
 |---|---|
 | `src/types/story.ts` | The document model, its canonical comparators (`compareStr`, `compareNodes`, `compareByName`) and `emptyCharacter` / `emptyDoc` constructors |
 | `src/lib/doc/` | `mutations.ts` (all document edits), `serialize.ts` (canonical JSON + repairing parse), `storage.ts` (localStorage), `file.ts` (import/export) |
-| `src/lib/graph/` | Deterministic Sugiyama pipeline; `layoutStory` in `layout.ts` is the only entry point the UI touches |
-| `src/lib/harlowe/` | `links.ts` (parse/retarget), `highlight.ts` (macros are highlighted, never executed) |
+| `src/lib/graph/` | Deterministic Sugiyama pipeline; `layoutStory` in `layout.ts` is the only entry point the UI touches. `paths.ts` and `gates.ts` are analyses over the derived graph, called by the store rather than by `layoutStory` |
+| `src/lib/harlowe/` | `links.ts` (parse/retarget), `highlight.ts` (macros are highlighted, never executed), `macros.ts` (macros are *read* — spans and names — still never executed) |
 | `src/stores/story.ts` | Module-level singleton store: a `reactive` state object plus exported functions and computeds. Not Pinia |
 | `src/components/`, `src/composables/` | Presentation; viewport pan/zoom and global shortcuts |
 
 The graph pipeline runs `derive → acyclic → layering → components → layered → ordering /
-crossings → xcoord / tidy → routing` (each a module of that name); `paths.ts` counts distinct
-paths as `BigInt`. `README.md` has a per-module table.
+crossings → xcoord / tidy → routing` (each a module of that name). Alongside it sit two
+analyses the pipeline never calls: `paths.ts` counts distinct paths as `BigInt`, and
+`gates.ts` reads what the story's `(if:)` macros say about which routes exist. `README.md` has a per-module table.
 
 ### Rules that are load-bearing
 
@@ -102,12 +142,39 @@ there because links resolve against it; leave it out and a recode goes unnoticed
 every inbound edge re-resolves to a phantom.
 `layoutVersion` is a stale-result guard so layout can later move into a Web Worker.
 
+**Gate inference runs outside `layoutStory`, and must stay there.** A gate moves
+nothing on the canvas, so the macro read is wanted only when something asks. The `gates`
+computed in the store reads the graph `LayoutResult` already retains (`graph`,
+`backEdges`) plus per-node `level`, exactly as `pathsFrom` does, and memoizes on
+`layoutVersion` alone — guards are a pure function of bodies, and bodies are already in
+`layoutKey`. Move it into `layoutStory` and every keystroke re-parses every macro in the
+story. `layout.test.ts` asserts notes do not perturb geometry, and `workflow.test.ts`
+asserts a note edit leaves `stats.hash` untouched.
+
+**The macro layer must not depend on the graph.** `readStoryMacros` builds its edge keys
+as `${id}|${ordinal}` to match `EdgeId` (`derive.ts`, the only place one is constructed).
+A test asserts the two agree, because a drift there attaches a guard to the *wrong* edge
+— the single failure mode that produces a confident lie rather than a missing gate. For
+the same reason nothing in `macros.ts` counts links itself: `parseLinks` skips an
+empty target without consuming an ordinal, so the caller maps guards to links by span.
+
+The memo is about the parse, not about render identity: `gates` reaches no card — only
+`selectedGate` and the inspector read it. It exists so that an edit reaching no macro (a
+tag, a state, a note) does not re-scan every body in the story.
+
 ### Tests
 
 `src/test/helpers.ts` builds documents from a compact adjacency spec: `docFrom({ One:
 ['Two'] })`. Files are split by concern rather than by source file — `doc` (links,
 rename cascade, tags, save file), `layering` / `layout` (levels, geometry, determinism,
 paths), `scene` (settings, cast), `profile` (character sheet traits and relations),
+`gates` (inference from conditional links, and its fail-closed conditions),
+`macros` (reading `(set:)` and `(if:)` out of a body),
 `workflow` (end-to-end walkthroughs), `regressions`, and `render` (mounts the real
 component tree in jsdom and fails on any Vue warning — the only check that catches
 template-only mistakes, which `vue-tsc` cannot see).
+
+`render` catches template mistakes but not visual affordances: a `<summary>` styled
+`display: flex` loses its native disclosure triangle, and only opening a browser
+showed it. Prefer a real look for anything whose failure mode is "renders, but
+reads wrong".

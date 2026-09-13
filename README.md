@@ -26,6 +26,18 @@ those links *are* the edges. A link names a passage's **code** — a short uniqu
 handle like `3A` — never its title, so titles are free to repeat as often as the
 story wants them to.
 
+The same reasoning gives a reader's story its identity. The ordered codes of the passages
+they visited *are* their route — `P1->P3->P7` — exact by construction, so two readers who
+chose differently cannot land on the same string however often their paths merge. Nothing
+generates it: Harlowe's `(history:)` already returns that sequence, because links point at
+codes and codes are the Twine passage names.
+
+Conditional links are read the same way. A story that does `(set: $idol to "Sakura")` in
+one passage and gates a later link on `(if: $idol is "Sakura")` has said something the
+links alone cannot — that only readers who made the first choice can take the second.
+That is pattern-matched out of the prose, never executed, so the sidebar can say which
+choice a passage is locked behind, or that no route reaches it at all.
+
 ## Authoring
 
 | | |
@@ -33,6 +45,7 @@ story wants them to.
 | Link forms | `[[Code]]`, `[[Text\|Code]]`, `[[Text->Code]]`, `[[Code<-Text]]` |
 | Code | Every passage has one, unique and case-sensitive (`3A` is not `3a`). Auto-assigned as `P1`, `P2`, … and yours to rename |
 | Title | A name for you. Two passages may share one, and no link ever reads it |
+| Note | Optional, up to 15 characters of free text, for you. Shows on the card in place of the code and is searchable; nothing structural reads it |
 | New passages | A link to a code that doesn't exist creates the passage, in TODO state, when you leave the editor. Write a bare `[[Head north]]` and it gets a code of its own, written back into the link as `[[Head north\|P7]]` |
 | Formatting | `''bold''`, `//italic//` and `> quoted` lines, from the editor's buttons or `Cmd B` / `Cmd I` / `Cmd Shift .`. Pressing the same one again takes it off |
 | Changing a code | Rewrites the target half of every inbound link; display text is untouched. A colliding or empty code is blocked, as is one containing link syntax |
@@ -46,9 +59,14 @@ story wants them to.
 | Story index | Toolbar → **Index**: every setting and character with a passage count. Click a row to filter the tree; rename from here to update every passage at once. The cast lists in roster order, reordered with the ▲▼ arrows on each row or alphabetized with **Sort A–Z** |
 | State | TODO / Draft / Done, shown as a coloured badge on each card |
 | Levels | Assigned automatically. A passage can be nudged down exactly one level; moving up is structurally impossible and the inspector says which parent pins it |
+| Story codes | A reader's route is the codes of the passages they visited, `P1->P3->P7`. Print it at the end of your story with `(joined: "->", ...(history:), (passage:)'s name)` |
+| Conditional links | An `(if: $v is "x")` guarding a link is read and matched against the `(set: $v to "x")` that supplies it. When every route into a passage needs the same value, the sidebar names the choice it is locked behind. Only `if` and `else-if` with a plain `$v is "…"` are read |
+| Dead branches | If nothing supplies the value a passage's incoming conditions test — a mistyped `"sakura"` — the sidebar says nothing reaches it |
+| Codes on cards | Turn on under **Settings** to show each passage's code above its card |
 
-Harlowe macros, hooks and variables are syntax-highlighted. They are **not**
-executed — this is a map of the story, not a player for it.
+Harlowe macros, hooks and variables are syntax-highlighted, and `(set:)` and `(if:)` are
+*read* for what they say about which routes exist. Nothing is ever **executed** — this is
+a map of the story, not a player for it.
 
 ## Interaction
 
@@ -97,9 +115,13 @@ canonical JSON; **Import** reads it back.
 | `tidy` | bottom-up rigid-subtree placement: parents land on the midpoint of their outermost children — exactly so for a tree, best effort once a passage has two parents |
 | `routing` | C1-smooth cubics, straight-run collapse, arrowheads clipped to card boundaries |
 | `paths` | distinct path counts as BigInt (they grow exponentially) |
+| `gates` | what conditional links prove: which choice a passage is locked behind, and which branches are dead |
+| `macros` *(in `lib/harlowe/`)* | reads `(set:)` and `(if:)` as text, so a guarded link can narrow a trail |
 
 `layoutStory(doc)` is the only entry point the UI touches: pure, synchronous and
-clone-friendly, so it can move into a Web Worker without a redesign.
+clone-friendly, so it can move into a Web Worker without a redesign. `paths` and `gates`
+are analyses over the graph it retains, run by the store on demand — neither one moves a
+card, and neither belongs in the layout memo.
 
 Determinism is load-bearing and enforced deliberately: `Map` over plain objects,
 canonical iteration arrays instead of `Map.keys()`, codepoint compares instead of

@@ -461,3 +461,68 @@ describe('multi-select and mass delete', () => {
     expect(store.state.selectedId).toBeNull()
   })
 })
+
+describe('conditional links through the store', () => {
+  it('does not move a single card when a note changes', () => {
+    write(idOf('One'), '[[Two]]\n[[Three]]')
+    const before = store.layout.value.stats.hash
+
+    store.tokenSet(idOf('Two'), 'needs a rewrite')
+    store.tokenSet(idOf('Three'), 'done')
+
+    // A note is authoring metadata: put it in `layoutKey` and every keystroke
+    // re-parses every body in the story.
+    expect(store.layout.value.stats.hash).toBe(before)
+  })
+
+  it('re-reads the macros when a body changes, and not when a tag does', () => {
+    write(idOf('One'), '[[Two]]')
+    const read = store.gates.value
+
+    // A tag replaces the document but reaches no macro, so the whole story is
+    // not re-scanned for one. The identity check is how that is observable.
+    store.tagAdd(idOf('One'), 'opening')
+    expect(store.gates.value).toBe(read)
+
+    write(idOf('Two'), '(set: $v to "x")')
+    expect(store.gates.value).not.toBe(read)
+  })
+
+  it('names the passage a conditional link locks a route to', () => {
+    write(idOf('One'), '[[Pick]]')
+    write(idOf('Pick'), '(set:$idol to "p")\n[[Mid]]')
+    write(idOf('Mid'), '(if:$idol is "p")[[End]]')
+
+    // The whole point: the link graph says Mid links to End unconditionally.
+    expect(store.gates.value.get(idOf('End'))!.gateId).toBe(idOf('Pick'))
+  })
+
+  it('reports a passage whose condition nothing can satisfy', () => {
+    write(idOf('One'), '(if:$idol is "never")[[End]]')
+    expect(store.gates.value.get(idOf('End'))!.dead).toBe(true)
+  })
+
+  it('keeps a note verbatim, at any length up to the cap', () => {
+    write(idOf('One'), '')
+    store.tokenSet(idOf('One'), '  needs a rewrite  ')
+    expect(store.state.doc.nodes.find((n) => n.id === idOf('One'))!.token).toBe(
+      'needs a rewrite',
+    )
+  })
+
+  it('finds a passage by its note, its title and its code', () => {
+    write(idOf('One'), '[[Two]]')
+    const two = idOf('Two')
+    store.tokenSet(two, 'turning point')
+
+    const hits = (q: string) => {
+      store.state.search = q
+      return [...(store.matches.value ?? [])]
+    }
+    expect(hits('turning point')).toEqual([two])
+    expect(hits('Two')).toContain(two)
+    // An exact code narrows to that passage alone, on purpose.
+    expect(hits(store.state.doc.nodes.find((n) => n.id === two)!.code)).toEqual([two])
+    store.clearFilters()
+  })
+})
