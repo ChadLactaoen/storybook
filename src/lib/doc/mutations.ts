@@ -392,6 +392,22 @@ export function setStoryTitle(doc: StoryDoc, title: string): StoryDoc {
   return { ...clone(doc), storyTitle: next }
 }
 
+/**
+ * The story-wide scratchpad.
+ *
+ * Deliberately unnormalized, unlike `setStoryTitle` above: a title is a label
+ * and wants trimming, but a scratchpad's trailing newline is the author's, and
+ * trimming here without trimming in `parseDoc` would stop a hand-edited file
+ * re-serializing to itself.
+ *
+ * Returning the same object for a no-op matters for the same reason it does in
+ * `setToken`: `commit` compares by reference, and this runs on every keystroke.
+ */
+export function setStoryNotes(doc: StoryDoc, notes: string): StoryDoc {
+  if (notes === doc.notes) return doc
+  return { ...clone(doc), notes }
+}
+
 /* ---------- tags ---------- */
 
 export function addTag(doc: StoryDoc, id: string, rawTag: string): StoryDoc {

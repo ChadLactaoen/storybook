@@ -38,6 +38,7 @@ export function serializeDoc(doc: StoryDoc): string {
       characters,
       nextId: doc.nextId,
       nodes,
+      notes: doc.notes,
       startNodeId: doc.startNodeId,
       storyTitle: doc.storyTitle,
       tagColors,
@@ -383,6 +384,11 @@ export function parseDoc(json: string): ParsedDoc {
       nodes: nodes.sort(compareNodes),
       tagColors: tagColors.sort(compareByName),
       characters: orderRoster(characters),
+      // Read verbatim, never trimmed: `setStoryNotes` does not normalize
+      // either, and a mismatch between the two would stop a hand-edited file
+      // re-serializing to itself. A file written before notes existed is not
+      // damaged, so it gets no warning.
+      notes: str(obj.notes) ?? '',
       nextId,
     },
     legacyLevels,

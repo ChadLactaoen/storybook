@@ -11,6 +11,7 @@ import CharacterSheet from './components/CharacterSheet.vue'
 import EditorSettings from './components/EditorSettings.vue'
 import HelpPanel from './components/HelpPanel.vue'
 import StoryIndexPanel from './components/StoryIndexPanel.vue'
+import StoryNotes from './components/StoryNotes.vue'
 import { useShortcuts } from './composables/useShortcuts'
 import { useViewport } from './composables/useViewport'
 import { prefs } from './stores/prefs'
@@ -22,11 +23,17 @@ const searchBar = ref<InstanceType<typeof SearchFilterBar> | null>(null)
 const inspector = ref<InstanceType<typeof NodeInspector> | null>(null)
 const inspectorOpen = ref(true)
 /**
- * The left gutter holds one panel at a time. A single ref rather than a boolean
- * each: mutual exclusion is then structural, and opening the cheat sheet cannot
- * leave the index standing behind it.
+ * The left gutter holds at most one of the index and the cheat sheet. A single
+ * ref rather than a boolean each: mutual exclusion is then structural, and
+ * opening the cheat sheet cannot leave the index standing behind it.
  */
 const leftPanel = ref<'index' | 'cheat' | null>(null)
+/**
+ * Notes is deliberately not part of `leftPanel`: it is the one gutter panel
+ * that may share the column, and it describes the story rather than the
+ * selection, so neither the exclusion above nor the watcher below applies.
+ */
+const notesOpen = ref(false)
 const helpOpen = ref(false)
 const settingsOpen = ref(false)
 
@@ -43,8 +50,31 @@ function toggleIndex() {
   leftPanel.value = leftPanel.value === 'index' ? null : 'index'
 }
 
+// No guard, unlike `toggleCheatSheet`: there is always a story, so there are
+// always notes.
+function toggleNotes() {
+  notesOpen.value = !notesOpen.value
+}
+
+/**
+ * How far the expanded editor's veil stops short of the left edge.
+ *
+ * The gutter is left lit only when nothing in it can change what that editor is
+ * editing. The cheat sheet is read-only and the notes pad writes a story-level
+ * field, so both are safe. The index is not — its rows call `select`, and the
+ * open dialog is bound to the selection, so one click there would swap the
+ * passage being edited mid-keystroke. While the index is up the veil covers the
+ * whole column, Notes included.
+ */
+const veilInset = computed(() =>
+  leftPanel.value !== 'index' && (leftPanel.value === 'cheat' || notesOpen.value)
+    ? 'var(--left-panel-w)'
+    : '0px',
+)
+
 // The cheat sheet is a companion to the passage sidebar: it has no meaning once
 // that sidebar is gone, whether it was closed or the selection was cleared.
+// Only `leftPanel` is touched — story notes outlive the selection.
 watch(
   () => inspectorOpen.value && store.selected.value !== null,
   (showing) => {
@@ -153,6 +183,7 @@ useShortcuts({
   focusSearch: () => searchBar.value?.focus(),
   toggleBodyEditor: () => void toggleBodyEditor(),
   toggleCheatSheet,
+  toggleNotes,
   openHelp: () => (helpOpen.value = true),
   modalOpen: () => modalOpen.value,
 })
@@ -181,14 +212,9 @@ function dismissNotices() {
   <StartupDialog v-if="!store.state.started" />
 
   <!-- --veil-inset rides the DOM down to BodyDialog's fixed veil, which would
-       otherwise dim and block the cheat sheet the author is editing against.
-       Only the cheat sheet earns it: selecting a passage in the index would
-       swap the node that open dialog is editing, mid-keystroke. -->
-  <div
-    v-else
-    class="app"
-    :style="{ '--veil-inset': leftPanel === 'cheat' ? 'var(--left-panel-w)' : '0px' }"
-  >
+       otherwise dim and block the gutter the author is editing against. See
+       `veilInset` for which panels earn it and why the index never does. -->
+  <div v-else class="app" :style="{ '--veil-inset': veilInset }">
     <AppToolbar
       :zoom="vp.view.k"
       @zoom-in="vp.zoomIn"
@@ -198,6 +224,7 @@ function dismissNotices() {
       @toggle-levels="showLevels = !showLevels"
       @toggle-minimap="showMinimap = !showMinimap"
       @toggle-index="toggleIndex"
+      @toggle-notes="toggleNotes"
       @open-help="openHelp"
       @open-settings="settingsOpen = true"
     />
@@ -218,8 +245,14 @@ function dismissNotices() {
     </div>
 
     <main>
-      <StoryIndexPanel v-if="leftPanel === 'index'" @close="leftPanel = null" />
-      <CharacterCheatSheet v-if="leftPanel === 'cheat'" @close="leftPanel = null" />
+      <!-- One stack, ordered by the DOM: whichever of the two upper panels is
+           open, then Notes underneath it. Absent entirely when it holds
+           nothing — an empty gutter is still 320px of border and background. -->
+      <div v-if="leftPanel !== null || notesOpen" class="left-gutter">
+        <StoryIndexPanel v-if="leftPanel === 'index'" @close="leftPanel = null" />
+        <CharacterCheatSheet v-if="leftPanel === 'cheat'" @close="leftPanel = null" />
+        <StoryNotes v-if="notesOpen" @close="notesOpen = false" />
+      </div>
 
       <div ref="canvasEl" class="stage">
         <StoryCanvas
@@ -301,6 +334,24 @@ main {
   display: flex;
   flex: 1;
   min-height: 0;
+}
+
+/* --left-panel-w, not --sidebar-w: the three panels that can appear here share
+   one column, and swapping between them must not reflow the stage. The gutter
+   owns the width so its occupants only decide how tall they are. */
+.left-gutter {
+  display: flex;
+  flex-direction: column;
+  width: var(--left-panel-w);
+  flex: 0 0 var(--left-panel-w);
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+
+/* The gutter is a stack, so the rule between its occupants belongs to the
+   stack. On either panel it would draw when that panel stood alone. */
+.left-gutter > * + * {
+  border-top: 1px solid var(--border);
 }
 
 .stage {

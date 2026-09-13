@@ -14,6 +14,7 @@ const emit = defineEmits<{
   toggleLevels: []
   toggleMinimap: []
   toggleIndex: []
+  toggleNotes: []
   openHelp: []
   openSettings: []
 }>()
@@ -96,6 +97,13 @@ async function onFile(e: Event) {
     <div class="group">
       <button class="btn" title="Every character and setting, with passage counts" @click="emit('toggleIndex')">
         Cast &amp; Settings
+      </button>
+      <button
+        class="btn"
+        title="A scratchpad for the story as a whole (Cmd J)"
+        @click="emit('toggleNotes')"
+      >
+        Notes
       </button>
       <button class="btn" title="Add a passage with no links to it yet" @click="store.addPassage()">
         + Passage

@@ -13,6 +13,7 @@ export interface ShortcutHandlers {
   focusSearch: () => void
   toggleBodyEditor: () => void
   toggleCheatSheet: () => void
+  toggleNotes: () => void
   openHelp: () => void
   /** True while a full-screen modal is up; the unmodified keys stand down. */
   modalOpen: () => boolean
@@ -79,6 +80,14 @@ export function useShortcuts(handlers: ShortcutHandlers) {
           if (nativeEditing) return
           e.preventDefault()
           handlers.toggleCheatSheet()
+          return
+        // Same reasoning, and it bites hardest here: the notes panel is a
+        // textarea that focuses itself on open, so a key that stood down while
+        // typing could open it and then never close it again.
+        case 'j':
+          if (nativeEditing) return
+          e.preventDefault()
+          handlers.toggleNotes()
           return
         case 'z':
           if (typing) return

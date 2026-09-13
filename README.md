@@ -46,6 +46,7 @@ choice a passage is locked behind, or that no route reaches it at all.
 | Code | Every passage has one, unique and case-sensitive (`3A` is not `3a`). Auto-assigned as `P1`, `P2`, … and yours to rename |
 | Title | A name for you. Two passages may share one, and no link ever reads it |
 | Note | Optional, up to 15 characters of free text, for you. Shows on the card in place of the code and is searchable; nothing structural reads it |
+| Story notes | A scratchpad for the story as a whole &mdash; toolbar **Notes** or `Cmd J`. Opens in the left column, under **Cast & Settings** or the cheat sheet if one is already there. Saved and exported with the story; nothing structural reads it, and search does not match it |
 | New passages | A link to a code that doesn't exist creates the passage, in TODO state, when you leave the editor. Write a bare `[[Head north]]` and it gets a code of its own, written back into the link as `[[Head north\|P7]]` |
 | Formatting | `''bold''`, `//italic//` and `> quoted` lines, from the editor's buttons or `Cmd B` / `Cmd I` / `Cmd Shift .`. Pressing the same one again takes it off |
 | Changing a code | Rewrites the target half of every inbound link; display text is untouched. A colliding or empty code is blocked, as is one containing link syntax |
@@ -87,10 +88,14 @@ the passage behind it is created when you leave the editor.
 
 Wheel or pinch to zoom at the cursor, drag the background to pan.
 `Cmd +` / `Cmd -` zoom, `Cmd 0` zooms to fit, `Cmd 1` resets to 100%.
-`Cmd F` focuses search, `Cmd Z` / `Cmd Shift Z` undo and redo, `N` adds a
+`Cmd F` focuses search, `Cmd J` opens the story notes, `Cmd Z` / `Cmd Shift Z`
+undo and redo, `N` adds a
 passage, `Delete` removes everything selected. Formatting keys are handled by
 the editor itself rather than the global map, so they only fire where a
 selection means something.
+
+The left column holds one of **Cast & Settings** or the **Character Cheat
+Sheet**, with **Notes** under it; open together they split it in half.
 
 `Cmd`-click a card to select it and everything it leads to, `Shift`-click to add
 or drop one, and click the background to clear. With more than one selected the

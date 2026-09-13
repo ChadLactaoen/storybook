@@ -462,6 +462,27 @@ describe('multi-select and mass delete', () => {
   })
 })
 
+describe('story notes through the store', () => {
+  it('commits, undoes and rides the save file out', () => {
+    store.storyNotesSet('Mira never learns the truth.')
+    expect(store.state.doc.notes).toBe('Mira never learns the truth.')
+
+    store.undo()
+    expect(store.state.doc.notes).toBe('')
+    store.redo()
+    expect(store.state.doc.notes).toBe('Mira never learns the truth.')
+
+    expect(JSON.parse(serializeDoc(store.state.doc)).notes).toBe('Mira never learns the truth.')
+  })
+
+  it('leaves the search index alone — a story-wide hit has no card to light up', () => {
+    write(idOf('One'), '[[Two]]')
+    store.storyNotesSet('innkeeper')
+    store.state.search = 'innkeeper'
+    expect(store.matches.value?.size).toBe(0)
+  })
+})
+
 describe('conditional links through the store', () => {
   it('does not move a single card when a note changes', () => {
     write(idOf('One'), '[[Two]]\n[[Three]]')
@@ -469,9 +490,10 @@ describe('conditional links through the store', () => {
 
     store.tokenSet(idOf('Two'), 'needs a rewrite')
     store.tokenSet(idOf('Three'), 'done')
+    store.storyNotesSet('A paragraph about the ending.')
 
-    // A note is authoring metadata: put it in `layoutKey` and every keystroke
-    // re-parses every body in the story.
+    // A note is authoring metadata, per passage or story-wide: put either in
+    // `layoutKey` and every keystroke re-parses every body in the story.
     expect(store.layout.value.stats.hash).toBe(before)
   })
 

@@ -487,6 +487,17 @@ export function renameStory(title: string): void {
   commit(M.setStoryTitle(state.doc, title))
 }
 
+/**
+ * The story's scratchpad.
+ *
+ * Deliberately absent from `layoutKey` and from `searchableText`: nothing on
+ * the canvas moves for it, and search filters passages, so a story-level hit
+ * would have no card to light up.
+ */
+export function storyNotesSet(value: string): void {
+  commit(M.setStoryNotes(state.doc, value))
+}
+
 /** Turn a dashed placeholder card into a real passage, and select it. */
 export function createFromPhantom(phantomId: string): void {
   const phantom = layout.value.graph.phantoms.find((p) => p.id === phantomId)

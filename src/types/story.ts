@@ -155,6 +155,14 @@ export interface StoryDoc {
    * must cascade and why deleting one cannot simply drop the roster entry.
    */
   characters: CharacterEntry[]
+  /**
+   * A scratchpad for the story as a whole. Free text, empty when unused.
+   *
+   * Nothing structural reads it: no link, level or gate resolves against it,
+   * and it is deliberately outside `searchableText` — a story-wide string would
+   * match every passage at once, which is no filter at all.
+   */
+  notes: string
   /** Monotonic id counter. Deliberately not random UUIDs. */
   nextId: number
 }
@@ -264,6 +272,7 @@ export function emptyDoc(storyTitle = 'Untitled Story'): StoryDoc {
     nodes: [],
     tagColors: [],
     characters: [],
+    notes: '',
     nextId: 1,
   }
 }

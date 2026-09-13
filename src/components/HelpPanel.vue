@@ -19,6 +19,7 @@ const SHORTCUTS: { keys: string; what: string }[] = [
   { keys: `${MOD} F`, what: 'Jump to search' },
   { keys: `${MOD} E`, what: 'Expand the selected passage’s body editor' },
   { keys: `${MOD} K`, what: 'Character cheat sheet for the selected passage' },
+  { keys: `${MOD} J`, what: 'Story notes, a scratchpad for the whole story' },
   { keys: `${MOD} B`, what: 'Bold the selected prose' },
   { keys: `${MOD} I`, what: 'Italicise the selected prose' },
   { keys: `${MOD} ⇧ .`, what: 'Quote the selected lines' },
@@ -183,6 +184,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
               The <strong>Character Cheat Sheet</strong> &mdash; <kbd>{{ MOD }} K</kbd>, or the
               link under a passage&rsquo;s cast &mdash; puts everyone in the scene, and how they
               regard each other, beside the body editor.
+            </li>
+            <li>
+              <strong>Notes</strong> &mdash; <kbd>{{ MOD }} J</kbd>, or the toolbar button &mdash;
+              is a scratchpad for the story as a whole. It sits under whichever panel is
+              already open, and it is saved and exported with the story.
             </li>
             <li>
               The <strong>paths</strong> count is how many distinct routes run from the start
