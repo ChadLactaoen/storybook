@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { serializeDoc } from '../lib/doc/serialize'
+import { deriveGraph } from '../lib/graph/derive'
 import { layoutStory } from '../lib/graph/layout'
+import { planRecode } from '../lib/graph/recode'
+import type { RecodeOptions } from '../lib/graph/recode'
 import * as store from '../stores/story'
 
 /**
@@ -546,5 +549,182 @@ describe('conditional links through the store', () => {
     // An exact code narrows to that passage alone, on purpose.
     expect(hits(store.state.doc.nodes.find((n) => n.id === two)!.code)).toEqual([two])
     store.clearFilters()
+  })
+})
+
+describe('recoding the whole story', () => {
+  const LEVEL_NODE: RecodeOptions = { mode: 'levelNode', prefix: '', separator: 'N' }
+
+  /** A small branching story, written the way the editor writes one. */
+  function branch(): void {
+    write(idOf('One'), '[[Two]]\n[[Three]]')
+    write(idOf('Two'), '[[Four]]')
+    write(idOf('Three'), `[[Four|${store.state.doc.nodes.find((n) => n.title === 'Four')!.code}]]`)
+  }
+
+  function codeOf(title: string): string {
+    return store.state.doc.nodes.find((n) => n.title === title)!.code
+  }
+
+  it('numbers every passage off the tree, and follows the links', () => {
+    branch()
+    expect(store.codesRecode(LEVEL_NODE)).toBeNull()
+
+    expect(codeOf('One')).toBe('1N01')
+    expect(codeOf('Four')).toBe('3N01')
+    expect([codeOf('Two'), codeOf('Three')].sort()).toEqual(['2N01', '2N02'])
+    // Every link still lands: nothing fell out as a phantom.
+    expect(store.layout.value.nodes.filter((n) => n.isPhantom)).toHaveLength(0)
+    expect(store.state.doc.nodes.find((n) => n.title === 'One')!.body).toContain(
+      `|${codeOf('Two')}]]`,
+    )
+  })
+
+  it('is one undo step, however many passages moved', () => {
+    branch()
+    const before = serializeDoc(store.state.doc)
+    store.codesRecode(LEVEL_NODE)
+    expect(serializeDoc(store.state.doc)).not.toBe(before)
+    store.undo()
+    expect(serializeDoc(store.state.doc)).toBe(before)
+  })
+
+  it('settles: recoding again changes nothing, and pushes no undo entry', () => {
+    branch()
+    store.codesRecode(LEVEL_NODE)
+    const settled = store.state.doc
+
+    // The numbering the tree now shows is the numbering it already has.
+    expect(planRecode(store.layout.value, LEVEL_NODE).changed).toBe(0)
+
+    store.codesRecode(LEVEL_NODE)
+    expect(store.state.doc).toBe(settled)
+  })
+
+  it('settles a story of loose fragments, which is where it used to rotate', () => {
+    // Eleven passages linked to nothing: eleven components, packed in codepoint
+    // order. Unpadded, each press reshuffled every code and never converged.
+    for (let i = 0; i < 10; i++) store.addPassage()
+    expect(store.state.doc.nodes).toHaveLength(11)
+
+    store.codesRecode({ mode: 'node', prefix: 'P', separator: '' })
+    const first = store.state.doc.nodes.map((n) => n.code).sort().join(' ')
+
+    store.codesRecode({ mode: 'node', prefix: 'P', separator: '' })
+    expect(store.state.doc.nodes.map((n) => n.code).sort().join(' ')).toBe(first)
+    expect(planRecode(store.layout.value, { mode: 'node', prefix: 'P', separator: '' }).changed).toBe(0)
+  })
+
+  it('warns about every dangling link it attaches, not just the first pass\'s', () => {
+    // The warning is measured against the settled document rather than read off
+    // the first plan, so a capture that only happens on a later pass still shows.
+    write(idOf('One'), '[[Two]]')
+    store.addPassage()
+    store.editBody(idOf('One'), '[[Two|P2]]\n[[go|1N02]]\n[[on|2N01]]')
+
+    const before = new Set(deriveGraph(store.state.doc).phantoms.map((p) => p.code))
+    expect(before.size).toBeGreaterThan(0)
+
+    const warned = store.recodePreview(LEVEL_NODE).captures
+    store.codesRecode(LEVEL_NODE)
+    const after = new Set(deriveGraph(store.state.doc).phantoms.map((p) => p.code))
+    const reallyAttached = [...before].filter((c) => !after.has(c)).sort()
+
+    expect(warned.slice().sort()).toEqual(reallyAttached)
+  })
+
+  it('ignores a preview settled against a document that has since changed', () => {
+    branch()
+    const stale = store.recodePreview(LEVEL_NODE)
+    // Something else edits the story between preview and apply.
+    store.addPassage()
+
+    expect(store.codesRecode(LEVEL_NODE, stale)).toBeNull()
+    // Every passage is coded, including the one the stale preview never saw.
+    expect(store.state.doc.nodes.every((n) => n.code.length > 0)).toBe(true)
+    expect(new Set(store.state.doc.nodes.map((n) => n.code)).size).toBe(
+      store.state.doc.nodes.length,
+    )
+    expect(store.recodePreview(LEVEL_NODE).changed).toBe(0)
+  })
+
+  it('writes exactly what the preview showed, down to the last row', () => {
+    // The panel's rows are the promise the button keeps. Planning once and
+    // applying a re-plan would quietly hand the author a different mapping.
+    for (let i = 0; i < 10; i++) store.addPassage()
+    const previewed = store
+      .recodePreview(LEVEL_NODE)
+      .entries.map((e) => `${e.id}:${e.to}`)
+      .sort()
+
+    store.codesRecode(LEVEL_NODE)
+    const written = store.state.doc.nodes.map((n) => `${n.id}:${n.code}`).sort()
+    expect(written).toEqual(previewed)
+  })
+
+  it('adds the next passage in the shape the recode left behind', () => {
+    // The wrinkle this closes: recode everything to `T…`, press + Passage, and
+    // get `P13` — the one code in the story that does not match the rest.
+    branch()
+    expect(store.codesRecode({ mode: 'node', prefix: 'T', separator: '' })).toBeNull()
+    expect(store.state.doc.nodes.map((n) => n.code).sort()).toEqual(['T01', 'T02', 'T03', 'T04'])
+
+    store.addPassage()
+    const added = store.state.doc.nodes.find((n) => n.title === 'Untitled Passage')!
+    expect(added.code).toBe('T05')
+
+    // Recoding again renumbers rather than no-ops, and rightly so: the new
+    // passage is an orphan at level 1, so it takes a number in the middle of the
+    // order and shifts everything after it. What matters is that it settles.
+    const T = { mode: 'node' as const, prefix: 'T', separator: '' }
+    expect(store.codesRecode(T)).toBeNull()
+    expect(store.state.doc.nodes.map((n) => n.code).sort()).toEqual([
+      'T01', 'T02', 'T03', 'T04', 'T05',
+    ])
+    expect(store.recodePreview(T).changed).toBe(0)
+  })
+
+  it('previews what the document receives even when captures keep redrawing it', () => {
+    // Dangling links named after the very codes the scheme mints: each pass
+    // attaches one more and redraws the tree the next pass reads. The preview
+    // is read off the settled drawing rather than re-planned, so it holds even
+    // if the pass budget runs out before the numbering stops moving.
+    // `editBody` without `resolveBody`, so the targets stay dangling instead of
+    // being turned into real passages the way the editor's blur would.
+    write(idOf('One'), '[[Two]]')
+    write(idOf('Two'), '[[Three]]')
+    store.editBody(idOf('One'), '[[Two|P2]]\n[[go|2N02]]\n[[on|3N01]]\n[[up|1N02]]')
+    expect(deriveGraph(store.state.doc).phantoms.length).toBeGreaterThan(0)
+
+    const previewed = store
+      .recodePreview(LEVEL_NODE)
+      .entries.map((e) => `${e.id}:${e.to}`)
+      .sort()
+    expect(store.codesRecode(LEVEL_NODE)).toBeNull()
+    expect(store.state.doc.nodes.map((n) => `${n.id}:${n.code}`).sort()).toEqual(previewed)
+  })
+
+  it('previews the code each passage has now, never an intermediate one', () => {
+    branch()
+    const before = new Map(store.state.doc.nodes.map((n) => [n.id, n.code]))
+    for (const entry of store.recodePreview(LEVEL_NODE).entries) {
+      expect(entry.from).toBe(before.get(entry.id))
+    }
+  })
+
+  it('refuses a numbering the preview already rejected, writing nothing', () => {
+    branch()
+    const before = store.state.doc
+    const error = store.codesRecode({ mode: 'node', prefix: 'X|', separator: '' })
+    expect(error).toContain('|')
+    expect(store.state.doc).toBe(before)
+  })
+
+  it('previews without touching the document', () => {
+    branch()
+    const before = store.state.doc
+    const plan = store.recodePreview(LEVEL_NODE)
+    expect(plan.entries).toHaveLength(4)
+    expect(store.state.doc).toBe(before)
   })
 })

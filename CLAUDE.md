@@ -143,6 +143,50 @@ there because links resolve against it; leave it out and a recode goes unnoticed
 every inbound edge re-resolves to a phantom.
 `layoutVersion` is a stale-result guard so layout can later move into a Web Worker.
 
+**A recode is planned in `graph/` and applied in `doc/`.** `planRecode` (`graph/recode.ts`)
+is a third analysis the pipeline never calls, like `paths.ts` and `gates.ts`: it reads
+`LayoutResult` and emits strings, so the "mutations never read layout" direction holds.
+`recodeAll` receives a finished id → code map and knows nothing about levels, and `setCode`
+is now its one-entry case — a hand-written loop there used to skip the recoded passage's own
+body and drop a self-link into a phantom. It must stay *one* mutation: a recode is a permutation, so `setCode` in a loop would refuse `P1 → P2`
+while `P2` still exists, and `retargetLinks` applied per pair would move a link an earlier
+pair already rewrote. `remapLinks` is the primitive that holds it — one pass over the parse,
+every target looked up once in the old vocabulary — and `retargetLinks` is now its one-entry
+case, so the splice discipline lives in one place.
+
+**A numbering must be a fixed point of the layout it was read from, and padding is what
+makes it one.** Canonical node order *is* code order (`deriveGraph`), `findComponents`
+numbers components by it, and `xcoord` packs them left to right in that order. Unpadded,
+`P10` sorts before `P2`, so past nine components the assignment and the packing chase each
+other around a cycle with no fixed point: every press of Recode rotates every code, forever.
+`planRecode` therefore pads each number to the width of the largest the story needs, under a
+floor of `MIN_NUMBER_WIDTH`, which makes codepoint order equal drawing order. Do not "tidy"
+the padding away. The floor is a separate concern from correctness: width taken purely from
+the count would rewrite every code in the story each time it crossed a power of ten, so the
+floor moves the first cliff out to a hundred. It applies to the counter, never to the level.
+
+**`freeCode` reads the story's own code shape.** A new passage in a story recoded to
+`T001`..`T101` mints `T102`, not `P102`: `codeShape` infers the prefix and padding from the
+codes already there and falls back to `P<n>` when they are not a prefix plus a number (a
+level-and-node code like `3N01`) or disagree. It is read from the document rather than kept
+as a preference so that it survives export, import, and a story someone else wrote.
+`parseDoc`'s repair path mints through the same shape, which is what keeps its
+promise intact: a story recoded to `P01`.. that loses a code reproduces `P0<id>`, not the
+bare `P<id>` a fixed prefix would invent. An inferred prefix is checked for link syntax
+before it is used — a hand-edited file can hold a code `setCode` would have refused. The store still re-plans up to `RECODE_PASSES` times, but only
+because applying can change the *graph*: a new code may land on one a dangling link already
+names, attaching it and redrawing the tree. `settleRecode` runs that loop once and feeds both
+the preview and the apply — the panel hands its own settled result back to `codesRecode`,
+which uses it only if `base` is still the current document — so the panel cannot show one
+mapping and the document receive another. Attaching a dangling link is the only way applying
+a plan can change the graph, so a pass that captures nothing ends the loop without laying the
+result out again; and the capture warning is measured as "was a phantom, no longer is" rather
+than read off any one pass, because a passage that captures a link can be renumbered on the
+next pass and finish under a different code than the one that did the capturing. Its rows are read off the layout it is about to install (`drawingOrder`), never
+re-planned from it — that stays true whether the loop converged or ran out of passes,
+which a re-plan would not. `commit` is handed that same layout rather than paying for
+Sugiyama twice on one button press.
+
 **The left gutter is lit through the editor's veil only when nothing in it can move the
 selection.** `--veil-inset` stops `BodyDialog`'s veil at the gutter so the cheat sheet
 stays readable beside an expanded editor; `StoryNotes` qualifies too, since it writes a
@@ -179,6 +223,7 @@ tag, a state, a note, the story's scratchpad) does not re-scan every body in the
 rename cascade, tags, save file), `layering` / `layout` (levels, geometry, determinism,
 paths), `scene` (settings, cast), `profile` (character sheet traits and relations),
 `gates` (inference from conditional links, and its fail-closed conditions),
+`recode` (numbering read off the layout, in both modes),
 `macros` (reading `(set:)` and `(if:)` out of a body),
 `workflow` (end-to-end walkthroughs), `regressions`, and `render` (mounts the real
 component tree in jsdom and fails on any Vue warning — the only check that catches

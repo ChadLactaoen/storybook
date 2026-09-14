@@ -9,6 +9,7 @@ import StoryCanvas from './components/StoryCanvas.vue'
 import CharacterCheatSheet from './components/CharacterCheatSheet.vue'
 import CharacterSheet from './components/CharacterSheet.vue'
 import EditorSettings from './components/EditorSettings.vue'
+import RecodePanel from './components/RecodePanel.vue'
 import HelpPanel from './components/HelpPanel.vue'
 import StoryIndexPanel from './components/StoryIndexPanel.vue'
 import StoryNotes from './components/StoryNotes.vue'
@@ -36,6 +37,7 @@ const leftPanel = ref<'index' | 'cheat' | null>(null)
 const notesOpen = ref(false)
 const helpOpen = ref(false)
 const settingsOpen = ref(false)
+const recodeOpen = ref(false)
 
 /**
  * A full-screen modal owns the keyboard while it is up.
@@ -44,7 +46,7 @@ const settingsOpen = ref(false)
  * catch, so without this `n` would still create a passage and Delete would
  * still delete one, behind the veil and out of sight.
  */
-const modalOpen = computed(() => helpOpen.value || settingsOpen.value)
+const modalOpen = computed(() => helpOpen.value || settingsOpen.value || recodeOpen.value)
 
 function toggleIndex() {
   leftPanel.value = leftPanel.value === 'index' ? null : 'index'
@@ -227,6 +229,7 @@ function dismissNotices() {
       @toggle-notes="toggleNotes"
       @open-help="openHelp"
       @open-settings="settingsOpen = true"
+      @open-recode="recodeOpen = true"
     />
 
     <SearchFilterBar ref="searchBar" />
@@ -313,6 +316,8 @@ function dismissNotices() {
     <HelpPanel v-if="helpOpen" @close="helpOpen = false" />
 
     <EditorSettings v-if="settingsOpen" @close="settingsOpen = false" />
+
+    <RecodePanel v-if="recodeOpen" @close="recodeOpen = false" />
 
     <CharacterSheet
       v-if="store.state.openCharacter"

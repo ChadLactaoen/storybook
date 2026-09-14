@@ -17,6 +17,7 @@ const emit = defineEmits<{
   toggleNotes: []
   openHelp: []
   openSettings: []
+  openRecode: []
 }>()
 
 const editingTitle = ref(false)
@@ -107,6 +108,13 @@ async function onFile(e: Event) {
       </button>
       <button class="btn" title="Add a passage with no links to it yet" @click="store.addPassage()">
         + Passage
+      </button>
+      <button
+        class="btn"
+        title="Renumber every passage's code from the tree"
+        @click="emit('openRecode')"
+      >
+        Recode
       </button>
       <button class="btn btn-icon" title="Undo (Cmd Z)" :disabled="!store.canUndo.value" @click="store.undo()">
         &#8630;

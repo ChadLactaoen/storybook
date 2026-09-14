@@ -19,6 +19,20 @@
  * rewrite both splice using the latter, so display text is never touched.
  */
 
+/** Sequences that change how a `[[...]]` link is parsed. */
+export const LINK_SYNTAX = ['->', '<-', '|', '[[', ']]'] as const
+
+/**
+ * The first link-syntax sequence in `text`, or null.
+ *
+ * Lives here rather than beside its callers because two layers need it and they
+ * may not import each other: `setCode` refuses a code containing link syntax,
+ * and the recode preview refuses a prefix or separator for the same reason.
+ */
+export function linkSyntaxIn(text: string): string | null {
+  return LINK_SYNTAX.find((token) => text.includes(token)) ?? null
+}
+
 export interface Span {
   start: number
   end: number
@@ -124,14 +138,37 @@ export function parseLinks(body: string): ParsedLink[] {
  * Splices run right-to-left so that earlier spans stay valid as we go.
  */
 export function retargetLinks(body: string, from: string, to: string): string {
-  if (from === to) return body
-  const links = parseLinks(body).filter((l) => l.target === from)
-  if (links.length === 0) return body
+  // The one-entry case of `remapLinks`, and kept as one call rather than a
+  // second splice loop: a change to how targets are spliced has to land in one
+  // place, or the bulk path and the single path drift apart.
+  return remapLinks(body, new Map([[from, to]]))
+}
+
+/**
+ * Rewrite every link target in `body` through `mapping`, in a single pass.
+ *
+ * Not a loop of `retargetLinks` calls: a recode is a *permutation*, and
+ * `P1 -> P2` followed by `P2 -> P3` would move the same link twice. One pass
+ * over the parse looks every target up once, in the old vocabulary, so a swap
+ * stays a swap.
+ *
+ * A target the mapping does not name is left byte-for-byte alone — that is what
+ * keeps a deliberately dangling link dangling.
+ *
+ * Splices run right-to-left, the same discipline `retargetLinks` follows.
+ */
+export function remapLinks(body: string, mapping: ReadonlyMap<string, string>): string {
+  if (mapping.size === 0) return body
+  const hits = parseLinks(body).filter((l) => {
+    const to = mapping.get(l.target)
+    return to !== undefined && to !== l.target
+  })
+  if (hits.length === 0) return body
 
   let out = body
-  for (let i = links.length - 1; i >= 0; i--) {
-    const { start, end } = links[i]!.targetSpan
-    out = out.slice(0, start) + to + out.slice(end)
+  for (let i = hits.length - 1; i >= 0; i--) {
+    const { target, targetSpan } = hits[i]!
+    out = out.slice(0, targetSpan.start) + mapping.get(target)! + out.slice(targetSpan.end)
   }
   return out
 }

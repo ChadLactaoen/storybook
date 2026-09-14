@@ -10,12 +10,13 @@ import type {
 } from '../../types/story'
 import {
   compareByName,
+  compareNodes,
   compareStr,
   emptyCharacter,
   orderRoster,
 } from '../../types/story'
 import type { Span } from '../harlowe/links'
-import { parseLinks, retargetLinks } from '../harlowe/links'
+import { linkSyntaxIn, parseLinks, remapLinks } from '../harlowe/links'
 
 /**
  * Every mutation returns a fresh document. Nothing here reads layout, and
@@ -56,18 +57,63 @@ function replaceNode(doc: StoryDoc, id: string, patch: Partial<StoryNode>): Stor
   return next
 }
 
+/** A code that is some prefix followed by a run of digits: `P7`, `T001`, `12`. */
+const NUMBERED_CODE = /^(\D*)(\d+)$/
+
+/** What `freeCode` falls back to when a story's codes say nothing useful. */
+const DEFAULT_SHAPE = { prefix: 'P', width: 1 } as const
+
 /**
- * The first free code of the form `P<n>`, starting at `seed`.
+ * The shape a story's existing codes are in: what they start with, and how wide
+ * their numbers are padded.
  *
- * `P<id>` is the shape so that an auto-created passage's code and id agree, which
- * is what lets `parseDoc` reproduce the same code for a file that lost one. The
- * loop is not redundant: an author may have typed `P7` by hand long before the
- * counter ever reached 7.
+ * Read from the document rather than remembered as a preference, so it survives
+ * export, import and a story someone else wrote. Codes that are not a prefix
+ * plus a number — `Grotto`, or the `3N01` a level-and-node recode produces — are
+ * ignored, and if the ones that *do* fit disagree about their prefix, the
+ * default wins. Guessing wrong here is cheap (an odd-looking code on one new
+ * passage); guessing confidently wrong across a whole story would not be.
  */
+export function codeShape(taken: ReadonlySet<string>): { prefix: string; width: number } {
+  let prefix: string | null = null
+  let width = 1
+  for (const code of taken) {
+    const m = NUMBERED_CODE.exec(code)
+    if (!m) continue
+    if (prefix === null) prefix = m[1]!
+    else if (prefix !== m[1]!) return DEFAULT_SHAPE
+    width = Math.max(width, m[2]!.length)
+  }
+  if (prefix === null) return DEFAULT_SHAPE
+  // A hand-edited file can carry a code `setCode` would have refused, and
+  // copying its punctuation forward would mint a code that re-points the very
+  // links written for it: `[[Head north|A|B4]]` parses as a link to `B4`.
+  if (linkSyntaxIn(prefix) !== null) return DEFAULT_SHAPE
+  return { prefix, width }
+}
+
+/**
+ * The first free code in the story's own shape, starting at `seed`.
+ *
+ * `P<id>` is the default shape so that an auto-created passage's code and id
+ * agree, which is what lets `parseDoc` reproduce the same code for a file that
+ * lost one. But a story the author has recoded to `T001`..`T101` should not mint
+ * `P102` for the next passage they add — the odd one out is the new passage, not
+ * the hundred that were renumbered — so the prefix and padding are taken from
+ * what is already there.
+ *
+ * The loop is not redundant: an author may have typed `P7` by hand long before
+ * the counter ever reached 7.
+ */
+export function mintCode(shape: { prefix: string; width: number }, n: number): string {
+  return `${shape.prefix}${String(n).padStart(shape.width, '0')}`
+}
+
 function freeCode(taken: ReadonlySet<string>, seed: number): string {
+  const shape = codeShape(taken)
   let n = seed
-  while (taken.has(`P${n}`)) n++
-  return `P${n}`
+  while (taken.has(mintCode(shape, n))) n++
+  return mintCode(shape, n)
 }
 
 /**
@@ -169,12 +215,20 @@ export function deleteNode(doc: StoryDoc, id: string): StoryDoc {
   return deleteNodes(doc, [id])
 }
 
-/** Sequences that change how a `[[...]]` link is parsed. */
-const LINK_SYNTAX = ['->', '<-', '|', '[[', ']]'] as const
-
 export interface CodeResult {
   doc: StoryDoc
   error: string | null
+}
+
+/**
+ * What to call a passage in a message to the author.
+ *
+ * An empty title is allowed — such a passage is identified by its code alone —
+ * so a refusal that interpolated the title raw would name neither side of a
+ * collision.
+ */
+function nameOf(node: StoryNode): string {
+  return node.title.length > 0 ? node.title : node.code
 }
 
 /**
@@ -478,7 +532,7 @@ export function tagColorMap(doc: StoryDoc): Map<string, TagColor> {
 /* ---------- code ---------- */
 
 /**
- * Set a passage's code, retargeting every inbound link.
+ * Set a passage's code, retargeting every link that pointed at it.
  *
  * This is the operation renaming a title used to be, and for the same reason: a
  * code change is intent-preserving — the author wants those links to keep
@@ -487,35 +541,113 @@ export function tagColorMap(doc: StoryDoc): Map<string, TagColor> {
  *
  * Comparison is exact. `a3` and `A3` are different passages, so a code copied by
  * eye has to be copied exactly.
+ *
+ * The one-entry case of `recodeAll`, and routed through it rather than
+ * reimplemented: a hand-written loop here used to skip the recoded passage's own
+ * body, which quietly dropped a self-link into a phantom.
  */
 export function setCode(doc: StoryDoc, id: string, rawCode: string): CodeResult {
-  const node = doc.nodes.find((n) => n.id === id)
-  if (!node) return { doc, error: 'That passage no longer exists.' }
+  return recodeAll(doc, new Map([[id, rawCode]]))
+}
 
-  const code = rawCode.trim()
-  if (code.length === 0) return { doc, error: 'A passage needs a code.' }
-  // Returning the same object matters: `commit` compares by reference, so a
-  // fresh document here would push an empty undo entry and wipe the redo stack.
-  if (code === node.code) return { doc, error: null }
+/**
+ * Recode many passages at once, retargeting every link in one pass.
+ *
+ * One mutation rather than a loop of `setCode` calls, because a recode is a
+ * *permutation*: `P1 -> P2` while `P2` still exists is a collision `setCode` is
+ * right to refuse, and pairs applied one at a time would double-move a link an
+ * earlier pair already rewrote. Both disappear when the whole rewrite is a
+ * single pass — every target is looked up once, in the old vocabulary.
+ *
+ * Keyed by node id, not by code: ids are the document's only guaranteed-unique
+ * key, so a hand-edited file carrying a duplicate code still recodes exactly the
+ * passages asked for, and repairs the duplicate as a side effect.
+ *
+ * Unlike `setCode` this also rewrites a recoded passage's *own* body, so a
+ * self-link survives the recode instead of falling out as a phantom.
+ *
+ * A target no entry names is left alone. A dangling `[[Cave]]` is the author's
+ * prose, and a recode says nothing about it.
+ *
+ * Where the new codes come from is not this module's business — see
+ * `lib/graph/recode.ts`, which reads them off the drawing. Mutations never read
+ * layout; this one receives finished text.
+ */
+export function recodeAll(doc: StoryDoc, mapping: ReadonlyMap<string, string>): CodeResult {
+  const byId = new Map(doc.nodes.map((n) => [n.id, n]))
 
-  // The code is spliced into every inbound `[[...]]`, so link punctuation in it
-  // would silently re-point those links somewhere else. `[[Go|North]]` recoded
-  // to `North->South` parses back out as a link to "South".
-  const offending = LINK_SYNTAX.find((token) => code.includes(token))
-  if (offending) {
-    return {
-      doc,
-      error: `A code cannot contain "${offending}" — it is link syntax, and would break the links pointing here.`,
+  /** node id -> trimmed new code. */
+  const resolved = new Map<string, string>()
+  /** new code -> the passage claiming it, for the collision message. */
+  const claimed = new Map<string, string>()
+  /** old code -> new code, changes only: what the bodies are rewritten through. */
+  const rewrite = new Map<string, string>()
+  /**
+   * Whether any passage's code actually changes.
+   *
+   * Tracked separately from `rewrite`, which is keyed by *old code* and so is
+   * empty when the only passage moving is the second holder of a duplicated
+   * code — links resolve to the first holder, so there is nothing to splice.
+   * Returning early on an empty `rewrite` would drop that write and report
+   * success, leaving the duplicate the caller asked to repair.
+   */
+  let moved = false
+
+  // Everything is validated before the first clone, so a refusal provably leaves
+  // `doc` identical and `commit`'s reference compare sees a no-op.
+  for (const [id, raw] of mapping) {
+    const node = byId.get(id)
+    if (!node) return { doc, error: 'That passage no longer exists.' }
+
+    const code = raw.trim()
+    if (code.length === 0) return { doc, error: 'A passage needs a code.' }
+
+    const offending = linkSyntaxIn(code)
+    if (offending) {
+      return {
+        doc,
+        error: `A code cannot contain "${offending}" — it is link syntax, and would break the links pointing here.`,
+      }
+    }
+
+    const rival = claimed.get(code)
+    if (rival !== undefined) {
+      return { doc, error: `"${rival}" and "${nameOf(node)}" would both be given the code "${code}".` }
+    }
+    claimed.set(code, nameOf(node))
+    resolved.set(id, code)
+    if (code !== node.code) moved = true
+  }
+
+  // A passage the mapping leaves alone keeps its code, and that code is still
+  // taken — a partial recode may not walk onto it.
+  for (const n of doc.nodes) {
+    if (resolved.has(n.id)) continue
+    if (claimed.has(n.code)) {
+      return { doc, error: `Code "${n.code}" is already used by "${nameOf(n)}".` }
     }
   }
 
-  const clash = doc.nodes.find((n) => n.id !== id && n.code === code)
-  if (clash) return { doc, error: `Code "${code}" is already used by "${clash.title}".` }
+  // Which passage a link reaches is decided by `deriveGraph`: the *first* node
+  // in canonical order holding that code wins. The rewrite has to resolve the
+  // same way, or a file carrying a duplicate code would see its links quietly
+  // move to the other passage — the codes repaired, the story re-plumbed.
+  const firstByCode = new Map<string, string>()
+  for (const n of [...doc.nodes].sort(compareNodes)) {
+    if (!firstByCode.has(n.code)) firstByCode.set(n.code, n.id)
+  }
+  for (const [code, id] of firstByCode) {
+    const to = resolved.get(id)
+    if (to !== undefined && to !== code) rewrite.set(code, to)
+  }
+
+  if (!moved) return { doc, error: null }
 
   const next = clone(doc)
   for (const n of next.nodes) {
-    if (n.id === id) n.code = code
-    else n.body = retargetLinks(n.body, node.code, code)
+    const code = resolved.get(n.id)
+    if (code !== undefined) n.code = code
+    n.body = remapLinks(n.body, rewrite)
   }
   return { doc: next, error: null }
 }
