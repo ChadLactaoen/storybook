@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { parseLinks, retargetLinks } from '../lib/harlowe/links'
+import { linkSyntaxIn, parseLinks, retargetLinks } from '../lib/harlowe/links'
 import {
   addTag,
   createNode,
   deleteNode,
   deleteNodes,
+  recodeAll,
   renameNode,
   resolveLinks,
   setBody,
@@ -473,9 +474,27 @@ describe('passage code', () => {
     )
     const byId = new Map(loaded.nodes.map((n) => [n.id, n.code]))
     expect(byId.get('1')).toBe('A3')
-    // The loser cannot simply be cleared: a passage with no code is unreachable.
-    expect(byId.get('2')).toBe('P2')
+    // The loser cannot simply be cleared: a passage with no code is unreachable,
+    // and the code it is given follows the shape the story is already in rather
+    // than dropping a stray `P2` into a story coded `A…`.
+    expect(byId.get('2')).toBe('A2')
     expect(warnings.some((w) => w.includes('A3'))).toBe(true)
+  })
+
+  it('reproduces a padded code for a file that lost one', () => {
+    // The correspondence the repair path exists for: a code this app minted and
+    // someone stripped out comes back the same. Padding is part of that shape,
+    // so a story recoded to `P01`.. must not reload with a bare `P2`.
+    const { doc: loaded } = parseDoc(
+      JSON.stringify({
+        nodes: [
+          { id: '1', title: 'One', code: 'P01', body: '[[Go|P02]]' },
+          { id: '2', title: 'Two' },
+        ],
+      }),
+    )
+    expect(loaded.nodes.find((n) => n.id === '2')!.code).toBe('P02')
+    expect(deriveGraph(loaded).phantoms).toHaveLength(0)
   })
 
   it('bumps nextId past every code it invents', () => {
@@ -494,5 +513,179 @@ describe('passage code', () => {
       JSON.stringify({ nodes: [{ id: '1', title: 'One', code: 'P2' }], nextId: 2 }),
     )
     expect(createNode(loaded, {}).node.code).toBe('P3')
+  })
+})
+
+describe('batch recode', () => {
+  const doc = docFrom({ One: ['Two'], Two: ['One'] })
+  const [one, two] = [doc.nodes[0]!.id, doc.nodes[1]!.id]
+
+  it('swaps a pair of codes, which one-at-a-time renaming cannot', () => {
+    // `setCode(one, 'P2')` is a collision it is right to refuse, and applying the
+    // pair in sequence would move each link twice. One pass does neither.
+    const { doc: next, error } = recodeAll(doc, new Map([[one, 'P2'], [two, 'P1']]))
+    expect(error).toBeNull()
+
+    const byId = new Map(next.nodes.map((n) => [n.id, n]))
+    expect(byId.get(one)!.code).toBe('P2')
+    expect(byId.get(two)!.code).toBe('P1')
+    // One links to Two, which is now P1; Two links to One, which is now P2.
+    expect(byId.get(one)!.body).toBe('[[Go to Two|P1]]')
+    expect(byId.get(two)!.body).toBe('[[Go to One|P2]]')
+    expect(deriveGraph(next).phantoms).toHaveLength(0)
+  })
+
+  it('renumbers a whole cycle without a link landing on the wrong passage', () => {
+    const three = docFrom({ A: ['B'], B: ['C'], C: ['A'] })
+    const [a, b, c] = three.nodes.map((n) => n.id)
+    const { doc: next } = recodeAll(three, new Map([[a!, 'P2'], [b!, 'P3'], [c!, 'P1']]))
+    const byId = new Map(next.nodes.map((n) => [n.id, n]))
+    expect(byId.get(a!)!.body).toBe('[[Go to B|P3]]')
+    expect(byId.get(b!)!.body).toBe('[[Go to C|P1]]')
+    expect(byId.get(c!)!.body).toBe('[[Go to A|P2]]')
+  })
+
+  it('leaves a dangling target alone — that prose is the author\'s', () => {
+    const ghosted = docFrom({ A: ['Ghost'] })
+    const a = ghosted.nodes[0]!.id
+    const { doc: next } = recodeAll(ghosted, new Map([[a, '1N1']]))
+    expect(next.nodes[0]!.body).toBe('[[Go to Ghost|Ghost]]')
+    expect(deriveGraph(next).phantoms.map((p) => p.code)).toEqual(['Ghost'])
+  })
+
+  it('rewrites a self-link in the recoded passage\'s own body', () => {
+    // `setCode` skips the node it is recoding; here that would drop the loop.
+    const loop = docFrom({ A: ['A'] })
+    const a = loop.nodes[0]!.id
+    const { doc: next } = recodeAll(loop, new Map([[a, 'Again']]))
+    expect(next.nodes[0]!.body).toBe('[[Go to A|Again]]')
+    expect(deriveGraph(next).phantoms).toHaveLength(0)
+  })
+
+  it('returns the identical document when nothing moves', () => {
+    expect(recodeAll(doc, new Map([[one, 'P1'], [two, 'P2']])).doc).toBe(doc)
+    expect(recodeAll(doc, new Map()).doc).toBe(doc)
+  })
+
+  it('trims, like every other code write', () => {
+    const { doc: next } = recodeAll(doc, new Map([[one, '  A3  ']]))
+    expect(next.nodes.find((n) => n.id === one)!.code).toBe('A3')
+  })
+
+  it('refuses two passages claiming one code, naming both', () => {
+    const clash = recodeAll(doc, new Map([[one, 'X'], [two, 'X']]))
+    expect(clash.error).toContain('One')
+    expect(clash.error).toContain('Two')
+    expect(clash.doc).toBe(doc)
+  })
+
+  it('refuses a code that a passage outside the mapping still holds', () => {
+    // A partial recode may not walk onto a code nobody offered to vacate.
+    const clash = recodeAll(doc, new Map([[one, 'P2']]))
+    expect(clash.error).toContain('P2')
+    expect(clash.doc).toBe(doc)
+  })
+
+  it('refuses link syntax, an empty code and an unknown passage', () => {
+    expect(recodeAll(doc, new Map([[one, 'A->B']])).error).toContain('->')
+    expect(recodeAll(doc, new Map([[one, '   ']])).error).toBe('A passage needs a code.')
+    expect(recodeAll(doc, new Map([['nope', 'X']])).error).toContain('no longer exists')
+    for (const bad of ['A->B', '   ']) expect(recodeAll(doc, new Map([[one, bad]])).doc).toBe(doc)
+  })
+
+  it('repairs a hand-edited duplicate code, because it is keyed by id', () => {
+    const dupe = docFrom({ One: [], Two: [] }, { codes: { One: 'A3', Two: 'A3' } })
+    const [a, b] = dupe.nodes.map((n) => n.id)
+    const { doc: next, error } = recodeAll(dupe, new Map([[a!, '1N1'], [b!, '1N2']]))
+    expect(error).toBeNull()
+    expect(next.nodes.map((n) => n.code).sort()).toEqual(['1N1', '1N2'])
+  })
+
+  it('leaves the next minted code free, even after recoding to P1..Pn', () => {
+    // `freeCode` loops past anything taken, so a P-prefixed recode cannot steal
+    // the code the counter is about to hand out.
+    const three = docFrom({ A: [], B: [], C: [] }, { codes: { A: 'X', B: 'Y', C: 'Z' } })
+    const [a, b, c] = three.nodes.map((n) => n.id)
+    const { doc: next } = recodeAll(three, new Map([[a!, 'P1'], [b!, 'P2'], [c!, 'P3']]))
+    const made = createNode(next, {})
+    expect(next.nodes.some((n) => n.code === made.node.code)).toBe(false)
+  })
+
+  it('mints the next code in the shape the story is already in', () => {
+    // A story recoded to `T01`..`T03` should not hand the next passage `P4`.
+    const three = docFrom({ A: [], B: [], C: [] })
+    const [a, b, c] = three.nodes.map((n) => n.id)
+    const { doc: next } = recodeAll(three, new Map([[a!, 'T01'], [b!, 'T02'], [c!, 'T03']]))
+    expect(createNode(next, {}).node.code).toBe('T04')
+  })
+
+  it('keeps the padding the story uses, not just the prefix', () => {
+    const three = docFrom({ A: [], B: [], C: [] })
+    const [a, b, c] = three.nodes.map((n) => n.id)
+    const { doc: next } = recodeAll(three, new Map([[a!, 'P001'], [b!, 'P002'], [c!, 'P003']]))
+    expect(createNode(next, {}).node.code).toBe('P004')
+  })
+
+  it('falls back to P when the story\'s codes do not agree on a shape', () => {
+    // Level-and-node codes (`3N01`) are not a prefix plus a number, and a story
+    // of mixed prefixes has no shape to copy. Neither is worth a wrong guess.
+    const level = docFrom({ A: [], B: [] }, { codes: { A: '1N01', B: '2N01' } })
+    expect(createNode(level, {}).node.code).toBe('P3')
+
+    const mixed = docFrom({ A: [], B: [] }, { codes: { A: 'T1', B: 'Q2' } })
+    expect(createNode(mixed, {}).node.code).toBe('P3')
+
+    // A code that is not numbered at all is simply ignored.
+    const named = docFrom({ A: [], B: [] }, { codes: { A: 'Grotto', B: 'T07' } })
+    expect(createNode(named, {}).node.code).toBe('T03')
+  })
+
+  it('writes a code change even when no link text moves', () => {
+    // Both passages hold `A3`, so links resolve to the first and the second has
+    // no inbound text to splice. The write still has to happen, or the duplicate
+    // the caller asked to repair survives behind a success.
+    const dupe = docFrom({ One: [], Two: [] }, { codes: { One: 'A3', Two: 'A3' } })
+    const [a, b] = dupe.nodes.map((n) => n.id)
+    const { doc: next, error } = recodeAll(dupe, new Map([[a!, 'A3'], [b!, 'B4']]))
+    expect(error).toBeNull()
+    expect(next).not.toBe(dupe)
+    expect(next.nodes.map((n) => n.code).sort()).toEqual(['A3', 'B4'])
+  })
+
+  it('names an untitled passage by its code when it refuses', () => {
+    const untitled = docFrom({ One: [], Two: [] })
+    untitled.nodes[0]!.title = ''
+    const [a, b] = untitled.nodes.map((n) => n.id)
+    const clash = recodeAll(untitled, new Map([[a!, 'X'], [b!, 'X']]))
+    expect(clash.error).toContain('P1')
+    expect(clash.error).not.toContain('""')
+  })
+
+  it('never mints a code carrying link syntax, whatever the file held', () => {
+    // `parseDoc` checks codes for uniqueness but not for link punctuation, so a
+    // hand-edited file can hold `A|B1`. Copying that shape forward would mint a
+    // code that re-points the links written for it.
+    const bad = docFrom({ One: [], Two: [] }, { codes: { One: 'A|B1', Two: 'A|B2' } })
+    const minted = createNode(bad, {}).node.code
+    expect(linkSyntaxIn(minted)).toBeNull()
+    expect(minted).toBe('P3')
+  })
+
+  it('retargets a self-link in the recoded passage\'s own body', () => {
+    // `setCode` used to skip the node it was recoding, dropping `[[Again|P1]]`
+    // into a phantom the moment P1 became something else.
+    const loop = docFrom({ One: ['One'] })
+    const id = loop.nodes[0]!.id
+    const { doc: next, error } = setCode(loop, id, 'P9')
+    expect(error).toBeNull()
+    expect(next.nodes[0]!.body).toBe('[[Go to One|P9]]')
+    expect(deriveGraph(next).phantoms).toHaveLength(0)
+  })
+
+  it('survives a save-file round trip', () => {
+    const { doc: next } = recodeAll(doc, new Map([[one, '1N1'], [two, '2N1']]))
+    const back = parseDoc(serializeDoc(next)).doc
+    expect(serializeDoc(back)).toBe(serializeDoc(next))
+    expect(deriveGraph(back).phantoms).toHaveLength(0)
   })
 })

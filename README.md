@@ -43,13 +43,14 @@ choice a passage is locked behind, or that no route reaches it at all.
 | | |
 |---|---|
 | Link forms | `[[Code]]`, `[[Text\|Code]]`, `[[Text->Code]]`, `[[Code<-Text]]` |
-| Code | Every passage has one, unique and case-sensitive (`3A` is not `3a`). Auto-assigned as `P1`, `P2`, … and yours to rename |
+| Code | Every passage has one, unique and case-sensitive (`3A` is not `3a`). Auto-assigned as `P1`, `P2`, … and yours to rename. A new passage follows the shape the story is already in, so after a **Recode** to `T01`, `T02`, … the next one is `T03` rather than `P3` |
 | Title | A name for you. Two passages may share one, and no link ever reads it |
 | Note | Optional, up to 15 characters of free text, for you. Shows on the card in place of the code and is searchable; nothing structural reads it |
 | Story notes | A scratchpad for the story as a whole &mdash; toolbar **Notes** or `Cmd J`. Opens in the left column, under **Cast & Settings** or the cheat sheet if one is already there. Saved and exported with the story; nothing structural reads it, and search does not match it |
 | New passages | A link to a code that doesn't exist creates the passage, in TODO state, when you leave the editor. Write a bare `[[Head north]]` and it gets a code of its own, written back into the link as `[[Head north\|P7]]` |
 | Formatting | `''bold''`, `//italic//` and `> quoted` lines, from the editor's buttons or `Cmd B` / `Cmd I` / `Cmd Shift .`. Pressing the same one again takes it off |
 | Changing a code | Rewrites the target half of every inbound link; display text is untouched. A colliding or empty code is blocked, as is one containing link syntax |
+| Recoding everything | Toolbar &rarr; **Recode** renames every passage&rsquo;s code at once, from the tree as drawn. **Level and node** gives `3N01` &mdash; the level, then the position within it, left to right. **Node** gives `P04` &mdash; the position in the whole story, top to bottom, left to right within each level. Both take a prefix and a separator, so `3/01`, `L3P01` or a bare `04` are all available. Numbers are padded to at least two digits &mdash; `P04`, `3N01` &mdash; and wider once the story needs it, so codes sort in the order they are drawn and growing past ten does not rewrite every code. Inbound links follow; a link to a passage that doesn&rsquo;t exist is left alone. One undo step |
 | Renaming a title | Just a field write. Nothing points at a title, so nothing has to follow it |
 | Deleting | Leaves inbound `[[...]]` alone — your prose is never rewritten. The link shows as a dashed phantom card you can click to recreate. Refused if it would cut a surviving passage off from the start |
 | Tags | Story-global, reusable from a dropdown, colour-coded from Twine's palette. Recolouring a tag repaints every passage carrying it |
@@ -86,6 +87,13 @@ half-typed into the document, so choosing an existing passage cannot leave a
 stray one behind. Typing a name that isn't on the list writes a bare link, and
 the passage behind it is created when you leave the editor.
 
+**Recode** previews the whole result before anything is written &mdash; every old &rarr; new
+pair, re-read off the tree as you type the prefix or separator. The rows are the settled
+answer, not a first guess at it: what you read is exactly what the document receives. It
+warns when a new code is one a dangling link already names, because that link would stop
+dangling and the tree would change shape. Applying is a single undo step, and pressing
+Recode again with the same settings does nothing.
+
 Wheel or pinch to zoom at the cursor, drag the background to pan.
 `Cmd +` / `Cmd -` zoom, `Cmd 0` zooms to fit, `Cmd 1` resets to 100%.
 `Cmd F` focuses search, `Cmd J` opens the story notes, `Cmd Z` / `Cmd Shift Z`
@@ -120,6 +128,7 @@ canonical JSON; **Import** reads it back.
 | `tidy` | bottom-up rigid-subtree placement: parents land on the midpoint of their outermost children — exactly so for a tree, best effort once a passage has two parents |
 | `routing` | C1-smooth cubics, straight-run collapse, arrowheads clipped to card boundaries |
 | `paths` | distinct path counts as BigInt (they grow exponentially) |
+| `recode` | a numbering read off the drawing, so codes can be renamed to match the tree |
 | `gates` | what conditional links prove: which choice a passage is locked behind, and which branches are dead |
 | `macros` *(in `lib/harlowe/`)* | reads `(set:)` and `(if:)` as text, so a guarded link can narrow a trail |
 

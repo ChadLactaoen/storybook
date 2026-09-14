@@ -1267,3 +1267,63 @@ describe('story notes', () => {
     expect(problems).toEqual([])
   })
 })
+
+describe('the recode panel', () => {
+  function toolbarButton(label: string) {
+    return [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === label)!
+  }
+
+  async function withBranch() {
+    mount()
+    store.newStory('Recode Check')
+    const id = store.state.doc.nodes[0]!.id
+    writeBody(id, '[[Two]]\n[[Three]]')
+    setPref('showCodes', true)
+    await nextTick()
+
+    toolbarButton('Recode').click()
+    await nextTick()
+    return host.querySelector('[aria-label="Recode passages"]')!
+  }
+
+  it('previews every passage, and re-reads the tree as the separator is typed', async () => {
+    const panel = await withBranch()
+    expect(panel).not.toBeNull()
+
+    const rows = [...panel.querySelectorAll('.row')].map((r) => r.textContent!.replace(/\s+/g, ' ').trim())
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toContain('P1')
+    expect(rows[0]).toContain('1N01')
+
+    const separator = panel.querySelectorAll<HTMLInputElement>('input.field')[1]!
+    separator.value = '/'
+    separator.dispatchEvent(new Event('input'))
+    await nextTick()
+    expect(panel.querySelector('.row')!.textContent).toContain('1/01')
+
+    expect(problems).toEqual([])
+  })
+
+  it('switches numbering scheme from the segmented control', async () => {
+    const panel = await withBranch()
+    const [, node] = panel.querySelectorAll<HTMLButtonElement>('.seg')
+    node!.click()
+    await nextTick()
+
+    expect(panel.querySelector('.row')!.textContent).toContain('P01')
+    // Node mode offers one field, not two.
+    expect(panel.querySelectorAll('input.field')).toHaveLength(1)
+    expect(problems).toEqual([])
+  })
+
+  it('writes every code and closes when applied', async () => {
+    const panel = await withBranch()
+    panel.querySelector<HTMLButtonElement>('.btn-primary')!.click()
+    await nextTick()
+
+    expect(host.querySelector('[aria-label="Recode passages"]')).toBeNull()
+    const codes = [...host.querySelectorAll('.code-tag')].map((el) => el.textContent?.trim())
+    expect(codes.sort()).toEqual(['1N01', '2N01', '2N02'])
+    expect(problems).toEqual([])
+  })
+})

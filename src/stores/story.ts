@@ -5,12 +5,15 @@ import { serializeDoc } from '../lib/doc/serialize'
 import { clearLocal, loadLocal, localMeta, saveLocal } from '../lib/doc/storage'
 import type { SavedMeta } from '../lib/doc/storage'
 import { buildLink } from '../lib/harlowe/links'
+import { deriveGraph } from '../lib/graph/derive'
 import { fnv1a } from '../lib/graph/hash'
 import { isPhantomId } from '../lib/graph/constants'
 import { layoutStory } from '../lib/graph/layout'
 import { gatesOf } from '../lib/graph/gates'
 import type { GateEntry } from '../lib/graph/gates'
 import { countPaths } from '../lib/graph/paths'
+import { drawingOrder, planRecode } from '../lib/graph/recode'
+import type { RecodeEntry, RecodeOptions } from '../lib/graph/recode'
 import { reachableFrom, strandedBy } from '../lib/graph/reachability'
 import { readStoryMacros } from '../lib/harlowe/macros'
 import type { LayoutResult } from '../lib/graph/types'
@@ -22,7 +25,7 @@ import type {
   TagColor,
   TraitField,
 } from '../types/story'
-import { compareNodes, emptyDoc, nodeLabel } from '../types/story'
+import { compareNodes, compareStr, emptyDoc, nodeLabel } from '../types/story'
 import { prefs } from './prefs'
 
 const HISTORY_LIMIT = 100
@@ -112,13 +115,19 @@ function layoutKey(doc: StoryDoc): string {
  * Deliberately not done in a watcher: a Vue watcher flushes on the next tick,
  * which would leave `layout` describing the previous document for anyone who
  * reads it in the same turn as an edit.
+ *
+ * `precomputed` is the layout of `next`, for a caller that already had to build
+ * it — a recode may settle by laying its own result out, and the Sugiyama
+ * pipeline is the most expensive thing here to run twice on one button press.
+ * Pass it only for a layout of exactly this document; the memo key is written
+ * either way.
  */
-function setDoc(next: StoryDoc): void {
+function setDoc(next: StoryDoc, precomputed?: LayoutResult): void {
   state.doc = next
   const key = layoutKey(next)
   if (key === lastLayoutKey) return
   lastLayoutKey = key
-  layout.value = markRaw(layoutStory(next))
+  layout.value = markRaw(precomputed ?? layoutStory(next))
   // A stale-result guard from day one, so moving layout into a worker later is
   // a change of plumbing rather than a redesign.
   layoutVersion.value++
@@ -149,12 +158,12 @@ watch(
 
 /* ---------- history ---------- */
 
-function commit(next: StoryDoc): void {
+function commit(next: StoryDoc, precomputed?: LayoutResult): void {
   if (next === state.doc) return
   undoStack.push(state.doc)
   if (undoStack.length > HISTORY_LIMIT) undoStack.shift()
   redoStack.length = 0
-  setDoc(next)
+  setDoc(next, precomputed)
 }
 
 export function undo(): void {
@@ -526,6 +535,176 @@ export function codeSet(id: string, value: string): string | null {
   const { doc: next, error } = M.setCode(state.doc, id, value)
   if (error) return error
   commit(next)
+  return null
+}
+
+/**
+ * How many times a recode is re-planned against its own result.
+ *
+ * Padding makes a numbering a fixed point of its own layout, so an ordinary
+ * recode settles on the first pass and the second only confirms it. A second
+ * pass is still needed because applying can change the *graph*: a new code may
+ * land on one a dangling link already names, which attaches that link and
+ * redraws the tree the numbering was read from. Two such captures in a row are
+ * conceivable; a third is not, and the budget fails soft either way — unsettled
+ * codes are still unique and complete.
+ */
+const RECODE_PASSES = 3
+
+export interface SettledRecode {
+  /** Every passage: `from` is the code it has now, `to` the code it would end with. */
+  entries: RecodeEntry[]
+  /** How many codes actually move. */
+  changed: number
+  /** Dangling links the new codes would attach, as the tree stands today. */
+  captures: string[]
+  /** Blocks the apply, or null. */
+  error: string | null
+  /** The document this was settled from, so a stale result can be spotted. */
+  base: StoryDoc
+  /** The finished document. */
+  doc: StoryDoc
+  /**
+   * The layout of `doc`, when settling had to build one anyway — null when it
+   * did not, in which case `setDoc` computes it at commit time as usual.
+   */
+  layout: LayoutResult | null
+}
+
+/**
+ * Run a recode to completion without installing it.
+ *
+ * Preview and apply share this so that the panel cannot show one answer and the
+ * document receive another: the rows the author reads *are* the settled result,
+ * not the first guess at it.
+ *
+ * The numbering is planned in `graph/recode.ts` rather than in `mutations.ts`,
+ * which may not read layout: "the first passage on level 3" is a fact about the
+ * drawing. The mutation receives a finished id -> code map and knows nothing
+ * about levels.
+ */
+function settleRecode(options: RecodeOptions): SettledRecode {
+  const base = state.doc
+  const before = layout.value
+  const origin = new Map(base.nodes.map((n) => [n.id, n.code]))
+
+  let doc = base
+  /** Always an ordering valid for `doc`; `fresh` says whether it is also its layout. */
+  let result = before
+  let fresh = true
+
+  const refuse = (error: string): SettledRecode => ({
+    entries: [], changed: 0, captures: [], error, base, doc: base, layout: null,
+  })
+
+  for (let pass = 0; pass < RECODE_PASSES; pass++) {
+    const plan = planRecode(result, options)
+    if (plan.error !== null) return refuse(plan.error)
+
+    const { doc: next, error } = M.recodeAll(doc, plan.mapping)
+    if (error !== null) return refuse(error)
+
+    // The plan came back the identity: the numbering already matches the tree.
+    if (next === doc) break
+    doc = next
+    fresh = false
+
+    // Attaching a dangling link is the *only* way applying a plan can change the
+    // graph — a code and every link naming it are rewritten together, so every
+    // other edge survives untouched. With no capture the levels and the ordering
+    // are exactly what they were, so `before` still orders `doc` correctly and
+    // laying it out again would be a full Sugiyama pass per keystroke to confirm
+    // what the padding already guarantees.
+    if (plan.captures.length === 0) break
+
+    // Deliberately not `setDoc`: these are trial layouts for a document that may
+    // never be installed, and touching the memo key would leave it describing one.
+    result = layoutStory(doc)
+    fresh = true
+  }
+
+  const entries = readBack(result, doc, origin)
+  return {
+    entries,
+    changed: entries.filter((e) => e.from !== e.to).length,
+    captures: attached(before, doc),
+    error: null,
+    base,
+    doc,
+    layout: fresh ? result : null,
+  }
+}
+
+/**
+ * The preview rows, in drawing order, with `from` wound back to the code each
+ * passage had before any of this — an intermediate was never on screen.
+ *
+ * `result` is the layout the ordering is read from; the codes come from `doc`,
+ * which is what actually gets committed. Taking `to` from a fresh plan instead
+ * would describe something else entirely if the pass loop ran out of passes.
+ */
+function readBack(
+  result: LayoutResult,
+  doc: StoryDoc,
+  origin: ReadonlyMap<string, string>,
+): RecodeEntry[] {
+  const byId = new Map(doc.nodes.map((n) => [n.id, n]))
+  const out: RecodeEntry[] = []
+  for (const n of drawingOrder(result)) {
+    const node = byId.get(n.id)
+    if (!node) continue
+    out.push({
+      id: n.id,
+      from: origin.get(n.id) ?? node.code,
+      to: node.code,
+      title: node.title.length > 0 ? node.title : node.code,
+      level: n.level,
+    })
+  }
+  return out
+}
+
+/**
+ * Which dangling links this recode attaches.
+ *
+ * Measured rather than predicted: the phantoms the tree has now, minus the ones
+ * still dangling in the settled document. A plan's own `captures` only speaks
+ * for the pass that produced it, so reporting the first pass's would under-warn
+ * exactly when the loop ran more than once.
+ *
+ * Asking whether the code ended up on a real passage is not the same question
+ * and gets it wrong: a passage that captured a link on one pass can be numbered
+ * again on the next, so the code that did the capturing need not be the code it
+ * finishes with. Whether the link still dangles is the thing the author cares
+ * about, and it is directly observable.
+ */
+function attached(before: LayoutResult, doc: StoryDoc): string[] {
+  const stillDangling = new Set(deriveGraph(doc).phantoms.map((p) => p.code))
+  return before.nodes
+    .filter((n) => n.isPhantom && !stillDangling.has(n.code))
+    .map((n) => n.code)
+    .sort(compareStr)
+}
+
+/** What a recode would do, settled, without writing anything. */
+export function recodePreview(options: RecodeOptions): SettledRecode {
+  return settleRecode(options)
+}
+
+/**
+ * Recode every passage, as one undo step. Returns the refusal message, or null.
+ *
+ * `settled` is the panel's own preview, handed straight back so the work is not
+ * done twice on one button press. It is checked against the current document
+ * rather than trusted: the store is a singleton, and a result computed before
+ * some other edit landed would write codes read off a tree that has since moved.
+ */
+export function codesRecode(options: RecodeOptions, settled?: SettledRecode): string | null {
+  const plan = settled?.base === state.doc ? settled : settleRecode(options)
+  if (plan.error !== null) return plan.error
+  // One commit, so one Cmd Z takes the whole story back. Any layout the settle
+  // already had to build is handed over rather than recomputed from scratch.
+  commit(plan.doc, plan.layout ?? undefined)
   return null
 }
 

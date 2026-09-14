@@ -16,7 +16,7 @@ import {
   isTagColor,
   orderRoster,
 } from '../../types/story'
-import { normalizeToken } from './mutations'
+import { codeShape, mintCode, normalizeToken } from './mutations'
 
 /**
  * Canonical serialization.
@@ -343,17 +343,22 @@ export function parseDoc(json: string): ParsedDoc {
   // rather than inline above, because `nextId` is only known once every id has
   // been seen.
   //
-  // `P<id>` is tried first because that is exactly what `createNode` would have
-  // minted, so a file this app wrote and someone then stripped of codes reloads
-  // with the codes it started with. `nextId` is bumped past everything invented:
+  // The story's own code shape is tried first because that is exactly what
+  // `createNode` would have minted, so a file this app wrote and someone then
+  // stripped of codes reloads with the codes it started with. `nextId` is bumped past everything invented:
   // leave it behind and the next passage the author adds would mint a code that
   // already exists, silently giving two passages the same link target.
   const invented: string[] = []
+  // The shape the surviving codes are in, read once: a story recoded to
+  // `T01`..`T09` gets `T10` here rather than `P10`, and — the point of the
+  // correspondence above — one recoded to `P01`..`P09` reproduces `P0<id>`
+  // rather than the `P<id>` a fixed prefix would have invented.
+  const shape = codeShape(usedCodes)
   for (const node of needsCode) {
-    let candidate = /^\d+$/.test(node.id) ? `P${node.id}` : ''
+    let candidate = /^\d+$/.test(node.id) ? mintCode(shape, Number(node.id)) : ''
     if (candidate.length === 0 || usedCodes.has(candidate)) {
       do {
-        candidate = `P${nextId}`
+        candidate = mintCode(shape, nextId)
         nextId += 1
       } while (usedCodes.has(candidate))
     }
