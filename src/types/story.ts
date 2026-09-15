@@ -50,7 +50,7 @@ export interface StoryNode {
    */
   code: string
   /**
-   * A note to yourself about this passage. Free text, at most 15 characters,
+   * A note to yourself about this passage. Free text, at most 30 characters,
    * empty when unused.
    *
    * Nothing structural reads one: notes may repeat, and no link, layout or

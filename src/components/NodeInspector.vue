@@ -344,7 +344,7 @@ const upBlockedBy = computed(() => store.blockingParent.value)
         <input
           id="passage-token"
           v-model="tokenDraft"
-          class="field field-token"
+          class="field"
           :maxlength="TOKEN_MAX"
           placeholder="A word or two, for you"
           @blur="commitToken"
@@ -602,11 +602,6 @@ const upBlockedBy = computed(() => store.blockingParent.value)
 
 .disclose[open] > summary {
   margin-bottom: 6px;
-}
-
-/* Wide enough for the fifteen characters it accepts, and no wider. */
-.field-token {
-  width: 14em;
 }
 
 .inspector {

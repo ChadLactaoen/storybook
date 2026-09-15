@@ -13,6 +13,7 @@ import {
   setStoryNotes,
   setTagColor,
   setToken,
+  TOKEN_MAX,
 } from '../lib/doc/mutations'
 import { parseDoc, serializeDoc } from '../lib/doc/serialize'
 import { deriveGraph } from '../lib/graph/derive'
@@ -32,22 +33,23 @@ describe('passage note', () => {
     expect(noteOf(setToken(doc, one, '*-?!'))).toBe('*-?!')
   })
 
-  it('trims and caps at fifteen characters', () => {
+  it('trims and caps at the note length', () => {
     expect(noteOf(setToken(doc, one, '  spaced  '))).toBe('spaced')
-    expect(noteOf(setToken(doc, one, 'a'.repeat(40)))).toBe('a'.repeat(15))
+    expect(noteOf(setToken(doc, one, 'a'.repeat(TOKEN_MAX * 2)))).toBe('a'.repeat(TOKEN_MAX))
   })
 
   it('normalizes to something it would not change again', () => {
     // Cut mid-space and a second pass would trim, so a hand-edited file would
     // not re-serialize to itself — which is the canonical-JSON invariant.
-    const cut = setToken(doc, one, 'aaaaaaaaaaaaaa b')
+    const cut = setToken(doc, one, 'a'.repeat(TOKEN_MAX - 1) + ' b')
     const back = parseDoc(serializeDoc(cut)).doc
     expect(serializeDoc(back)).toBe(serializeDoc(cut))
   })
 
   it('counts characters, not UTF-16 units, so an emoji is never halved', () => {
-    expect(noteOf(setToken(doc, one, 'a'.repeat(14) + '\u{1F525}'))).toBe(
-      'a'.repeat(14) + '\u{1F525}',
+    // Exactly at the cap in characters, one over it in UTF-16 units.
+    expect(noteOf(setToken(doc, one, 'a'.repeat(TOKEN_MAX - 1) + '\u{1F525}'))).toBe(
+      'a'.repeat(TOKEN_MAX - 1) + '\u{1F525}',
     )
   })
 

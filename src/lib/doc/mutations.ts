@@ -656,7 +656,7 @@ export function recodeAll(doc: StoryDoc, mapping: ReadonlyMap<string, string>): 
 /* ---------- token ---------- */
 
 /** Long enough for a phrase, short enough to sit on a card. */
-export const TOKEN_MAX = 15
+export const TOKEN_MAX = 30
 
 /**
  * Cap, then trim. Nothing else reads a note, so nothing else constrains it.
