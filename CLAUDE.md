@@ -51,7 +51,7 @@ the Twine passage names, so Harlowe's `(history:)` already returns exactly that 
 `->` is the delimiter because `setCode` bans it from codes (`LINK_SYNTAX`), so it cannot
 collide the way `-` or `.` could.
 
-`token` is unrelated to any of that. It is a free-text note of at most 15 characters, for
+`token` is unrelated to any of that. It is a free-text note of at most 30 characters, for
 the author alone: repeatable, optional, read by nothing but `searchableText` and the card
 it sits on. It once carried a grammar so per-passage tokens could concatenate into a route
 (`D-LY`); that was removed because the concatenation was noise — in a real story an early

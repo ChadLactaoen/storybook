@@ -45,7 +45,7 @@ choice a passage is locked behind, or that no route reaches it at all.
 | Link forms | `[[Code]]`, `[[Text\|Code]]`, `[[Text->Code]]`, `[[Code<-Text]]` |
 | Code | Every passage has one, unique and case-sensitive (`3A` is not `3a`). Auto-assigned as `P1`, `P2`, … and yours to rename. A new passage follows the shape the story is already in, so after a **Recode** to `T01`, `T02`, … the next one is `T03` rather than `P3` |
 | Title | A name for you. Two passages may share one, and no link ever reads it |
-| Note | Optional, up to 15 characters of free text, for you. Shows on the card in place of the code and is searchable; nothing structural reads it |
+| Note | Optional, up to 30 characters of free text, for you. Shows on the card in place of the code and is searchable; nothing structural reads it |
 | Story notes | A scratchpad for the story as a whole &mdash; toolbar **Notes** or `Cmd J`. Opens in the left column, under **Cast & Settings** or the cheat sheet if one is already there. Saved and exported with the story; nothing structural reads it, and search does not match it |
 | New passages | A link to a code that doesn't exist creates the passage, in TODO state, when you leave the editor. Write a bare `[[Head north]]` and it gets a code of its own, written back into the link as `[[Head north\|P7]]` |
 | Formatting | `''bold''`, `//italic//` and `> quoted` lines, from the editor's buttons or `Cmd B` / `Cmd I` / `Cmd Shift .`. Pressing the same one again takes it off |

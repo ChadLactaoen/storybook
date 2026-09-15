@@ -84,7 +84,7 @@ const style = computed(() => ({
     <span v-if="!node.isPhantom" class="badge" :title="state ?? 'TODO'" />
 
     <div class="body">
-      <div v-if="token" class="token">{{ token }}</div>
+      <div v-if="token" class="token"><span class="token-text">{{ token }}</span></div>
       <div v-if="node.title" class="title">{{ node.title }}</div>
       <div v-else class="title untitled">Untitled</div>
 
@@ -199,7 +199,55 @@ const style = computed(() => ({
   color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
+  /* The marquee below sizes its travel against this line in `cqw`, which is how
+     the distance stays exact without measuring text in the DOM. */
+  container-type: inline-size;
+}
+
+/* A full-length note is wider than the card can show (161px of line for up to
+   193px of text), so at rest it ellipsises exactly as it did before. The
+   `max-content` width is what makes the marquee's `100%` mean the text's width
+   rather than the line's. */
+.token-text {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Only the anchor card scrolls: selection can cover a whole subtree, and a
+   hundred cards marqueeing at once is noise rather than information. The anchor
+   is always exactly one card, and it is the one the inspector is describing. */
+.card.anchor .token-text {
+  max-width: none;
+  text-overflow: clip;
+  animation: token-marquee 5s ease-in-out infinite alternate;
+}
+
+/* `100cqw` is the line's width and `100%` the text's own, so the shift is
+   precisely the hidden remainder. The `min` with zero is what keeps a note that
+   already fits from sliding off its own card: for it the shift is positive, and
+   zero wins. */
+@keyframes token-marquee {
+  0%,
+  18% {
+    transform: translateX(0);
+  }
+  82%,
+  100% {
+    transform: translateX(min(0px, calc(100cqw - 100%)));
+  }
+}
+
+/* Motion here is a convenience, never the only way to read a note — the
+   inspector always has the whole of it — so it is safe to simply drop. */
+@media (prefers-reduced-motion: reduce) {
+  .card.anchor .token-text {
+    max-width: 100%;
+    text-overflow: ellipsis;
+    animation: none;
+  }
 }
 
 .card.plain .token {
