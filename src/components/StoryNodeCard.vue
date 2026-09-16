@@ -212,13 +212,23 @@ const style = computed(() => ({
   box-shadow: 0 0 0 2px var(--panel);
 }
 
+/* A detailed card stacks up to five things inside 96 fixed pixels — stripe,
+   note, title, chips, footer — and the footer only appears on a passage that is
+   a start, an ending or carries a path count, which is why the squeeze shows up
+   there and nowhere else. Every height in that stack is a constant (the note's
+   line-height is 1, the title's 1.3, a chip's 1.5, the footer's 1.2 below), so
+   the padding and the gaps are the only slack there is; they are tuned to leave
+   the fullest legal card a few pixels spare rather than to look generous. Do not
+   restore the roomier 9/6/5 they were before — a note, a title, one coloured tag
+   and an END flag together overran the body by 5px, and flex paid for it by
+   shaving the bottom border off the chip. */
 .body {
   flex: 1;
   min-height: 0;
-  padding: 9px 26px 6px 11px;
+  padding: 8px 26px 4px 11px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 3px;
 }
 
 .token {
@@ -337,6 +347,11 @@ const style = computed(() => ({
   gap: 3px;
   overflow: hidden;
   max-height: 20px;
+  /* A chip is a drawn box, so a fractional one reads as damage rather than as
+     "more below" — it must never be what yields when the body is over-full.
+     The title is the one item left free to shrink, and clipping is already what
+     a long title does here. */
+  flex: 0 0 auto;
 }
 
 .chip {
@@ -350,13 +365,25 @@ const style = computed(() => ({
   border: 1px solid color-mix(in srgb, var(--chip) 34%, transparent);
 }
 
+/* `normal` line-height was the one height on the card that a font could move,
+   which is exactly the wrong property for the row that decides whether the body
+   above it still fits. Pinned, so the whole stack is arithmetic. */
 .foot {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 11px 7px;
+  padding: 0 11px 5px;
   font-size: 10px;
+  line-height: 1.2;
   color: var(--text-faint);
+}
+
+/* The ending's 3px border is inside the card's box, so it takes its two extra
+   pixels out of the content — and it already draws the air the footer was
+   padding for. Handing them back keeps the gap under the flag looking the same
+   as on a start card while the body keeps the room. */
+.card.ending .foot {
+  padding-bottom: 3px;
 }
 
 .flag {
