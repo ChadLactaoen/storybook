@@ -8,13 +8,7 @@ import type {
   TagColor,
   TraitField,
 } from '../../types/story'
-import {
-  compareByName,
-  compareNodes,
-  compareStr,
-  emptyCharacter,
-  orderRoster,
-} from '../../types/story'
+import { compareByName, compareNodes, compareStr, emptyCharacter, orderRoster, SLUG_AMBIGUOUS } from '../../types/story'
 import type { Span } from '../harlowe/links'
 import { linkSyntaxIn, parseLinks, remapLinks } from '../harlowe/links'
 
@@ -176,7 +170,8 @@ export function createNode(
     // wrote by hand does not get one invented for it — see `parseDoc`.
     title: opts.title?.trim() || 'Untitled Passage',
     code: wanted.length > 0 && !taken.has(wanted) ? wanted : freeCode(taken, next.nextId),
-    token: '',
+    slug: '',
+    note: '',
     body: opts.body ?? '',
     tags: [],
     state: 'TODO',
@@ -433,7 +428,7 @@ export function setState(doc: StoryDoc, id: string, state: NodeState): StoryDoc 
 /**
  * Mark a passage as a place a route stops, or unmark it.
  *
- * Guarded like `setToken`: `commit` compares by reference, so returning a fresh
+ * Guarded like `setNote`: `commit` compares by reference, so returning a fresh
  * document for an unchanged value would push an empty undo entry and wipe redo.
  * A checkbox is easy to toggle twice.
  */
@@ -469,7 +464,7 @@ export function setStoryTitle(doc: StoryDoc, title: string): StoryDoc {
  * re-serializing to itself.
  *
  * Returning the same object for a no-op matters for the same reason it does in
- * `setToken`: `commit` compares by reference, and this runs on every keystroke.
+ * `setNote`: `commit` compares by reference, and this runs on every keystroke.
  */
 export function setStoryNotes(doc: StoryDoc, notes: string): StoryDoc {
   if (notes === doc.notes) return doc
@@ -667,46 +662,104 @@ export function recodeAll(doc: StoryDoc, mapping: ReadonlyMap<string, string>): 
 }
 
 
-/* ---------- token ---------- */
-
-/** Long enough for a phrase, short enough to sit on a card. */
-export const TOKEN_MAX = 30
+/* ---------- slug ---------- */
 
 /**
- * Cap, then trim. Nothing else reads a note, so nothing else constrains it.
- *
- * That order matters twice over. Trimming last makes this idempotent — cut a
- * note mid-space and a second pass would trim again, so a hand-edited file
- * would not re-serialize to itself and the canonical-JSON invariant breaks.
- * And the cut counts characters, not UTF-16 units, or a note ending in an
- * emoji is truncated into half a surrogate pair.
+ * Long enough to be legible in a route code, short enough that a dozen of them
+ * still fit on a card line.
  */
-export function normalizeToken(raw: string): string {
-  return [...raw.trim()].slice(0, TOKEN_MAX).join('').trim()
+export const SLUG_MAX = 10
+
+/**
+ * Trim, drop every `*`, cut to length, trim again.
+ *
+ * **The `*` is the point.** A running slug writes `*` where the routes to a
+ * passage disagree (`lib/graph/slugs.ts`), so a slug containing one could not
+ * be told from the marker and the card would state something false about the
+ * story. Stripping is right rather than refusing: this commits on every
+ * keystroke, and a refusal mid-word would fight the author's caret.
+ *
+ * The rest is `normalizeNote`'s shape, and for its reasons. Trimming last makes
+ * this idempotent — cut mid-space and a second pass would trim again, so a
+ * hand-edited file would not re-serialize to itself and the canonical-JSON
+ * invariant breaks. The cut counts characters, not UTF-16 units, or a slug
+ * ending in an emoji is truncated into half a surrogate pair.
+ *
+ * ---
+ *
+ * On reviving a concatenation this repo deliberately abandoned (see `setNote`,
+ * and invariant 3 in CLAUDE.md). Four things make this a different proposition
+ * from the `D-LY` grammar:
+ *
+ * - It is **its own field**. The note is free prose and carries no grammar; the
+ *   two uses were fighting over one string before, and that was most of the
+ *   problem.
+ * - It is **derived, not authored**. The author writes one mark per passage and
+ *   never maintains the sequence; the route string is computed from the graph
+ *   and stored nowhere.
+ * - It **marks its own ambiguity**. `D-LY` asserted a single route because it
+ *   had no way to say otherwise. `A*D` says out loud that the middle varies,
+ *   which is the fail-closed direction `gates.ts` argues for.
+ * - It is **display, not identity**. A route's identity is still the code
+ *   sequence, and running slugs are explicitly allowed to collide.
+ *
+ * What is *not* rebutted is the growth: a running slug still gets longer with
+ * depth, and the leading characters are still the part you skip. That is real,
+ * and it is answered by showing the tail on the card rather than by pretending
+ * it does not happen.
+ */
+export function normalizeSlug(raw: string): string {
+  return [...raw.trim()]
+    .filter((c) => c !== SLUG_AMBIGUOUS)
+    .slice(0, SLUG_MAX)
+    .join('')
+    .trim()
 }
+
+/**
+ * Set a passage's slug.
+ *
+ * Nothing structural reads one, and nothing resolves against one: slugs repeat,
+ * and a route code built from them is for a reader to quote, not for the tool
+ * to look anything up by.
+ */
+export function setSlug(doc: StoryDoc, id: string, value: string): StoryDoc {
+  const node = doc.nodes.find((n) => n.id === id)
+  const slug = normalizeSlug(value)
+  // Same reference-equality guard as `setNote`: this commits on every
+  // keystroke, and past the cap every further character would otherwise push an
+  // empty undo entry and wipe the redo stack.
+  if (!node || slug === node.slug) return doc
+  return replaceNode(doc, id, { slug })
+}
+
+/* ---------- note ---------- */
 
 /**
  * Set a passage's note.
  *
  * Free text, and deliberately so. This field once carried a grammar — a case
- * rule that let per-passage tokens concatenate into a route like `D-LY` — and
+ * rule that let per-passage notes concatenate into a route like `D-LY` — and
  * the concatenation turned out to be noise: in a real story an early branch is
  * often irrelevant to a later one, so the leading characters were something to
  * mentally strip rather than context to read. What survived is the useful half,
  * a note to yourself, which needs no grammar at all.
  *
- * Nothing structural reads one. Notes may repeat, may be empty, and are only
+ * The concatenation itself came back, on `slug`, and none of the above is
+ * retracted — see `normalizeSlug` for why that is not the same mistake twice.
+ *
+ * Nothing structural reads a note. They may repeat, may be empty, and are only
  * ever shown on their own passage — see `searchableText`, which is the other
  * place they matter.
  */
-export function setToken(doc: StoryDoc, id: string, value: string): StoryDoc {
+export function setNote(doc: StoryDoc, id: string, value: string): StoryDoc {
   const node = doc.nodes.find((n) => n.id === id)
-  const token = normalizeToken(value)
-  // Returning the same object matters: `commit` compares by reference, and this
-  // commits on every keystroke — past the cap, every further character would
-  // otherwise push an empty undo entry and wipe the redo stack.
-  if (!node || token === node.token) return doc
-  return replaceNode(doc, id, { token })
+  // Stored exactly as typed, like `setStoryNotes` and for its reasons: nothing
+  // normalizes on the way out or back in, so the round trip is identity rather
+  // than a fixed point. Trailing whitespace is where the caret is parked, and a
+  // blank line between paragraphs is a blank line.
+  if (!node || value === node.note) return doc
+  return replaceNode(doc, id, { note: value })
 }
 
 /* ---------- setting ---------- */

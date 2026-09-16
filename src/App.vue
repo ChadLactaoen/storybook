@@ -131,9 +131,7 @@ const tagsOf = computed(
 const isEndingOf = computed(
   () => new Map<string, boolean>(store.state.doc.nodes.map((n) => [n.id, n.isEnding])),
 )
-const tokenOf = computed(
-  () => new Map<string, string>(store.state.doc.nodes.map((n) => [n.id, n.token])),
-)
+
 function fit() {
   vp.zoomToFit(layout.value.bounds)
 }
@@ -289,7 +287,7 @@ function dismissNotices() {
           :tag-colors="store.tagColors.value"
           :show-levels="showLevels"
           :show-codes="prefs.showCodes"
-          :token-of="tokenOf"
+          :run-of="store.cardSlugs.value"
           :is-ending-of="isEndingOf"
           @select="store.applySelect"
           @open="openPassage"

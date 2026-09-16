@@ -487,16 +487,19 @@ describe('story notes through the store', () => {
 })
 
 describe('conditional links through the store', () => {
-  it('does not move a single card when a note changes', () => {
+  it('does not move a single card when a note or a slug changes', () => {
     write(idOf('One'), '[[Two]]\n[[Three]]')
     const before = store.layout.value.stats.hash
 
-    store.tokenSet(idOf('Two'), 'needs a rewrite')
-    store.tokenSet(idOf('Three'), 'done')
+    store.noteSet(idOf('Two'), 'needs a rewrite')
+    store.noteSet(idOf('Three'), 'done')
     store.storyNotesSet('A paragraph about the ending.')
+    store.slugSet(idOf('Two'), 'LY')
 
     // A note is authoring metadata, per passage or story-wide: put either in
-    // `layoutKey` and every keystroke re-parses every body in the story.
+    // `layoutKey` and every keystroke re-parses every body in the story. A slug
+    // is read off the graph rather than fed into it, so it must be as invisible
+    // here as a note is.
     expect(store.layout.value.stats.hash).toBe(before)
   })
 
@@ -513,6 +516,117 @@ describe('conditional links through the store', () => {
     expect(store.gates.value).not.toBe(read)
   })
 
+  it('recomputes the running slugs on a slug or an ending, and not on a tag', () => {
+    write(idOf('One'), '[[Two]]')
+    const read = store.runningSlugs.value
+
+    // A tag reaches nothing a running slug is made of, so the map comes back
+    // with the same identity and no card re-renders.
+    store.tagAdd(idOf('One'), 'opening')
+    expect(store.runningSlugs.value).toBe(read)
+
+    // These two do, and neither is in `layoutKey` — which is the whole reason
+    // this memo cannot key on `layoutVersion` the way `gates` does. Get it
+    // wrong and the value is stale *and* recomputed: the body re-runs, the key
+    // matches, and the previous map is handed back.
+    store.slugSet(idOf('One'), 'A')
+    const marked = store.runningSlugs.value
+    expect(marked).not.toBe(read)
+    expect(marked.get(idOf('Two'))).toBe('A')
+
+    store.endingSet(idOf('One'), true)
+    const ended = store.runningSlugs.value
+    expect(ended).not.toBe(marked)
+    // Routes stop at One, so nothing arrives at Two any more.
+    expect(ended.has(idOf('Two'))).toBe(false)
+    store.endingSet(idOf('One'), false)
+  })
+
+  it('finds a passage by the route code that reaches it, not just its own mark', () => {
+    // What a reader quotes back is the whole run, so that is what has to be
+    // pasteable. `One` is marked `A` and `Two` is marked `B`, so Two's route
+    // code is `AB` — a string neither passage holds in any field of its own.
+    write(idOf('One'), '[[Two]]')
+    const one = idOf('One')
+    const two = idOf('Two')
+    store.slugSet(one, 'A')
+    store.slugSet(two, 'B')
+
+    const hits = (q: string) => {
+      store.state.search = q
+      return [...(store.matches.value ?? [])]
+    }
+
+    expect(store.runningSlugs.value.get(two)).toBe('AB')
+    expect(hits('AB')).toEqual([two])
+    // And the widening this buys: the mark on One reaches everything downstream
+    // of it, which is how you ask "what does a route through A get to?".
+    expect(hits('A').sort()).toEqual([one, two].sort())
+    store.clearFilters()
+  })
+
+  it('finds a passage whose route the tool cannot pin down', () => {
+    // A bare `*` sweeps up every passage a reader could arrive at more than one
+    // way — the marks disagree, so the card shows a star, and so can a search.
+    write(idOf('One'), '[[Two]]\n[[Three]]')
+    write(idOf('Two'), '[[Four]]')
+    // `linkTo`, not a second bare `[[Four]]`: titles are not link targets, so
+    // that would make a second passage called Four rather than joining this one.
+    write(idOf('Three'), linkTo('Four'))
+    store.slugSet(idOf('One'), 'A')
+    store.slugSet(idOf('Two'), 'B')
+    store.slugSet(idOf('Three'), 'C')
+    store.slugSet(idOf('Four'), 'D')
+
+    expect(store.runningSlugs.value.get(idOf('Four'))).toBe('A*D')
+
+    store.state.search = '*'
+    expect([...(store.matches.value ?? [])]).toEqual([idOf('Four')])
+    store.clearFilters()
+  })
+
+  it('filters to the passages carrying a note', () => {
+    write(idOf('One'), '[[Two]]\n[[Three]]')
+    store.noteSet(idOf('Two'), 'the innkeeper still needs a name')
+
+    expect(store.anyNotes.value).toBe(true)
+    store.state.noteFilter = true
+    expect([...(store.matches.value ?? [])]).toEqual([idOf('Two')])
+
+    // Filters on presence, not on content, so it stacks with everything else
+    // the same way a state chip does.
+    store.state.search = 'innkeeper'
+    expect([...(store.matches.value ?? [])]).toEqual([idOf('Two')])
+    store.state.search = 'nothing matches this'
+    expect([...(store.matches.value ?? [])]).toEqual([])
+
+    store.clearFilters()
+    expect(store.state.noteFilter).toBe(false)
+    expect(store.filtering.value).toBe(false)
+    expect(store.matches.value).toBeNull()
+  })
+
+  it('offers the note filter only once there is a note to find', () => {
+    write(idOf('One'), '[[Two]]')
+    expect(store.anyNotes.value).toBe(false)
+    store.noteSet(idOf('Two'), 'x')
+    expect(store.anyNotes.value).toBe(true)
+    store.noteSet(idOf('Two'), '')
+    expect(store.anyNotes.value).toBe(false)
+  })
+
+  it('counts the note filter as filtering, or the clear control lies', () => {
+    // `filtering` and `matches` must agree on the predicate, or the bar offers
+    // a "clear filters" button while nothing is filtered — or worse, hides it
+    // while something is.
+    write(idOf('One'), '')
+    store.noteSet(idOf('One'), 'a note')
+    store.state.noteFilter = true
+    expect(store.filtering.value).toBe(true)
+    expect(store.matches.value).not.toBeNull()
+    store.clearFilters()
+  })
+
   it('names the passage a conditional link locks a route to', () => {
     write(idOf('One'), '[[Pick]]')
     write(idOf('Pick'), '(set:$idol to "p")\n[[Mid]]')
@@ -527,18 +641,18 @@ describe('conditional links through the store', () => {
     expect(store.gates.value.get(idOf('End'))!.dead).toBe(true)
   })
 
-  it('keeps a note verbatim, at any length up to the cap', () => {
+  it('keeps a note verbatim, spaces and newlines and all', () => {
     write(idOf('One'), '')
-    store.tokenSet(idOf('One'), '  needs a rewrite  ')
-    expect(store.state.doc.nodes.find((n) => n.id === idOf('One'))!.token).toBe(
-      'needs a rewrite',
-    )
+    const typed = '  needs a rewrite\n\n  - and a name for the innkeeper\n'
+    store.noteSet(idOf('One'), typed)
+    expect(store.state.doc.nodes.find((n) => n.id === idOf('One'))!.note).toBe(typed)
   })
 
-  it('finds a passage by its note, its title and its code', () => {
+  it('finds a passage by its note, its title, its code and its slug', () => {
     write(idOf('One'), '[[Two]]')
     const two = idOf('Two')
-    store.tokenSet(two, 'turning point')
+    store.noteSet(two, 'turning point')
+    store.slugSet(two, 'LY')
 
     const hits = (q: string) => {
       store.state.search = q
@@ -548,6 +662,9 @@ describe('conditional links through the store', () => {
     expect(hits('Two')).toContain(two)
     // An exact code narrows to that passage alone, on purpose.
     expect(hits(store.state.doc.nodes.find((n) => n.id === two)!.code)).toEqual([two])
+    // A slug is something the author writes down and later wants to find again,
+    // the same as a code.
+    expect(hits('LY')).toEqual([two])
     store.clearFilters()
   })
 })

@@ -55,6 +55,21 @@ defineExpose({ focus: () => input.value?.focus() })
         <span class="dot" />{{ s }}
       </button>
 
+      <!-- Offered only once there is a note to find. A filter that can only
+           ever return nothing is a control that has to be explained. -->
+      <template v-if="store.anyNotes.value">
+        <span class="sep" />
+        <button
+          class="chip note"
+          :class="{ on: store.state.noteFilter }"
+          :aria-pressed="store.state.noteFilter"
+          title="Show only passages carrying a note"
+          @click="store.state.noteFilter = !store.state.noteFilter"
+        >
+          <span class="dot" />Note
+        </button>
+      </template>
+
       <span v-if="store.tags.value.length > 0" class="sep" />
 
       <button
@@ -148,6 +163,13 @@ defineExpose({ focus: () => input.value?.focus() })
 
 .chip.scene {
   --state: var(--accent);
+}
+
+/* `--note` shares a value with `--tag-orange`, so this chip could be mistaken
+   for an orange tag chip on colour alone. It carries a dot and they do not,
+   which is what tells them apart — the same way the state chips are read. */
+.chip.note {
+  --state: var(--note);
 }
 
 .sep {

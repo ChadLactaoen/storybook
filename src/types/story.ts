@@ -50,14 +50,54 @@ export interface StoryNode {
    */
   code: string
   /**
-   * A note to yourself about this passage. Free text, at most 30 characters,
-   * empty when unused.
+   * A mark for this passage in a shareable route code, at most 10 characters.
+   * Empty when unused, which is most passages.
+   *
+   * On its own it means nothing. Its purpose is the *running slug* — the marks
+   * of the passages on the route to here, concatenated: `A -> B -> D` spells
+   * `ABD`. Where routes disagree the running slug says so with `*`, so adding
+   * `A -> C -> D` makes D read `A*D`. See `lib/graph/slugs.ts`; the derivation
+   * lives there and nothing about it is stored.
+   *
+   * **`*` is reserved and `normalizeSlug` strips it**, or an author could write
+   * a literal that is indistinguishable from the ambiguity marker, and the
+   * running slug would state something false about the story.
+   *
+   * **Parentheses group part of a mark**, and the parts are compared
+   * separately: two siblings marked `A(a)` and `A(b)` agree on the stem and
+   * differ in the group, so they read `A(*)` rather than a flat `*`. Everything
+   * outside a group is one atomic mark — `Ab` and `Bb` are two different marks
+   * that happen to share a letter, and nothing pretends otherwise. A mark whose
+   * brackets do not balance is simply left opaque.
+   *
+   * **Not unique, deliberately.** A passage with no slug contributes nothing,
+   * so `A -> B(none) -> C(none)` gives all three the running slug `A` — and
+   * that is right, because a running slug identifies *the route so far*, not
+   * the passage standing at the end of it. `code` remains the passage's
+   * identity, exactly as it was; a reader quotes the pair — "on `P7`, route
+   * `A*D`" — and the pair is exact. Do not add a uniqueness constraint or a
+   * duplicate lint here; both would be answering a question this field is not
+   * asking.
+   *
+   * A card shows the running slug only while it is still going somewhere. A
+   * passage carrying no mark, with no descendant carrying one either, spells
+   * exactly what its parent spelled and always will, so the canvas stops
+   * repeating a finished code down a corridor. That is a display rule and
+   * nothing more — the code itself is still there for the search box and the
+   * inspector (`cardSlugs` against `runningSlugs`).
+   *
+   * Absent from `layoutKey`, `DerivedGraph` and `NodeLayout` for the reason
+   * `isEnding` is: it moves nothing on the canvas.
+   */
+  slug: string
+  /**
+   * A note to yourself about this passage. Free text, empty when unused.
    *
    * Nothing structural reads one: notes may repeat, and no link, layout or
-   * export resolves against them. They show on their own passage's card and
-   * they are searchable — that is the whole of it.
+   * export resolves against them. They are searchable, and they sit on the
+   * inspector's Advanced tab — that is the whole of it.
    */
-  token: string
+  note: string
   /** Harlowe source. The single source of truth for this passage's outgoing links. */
   body: string
   tags: string[]
@@ -184,6 +224,19 @@ export interface StoryDoc {
   /** Monotonic id counter. Deliberately not random UUIDs. */
   nextId: number
 }
+
+/**
+ * What a running slug writes where the routes disagree, and therefore the one
+ * character a slug may not contain.
+ *
+ * Lives here rather than in either of the two places that need it, because both
+ * halves of the bargain have to name the same character: `normalizeSlug` strips
+ * it on the way in, and `graph/slugs.ts` writes it on the way out. Two literals
+ * could drift, and the drift would let an authored literal pass for the marker
+ * — which is exactly the "states something false about the story" failure the
+ * whole analysis is built to avoid.
+ */
+export const SLUG_AMBIGUOUS = '*'
 
 export const DOC_VERSION = 1
 

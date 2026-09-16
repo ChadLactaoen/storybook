@@ -10,6 +10,7 @@ import { fnv1a } from '../lib/graph/hash'
 import { isPhantomId } from '../lib/graph/constants'
 import { layoutStory } from '../lib/graph/layout'
 import { gatesOf } from '../lib/graph/gates'
+import { marksAhead, runningSlugs as slugsOf } from '../lib/graph/slugs'
 import type { GateEntry } from '../lib/graph/gates'
 import { countPaths, countPathsTo } from '../lib/graph/paths'
 import { drawingOrder, planRecode } from '../lib/graph/recode'
@@ -49,6 +50,14 @@ interface State {
   stateFilter: NodeState[]
   settingFilter: string[]
   characterFilter: string[]
+  /**
+   * Show only passages carrying a note.
+   *
+   * A boolean rather than a list because it filters on a field's *presence*,
+   * not on one of its values — a note is prose, and no two are the same thing
+   * to filter by.
+   */
+  noteFilter: boolean
   /** Which character's sheet is open, if any. */
   openCharacter: string | null
   savedAt: number | null
@@ -66,6 +75,7 @@ const state = reactive<State>({
   stateFilter: [],
   settingFilter: [],
   characterFilter: [],
+  noteFilter: false,
   openCharacter: null,
   savedAt: null,
   notice: null,
@@ -712,10 +722,16 @@ export function codesRecode(options: RecodeOptions, settled?: SettledRecode): st
   return null
 }
 
-/* ---------- token ---------- */
+/* ---------- slug ---------- */
 
-export function tokenSet(id: string, value: string): void {
-  commit(M.setToken(state.doc, id, value))
+export function slugSet(id: string, value: string): void {
+  commit(M.setSlug(state.doc, id, value))
+}
+
+/* ---------- note ---------- */
+
+export function noteSet(id: string, value: string): void {
+  commit(M.setNote(state.doc, id, value))
 }
 
 /* ---------- scene: setting and cast ---------- */
@@ -968,6 +984,99 @@ export const gates = computed(() => {
   return lastGates
 })
 
+let lastRunKey = ''
+let lastRuns = new Map<string, string>()
+
+/**
+ * The running slug of every passage a route reaches — the marks along the way
+ * here, with `*` where the routes disagree.
+ *
+ * Outside `layoutStory` for the reason `gates` is: it moves nothing on the
+ * canvas, and it reads the graph layout already retains.
+ *
+ * **The key cannot be `layoutVersion` alone.** `gates` gets away with that
+ * because guards live in bodies and bodies are in `layoutKey`; `slug` and
+ * `isEnding` are deliberately *not*, so copying that pattern verbatim would be
+ * worse than no memo at all — the computed reads `state.doc`, so a slug edit
+ * re-runs this body, and the unchanged key would then hand back the previous
+ * map. Stale *and* recomputed. So the key is `layoutVersion` — which already
+ * stands for id, code, title, levelOffset, body and startNodeId — plus a hash
+ * of exactly the two fields it leaves out.
+ *
+ * The hash costs a pass over the document per keystroke, which is a fraction of
+ * what `layoutKey` already spends hashing every body. What it buys is that a
+ * tag, state, note or setting edit — none of which can change a running slug —
+ * is a clean hit that recomputes nothing and hands back a map with the same
+ * identity, so no card re-renders.
+ */
+/**
+ * The fingerprint and the inputs both slug memos run on, built once.
+ *
+ * They key on the same thing and read the same document, so computing the hash,
+ * the endings set and the mark lookup twice was pure duplicated work on the
+ * canvas's hot path.
+ */
+function slugInputs() {
+  const marks: string[] = []
+  const slugOf = new Map<string, string>()
+  const endings = new Set<string>()
+  for (const n of state.doc.nodes) {
+    marks.push([n.id, n.slug, n.isEnding ? '1' : '0'].join(KEY_SEP))
+    slugOf.set(n.id, n.slug)
+    if (n.isEnding) endings.add(n.id)
+  }
+  const { graph, backEdges } = layout.value
+  return {
+    key: layoutVersion.value + '|' + fnv1a(marks.join('|')),
+    graph,
+    backEdges,
+    endings,
+    slugOf: (id: string) => slugOf.get(id) ?? '',
+  }
+}
+
+export const runningSlugs = computed(() => {
+  const { key, graph, backEdges, endings, slugOf } = slugInputs()
+  if (key === lastRunKey) return lastRuns
+  lastRunKey = key
+
+  // Phantoms are absent from the document, so `slugOf` answers `''` for them —
+  // which is what `runningSlugs` needs to leave them out of the result.
+  lastRuns = slugsOf(graph, { backEdges, startId: state.doc.startNodeId, endings, slugOf })
+  return lastRuns
+})
+
+let lastCardKey = ''
+let lastCardSlugs = new Map<string, string>()
+
+/**
+ * The running slugs the canvas actually draws.
+ *
+ * `runningSlugs` is the truth and stays that way — the search box finds a
+ * passage by the code that reaches it, and the inspector reads it out in full,
+ * whether or not the card shows one. This is the narrower question of what is
+ * worth putting on a card: a passage carrying no mark, with no descendant
+ * carrying one either, spells exactly what its parent spelled and will for the
+ * whole tail below it, so the card says nothing rather than repeating a
+ * finished code down a corridor.
+ *
+ * Memoized on the same fingerprint, and that matters beyond the work saved: the
+ * map goes to every card as a prop, so a stable identity on a hit is what keeps
+ * a tag edit from re-rendering the canvas.
+ */
+export const cardSlugs = computed(() => {
+  const { key, graph, backEdges, endings, slugOf } = slugInputs()
+  if (key === lastCardKey) return lastCardSlugs
+  lastCardKey = key
+
+  const live = marksAhead(graph, { backEdges, endings, slugOf })
+
+  const out = new Map<string, string>()
+  for (const [id, r] of runningSlugs.value) out.set(id, live.has(id) ? r : '')
+  lastCardSlugs = out
+  return lastCardSlugs
+})
+
 /**
  * What the macros say about the selected passage.
  *
@@ -991,17 +1100,36 @@ export const selectedGate = computed<{ gate: StoryNode | null; dead: boolean }>(
  * included so typing a character's name finds their scenes, the note so a passage
  * can be found by what you wrote about it, and the code so a partial code still
  * turns something up when it is not an exact hit.
+ *
+ * The slug is in for the same reason the code is — it is something an author
+ * writes down and later wants to find again.
+ *
+ * The *running* slug is in too, and it is the one that earns its place: a route
+ * code is what a reader quotes back, so it has to be what you can paste in. It
+ * is passed rather than read off the node because it is derived from the whole
+ * graph, not from this passage — see `runningSlugs`.
+ *
+ * That does widen a query, on purpose: searching `R` now finds every passage a
+ * route reaches through one marked `R`, not just that passage. "Everything
+ * downstream of R" is a question worth being able to ask, and the marks are few
+ * and short enough that it costs little. A bare `*` finds every passage whose
+ * route the tool cannot pin down, which is a genuinely useful sweep.
  */
-function searchableText(n: StoryNode): string {
+function searchableText(n: StoryNode, run: string): string {
   return [
     n.title,
     n.code,
-    n.token,
+    n.slug,
+    run,
+    n.note,
     n.body,
     n.setting,
     ...n.characters.map((c) => c.name + ' ' + c.note),
   ].join('\n')
 }
+
+/** Whether any passage is carrying a note, so the filter can offer itself. */
+export const anyNotes = computed(() => state.doc.nodes.some((n) => n.note.length > 0))
 
 /** Which passages currently match the search box and filter chips. */
 export const matches = computed((): Set<string> | null => {
@@ -1011,7 +1139,8 @@ export const matches = computed((): Set<string> | null => {
     state.tagFilter.length > 0 ||
     state.stateFilter.length > 0 ||
     state.settingFilter.length > 0 ||
-    state.characterFilter.length > 0
+    state.characterFilter.length > 0 ||
+    state.noteFilter
   if (!filtering) return null
 
   // A code is an exact handle, so typing one means "this passage" and nothing
@@ -1024,12 +1153,22 @@ export const matches = computed((): Set<string> | null => {
   const raw = state.search.trim()
   const exactCode = raw.length > 0 && state.doc.nodes.some((n) => n.code === raw)
 
+  // Only when something is actually typed: with just a tag or state chip active
+  // nothing consults a running slug, and reading the memo would run the whole
+  // traversal for a value no comparison sees.
+  const runs = q.length > 0 ? runningSlugs.value : null
+
   const out = new Set<string>()
   for (const n of state.doc.nodes) {
     if (q.length > 0) {
-      const hit = exactCode ? n.code === raw : searchableText(n).toLowerCase().includes(q)
+      const hit = exactCode
+        ? n.code === raw
+        : searchableText(n, runs?.get(n.id) ?? '')
+            .toLowerCase()
+            .includes(q)
       if (!hit) continue
     }
+    if (state.noteFilter && n.note.length === 0) continue
     if (state.tagFilter.length > 0 && !state.tagFilter.some((t) => n.tags.includes(t))) continue
     if (state.stateFilter.length > 0 && !state.stateFilter.includes(n.state)) continue
     if (state.settingFilter.length > 0 && !state.settingFilter.includes(n.setting)) continue
@@ -1051,6 +1190,7 @@ export function clearFilters(): void {
   state.stateFilter = []
   state.settingFilter = []
   state.characterFilter = []
+  state.noteFilter = false
 }
 
 export const filtering = computed(
@@ -1061,7 +1201,8 @@ export const filtering = computed(
     state.tagFilter.length > 0 ||
     state.stateFilter.length > 0 ||
     state.settingFilter.length > 0 ||
-    state.characterFilter.length > 0,
+    state.characterFilter.length > 0 ||
+    state.noteFilter,
 )
 
 /** Toggle a value in one of the list filters. */

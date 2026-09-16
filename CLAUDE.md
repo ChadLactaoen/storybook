@@ -51,13 +51,47 @@ the Twine passage names, so Harlowe's `(history:)` already returns exactly that 
 `->` is the delimiter because `setCode` bans it from codes (`LINK_SYNTAX`), so it cannot
 collide the way `-` or `.` could.
 
-`token` is unrelated to any of that. It is a free-text note of at most 30 characters, for
-the author alone: repeatable, optional, read by nothing but `searchableText` and the card
-it sits on. It once carried a grammar so per-passage tokens could concatenate into a route
+`note` is unrelated to any of that. It is free text of any length, for the author alone:
+repeatable, optional, stored exactly as typed (like `StoryDoc.notes`, and for its reasons)
+and read by nothing but `searchableText`. It lives on the inspector's Advanced tab and
+reaches no card. It once carried a grammar so per-passage notes could concatenate into a route
 (`D-LY`); that was removed because the concatenation was noise — in a real story an early
 branch is usually irrelevant to a later one, so the leading characters were something to
-strip rather than context to read. Do not reintroduce structure here; a route's identity
-is the code sequence.
+strip rather than context to read. Do not reintroduce structure **here**: the note is
+prose, and prose is all it is.
+
+`slug` is that concatenation, revived deliberately and somewhere else. Each passage may
+carry up to ten characters; `runningSlugs` (`graph/slugs.ts`) spells out the marks along
+the route to a passage, and writes `*` wherever the routes disagree — `A -> B -> D` reads
+`ABD`, and adding `A -> C -> D` makes it `A*D`. Four things separate it from the grammar
+above, and all four have to hold or it is the same mistake again:
+
+- **Its own field.** The two uses were fighting over one string before, which was most of
+  the problem. Prose is prose; a mark is a mark.
+- **Derived, not authored.** The author writes one mark per passage and never maintains a
+  sequence. The route string is computed and stored nowhere — invariant 1, again.
+- **It marks its own ambiguity.** `D-LY` asserted a single route because it had no way to
+  say otherwise. `A*D` says the middle varies. That is `gates.ts`'s asymmetry pointed at a
+  new problem: a `*` where a literal was possible costs precision, a literal where routes
+  differ states something false. When in doubt, star. `normalizeSlug` strips `*` from what
+  an author types for exactly this reason — a literal one would be indistinguishable from
+  the marker. A run is compared as a list of *marks*, never as characters:
+  `Ab` and `Bb` are two marks sharing a letter, and reading a `b` out of that would invent
+  one nobody wrote. Parentheses are the one structure inside a mark, and their contents are
+  compared separately — `A(a)` against `A(b)` is `A(*)`.
+- **Shown only while it is going somewhere.** A passage with no mark and no marked
+  descendant spells what its parent spelled and always will, so the card says nothing
+  rather than repeating a finished code down a corridor (`marksAhead`, and `cardSlugs` in
+  the store). The code itself is unchanged — search and the inspector still have it.
+- **Display, not identity.** A route's identity is still the code sequence. Running slugs
+  are *allowed to collide*: an unslugged passage contributes nothing, so `A -> B -> C` with
+  only `A` marked gives all three the running slug `A`. That is correct — the running slug
+  names the route so far, not the passage at the end of it, and a reader quotes the pair
+  ("on `P7`, route `A*D`"). Do not add a uniqueness rule or a duplicate lint.
+
+What is *not* rebutted is the growth. A running slug still gets longer with depth and the
+leading characters are still the part you skip — which is why the card shows the tail and
+the inspector shows the whole thing, rather than pretending the problem is gone.
 
 **4. A macro may be read, never executed.** `deriveGraph` sees only `[[...]]`, so a
 link gated by `(if: $v is "x")` looks unconditional and the graph over-reports what is
@@ -101,10 +135,12 @@ dangling on purpose, so it must be captured when the editor takes focus, not re-
 | `src/components/`, `src/composables/` | Presentation; viewport pan/zoom and global shortcuts |
 
 The graph pipeline runs `derive → acyclic → layering → components → layered → ordering /
-crossings → xcoord / tidy → routing` (each a module of that name). Alongside it sit three
+crossings → xcoord / tidy → routing` (each a module of that name). Alongside it sit the
 analyses the pipeline never calls: `paths.ts` counts distinct paths as `BigInt` (both
 forwards from a passage and backwards to one) and owns the one definition of a route edge,
-`gates.ts` reads what the story's `(if:)` macros say about which routes exist, and
+`gates.ts` reads what the story's `(if:)` macros say about which routes exist, `slugs.ts`
+spells out what a reader would have collected on the way to a passage, and
+`recode.ts` reads a numbering off the drawing, and
 `stats.ts` totals the story — words, the routes reaching each ending, and the draft-health
 lint — only when the panel asks. `README.md` has a per-module table.
 
@@ -147,7 +183,7 @@ every inbound edge re-resolves to a phantom.
 `layoutVersion` is a stale-result guard so layout can later move into a Web Worker.
 
 **A recode is planned in `graph/` and applied in `doc/`.** `planRecode` (`graph/recode.ts`)
-is a third analysis the pipeline never calls, like `paths.ts` and `gates.ts`: it reads
+is another of those analyses, like `paths.ts` and `gates.ts`: it reads
 `LayoutResult` and emits strings, so the "mutations never read layout" direction holds.
 `recodeAll` receives a finished id → code map and knows nothing about levels, and `setCode`
 is now its one-entry case — a hand-written loop there used to skip the recoded passage's own
