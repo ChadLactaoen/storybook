@@ -302,6 +302,17 @@ describe('fields outside the layout inputs', () => {
     expect(layoutStory(tokened).nodes).toEqual(layoutStory(plain).nodes)
     expect(layoutStory(tokened).stats.hash).toBe(layoutStory(plain).stats.hash)
   })
+
+  it('lays out identically whatever is marked as an ending', () => {
+    const plain = docFrom(BINARY_3)
+    const marked = docFrom(BINARY_3, { endings: ['LL', 'RR', 'Root'] })
+    // An ending is a claim about the story, not about the drawing. It changes
+    // what `countPaths` reports and nothing else; the guard matters because the
+    // flag is deliberately absent from `layoutKey`, so if it ever did move a
+    // card the canvas would not redraw and the two would silently disagree.
+    expect(layoutStory(marked).nodes).toEqual(layoutStory(plain).nodes)
+    expect(layoutStory(marked).stats.hash).toBe(layoutStory(plain).stats.hash)
+  })
 })
 
 describe('reachability', () => {

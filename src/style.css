@@ -18,6 +18,14 @@
   --draft: #d9a520;
   --done: #2e9e5b;
 
+  /* Structure, not progress, and deliberately the one hue nothing else claims.
+     Green would have been the obvious pick and is the wrong one: --done and
+     --tag-green are both #2e9e5b, so a finished passage carrying a green tag
+     would wear three greens meaning three different things. Teal collides with
+     no tag and no state, so an END edge can only mean an END edge. Not
+     overridden for dark, like the state and tag colours it sits with. */
+  --ending: #0d9488;
+
   --tag-none: #b6bcc5;
   --tag-red: #d94a4a;
   --tag-orange: #e07b39;

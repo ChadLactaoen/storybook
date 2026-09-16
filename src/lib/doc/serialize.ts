@@ -55,6 +55,7 @@ function canonicalNode(n: StoryNode) {
     characters: [...n.characters].sort(compareByName).map(canonicalSceneCharacter),
     code: n.code,
     id: n.id,
+    isEnding: n.isEnding,
     levelOffset: n.levelOffset,
     setting: n.setting,
     state: n.state,
@@ -104,6 +105,7 @@ interface RawNode {
   body?: unknown
   tags?: unknown
   state?: unknown
+  isEnding?: unknown
   levelOffset?: unknown
   level?: unknown
   setting?: unknown
@@ -278,6 +280,11 @@ export function parseDoc(json: string): ParsedDoc {
       body: str(entry.body) ?? '',
       tags: tags.sort(compareStr),
       state: isNodeState(entry.state) ? entry.state : 'TODO',
+      // `=== true` rather than a cast: a hand-edited file may hold anything at
+      // all here, and a file written before endings existed holds nothing. Both
+      // mean the same thing — not an ending — and neither is damage, so
+      // neither earns a warning.
+      isEnding: entry.isEnding === true,
       levelOffset,
       setting: (str(entry.setting) ?? '').trim(),
       code,

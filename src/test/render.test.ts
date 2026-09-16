@@ -59,6 +59,15 @@ function mount() {
   app.mount(host)
 }
 
+/**
+ * Where the canvas is looking. The card layer carries the viewport transform,
+ * so this is how a test sees that something travelled to a passage rather than
+ * merely selecting it.
+ */
+function stageTransform(): string {
+  return host.querySelector<HTMLElement>('.nodes')?.style.transform ?? ''
+}
+
 /** What the editor does: type into the body, then leave the field. */
 function writeBody(nodeId: string, body: string): void {
   const before = store.state.doc.nodes.find((n) => n.id === nodeId)!.body
@@ -1324,6 +1333,149 @@ describe('the recode panel', () => {
     expect(host.querySelector('[aria-label="Recode passages"]')).toBeNull()
     const codes = [...host.querySelectorAll('.code-tag')].map((el) => el.textContent?.trim())
     expect(codes.sort()).toEqual(['1N01', '2N01', '2N02'])
+    expect(problems).toEqual([])
+  })
+})
+
+describe('endings and the stats panel', () => {
+  it('marks a passage as an ending from the inspector and shows it on the card', async () => {
+    mount()
+    store.newStory('Render Check')
+    const startId = store.state.doc.nodes[0]!.id
+    writeBody(startId, '[[Two]]\n[[Three]]')
+    const twoId = store.state.doc.nodes.find((n) => n.title === 'Two')!.id
+    store.select(twoId)
+    await nextTick()
+
+    const box = [...host.querySelectorAll<HTMLInputElement>('.inspector input[type=checkbox]')]
+    expect(box).toHaveLength(1)
+    expect(box[0]!.checked).toBe(false)
+
+    box[0]!.checked = true
+    box[0]!.dispatchEvent(new Event('change'))
+    await nextTick()
+
+    expect(store.state.doc.nodes.find((n) => n.id === twoId)!.isEnding).toBe(true)
+    expect(host.querySelectorAll('.card.ending')).toHaveLength(1)
+    expect(host.querySelector('.card.ending .flag-end')!.textContent).toBe('END')
+    expect(problems).toEqual([])
+  })
+
+  it('opens the stats panel from the toolbar and reports the story', async () => {
+    mount()
+    store.newStory('Render Check')
+    const startId = store.state.doc.nodes[0]!.id
+    writeBody(startId, '[[Two]]\n[[Three]]')
+    const twoId = store.state.doc.nodes.find((n) => n.title === 'Two')!.id
+    store.endingSet(twoId, true)
+    await nextTick()
+
+    // The labelled button, not the pill: this is the discoverable way in.
+    const stats = [...host.querySelectorAll<HTMLButtonElement>('.toolbar .btn')].find(
+      (b) => b.textContent!.trim() === 'Stats',
+    )
+    expect(stats).toBeDefined()
+    stats!.click()
+    await nextTick()
+
+    const sheet = host.querySelector('[aria-label="Story statistics"]')
+    expect(sheet).not.toBeNull()
+    expect(sheet!.textContent).toContain('Story stats')
+    expect(sheet!.textContent).toContain('Endings')
+    expect(sheet!.textContent).toContain('Draft health')
+    // One route of the two reaches the marked ending; the other stops at an
+    // unmarked dead end, so the reconciling row has to be there too.
+    expect(sheet!.textContent).toContain('50%')
+    expect(sheet!.textContent).toContain('Stopping at an unmarked dead end')
+    expect(problems).toEqual([])
+  })
+
+  it('expands a lint group and jumps to the passage it names', async () => {
+    mount()
+    store.newStory('Render Check')
+    writeBody(store.state.doc.nodes[0]!.id, '[[Two]]')
+    await nextTick()
+
+    const before = stageTransform()
+    host.querySelector<HTMLButtonElement>('.pill.paths')!.click()
+    await nextTick()
+
+    const heads = [...host.querySelectorAll<HTMLButtonElement>('.lint-head')]
+    const deadEnds = heads.find((h) => h.textContent!.includes('Dead ends not marked'))!
+    expect(deadEnds.disabled).toBe(false)
+    deadEnds.click()
+    await nextTick()
+
+    const entry = host.querySelector<HTMLButtonElement>('.entries .link')!
+    expect(entry.textContent).toContain('Two')
+    entry.click()
+    await nextTick()
+
+    // Following a row closes the panel and selects what it named.
+    expect(host.querySelector('[aria-label="Story statistics"]')).toBeNull()
+    expect(store.state.selectedId).toBe(store.state.doc.nodes.find((n) => n.title === 'Two')!.id)
+    // Selecting alone is not jumping: the panel closes over whatever the author
+    // was looking at, so the canvas has to travel to the card as well.
+    expect(host.querySelector('.inspector')).not.toBeNull()
+    expect(host.querySelector('.inspector input')).toHaveProperty('value', 'Two')
+    expect(stageTransform()).not.toBe(before)
+    expect(problems).toEqual([])
+  })
+
+  it('jumps to a broken link without opening the inspector on nothing', async () => {
+    mount()
+    store.newStory('Render Check')
+    writeBody(store.state.doc.nodes[0]!.id, '[[Cave]]')
+    store.removePassage(store.state.doc.nodes.find((n) => n.title === 'Cave')!.id)
+    await nextTick()
+
+    const before = stageTransform()
+    host.querySelector<HTMLButtonElement>('.pill.paths')!.click()
+    await nextTick()
+
+    const heads = [...host.querySelectorAll<HTMLButtonElement>('.lint-head')]
+    heads.find((h) => h.textContent!.includes('Broken links'))!.click()
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.entries .link')!.click()
+    await nextTick()
+
+    // A phantom is a card on the canvas, not a passage: selecting it is what
+    // shows the author where the broken link is, and the inspector must stay
+    // shut rather than render an empty column.
+    const phantom = store.layout.value.nodes.find((n) => n.isPhantom)!
+    expect(store.state.selectedId).toBe(phantom.id)
+    expect(host.querySelector('[aria-label="Story statistics"]')).toBeNull()
+    expect(host.querySelector('.inspector')).toBeNull()
+    expect(stageTransform()).not.toBe(before)
+    expect(problems).toEqual([])
+  })
+
+  it('will not stack the stats sheet on the modal the author is typing in', async () => {
+    mount()
+    store.newStory('Render Check')
+    store.select(store.state.doc.nodes[0]!.id)
+    await nextTick()
+
+    const press = async (key: string) => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey: true }))
+      await nextTick()
+    }
+
+    await press('e')
+    expect(host.querySelector('[aria-label="Edit passage body"]')).not.toBeNull()
+
+    // Both listen for Escape on the window, so one press would close the sheet
+    // and the editor underneath it — losing the author's place mid-sentence.
+    await press('/')
+    expect(host.querySelector('[aria-label="Story statistics"]')).toBeNull()
+    expect(host.querySelector('[aria-label="Edit passage body"]')).not.toBeNull()
+
+    // With nothing else up the key still works, and still closes what it opened.
+    await press('e')
+    await press('/')
+    expect(host.querySelector('[aria-label="Story statistics"]')).not.toBeNull()
+    await press('/')
+    expect(host.querySelector('[aria-label="Story statistics"]')).toBeNull()
     expect(problems).toEqual([])
   })
 })

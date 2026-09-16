@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import AppToolbar from './components/AppToolbar.vue'
+import StoryStatsPanel from './components/StoryStatsPanel.vue'
 import MiniMap from './components/MiniMap.vue'
 import NodeInspector from './components/NodeInspector.vue'
 import SearchFilterBar from './components/SearchFilterBar.vue'
@@ -15,6 +16,7 @@ import StoryIndexPanel from './components/StoryIndexPanel.vue'
 import StoryNotes from './components/StoryNotes.vue'
 import { useShortcuts } from './composables/useShortcuts'
 import { useViewport } from './composables/useViewport'
+import { isPhantomId } from './lib/graph/constants'
 import { prefs } from './stores/prefs'
 import * as store from './stores/story'
 import type { NodeState } from './types/story'
@@ -38,6 +40,7 @@ const notesOpen = ref(false)
 const helpOpen = ref(false)
 const settingsOpen = ref(false)
 const recodeOpen = ref(false)
+const statsOpen = ref(false)
 
 /**
  * A full-screen modal owns the keyboard while it is up.
@@ -46,7 +49,9 @@ const recodeOpen = ref(false)
  * catch, so without this `n` would still create a passage and Delete would
  * still delete one, behind the veil and out of sight.
  */
-const modalOpen = computed(() => helpOpen.value || settingsOpen.value || recodeOpen.value)
+const modalOpen = computed(
+  () => helpOpen.value || settingsOpen.value || recodeOpen.value || statsOpen.value,
+)
 
 function toggleIndex() {
   leftPanel.value = leftPanel.value === 'index' ? null : 'index'
@@ -122,6 +127,10 @@ const stateOf = computed(
 const tagsOf = computed(
   () => new Map<string, string[]>(store.state.doc.nodes.map((n) => [n.id, n.tags])),
 )
+/** Phantoms are absent by construction, so the card falls back to `false`. */
+const isEndingOf = computed(
+  () => new Map<string, boolean>(store.state.doc.nodes.map((n) => [n.id, n.isEnding])),
+)
 const tokenOf = computed(
   () => new Map<string, string>(store.state.doc.nodes.map((n) => [n.id, n.token])),
 )
@@ -140,7 +149,10 @@ watch(
 
 function openPassage(id: string) {
   store.select(id)
-  inspectorOpen.value = true
+  // A phantom has a card and a place on the canvas but no passage behind it, so
+  // the inspector would open on nothing. Centring still answers the question
+  // the author asked by clicking a Broken links row: where is it.
+  if (!isPhantomId(id)) inspectorOpen.value = true
   const n = layout.value.nodeById.get(id)
   if (n) vp.centerOn(n.x, n.y)
 }
@@ -187,6 +199,9 @@ useShortcuts({
   toggleCheatSheet,
   toggleNotes,
   openHelp: () => (helpOpen.value = true),
+  openStats: () => (statsOpen.value = !statsOpen.value),
+  statsOpen: () => statsOpen.value,
+  dialogOpen: () => modalOpen.value || (inspector.value?.isExpanded() ?? false),
   modalOpen: () => modalOpen.value,
 })
 
@@ -228,6 +243,7 @@ function dismissNotices() {
       @toggle-index="toggleIndex"
       @toggle-notes="toggleNotes"
       @open-help="openHelp"
+      @open-stats="statsOpen = true"
       @open-settings="settingsOpen = true"
       @open-recode="recodeOpen = true"
     />
@@ -274,6 +290,7 @@ function dismissNotices() {
           :show-levels="showLevels"
           :show-codes="prefs.showCodes"
           :token-of="tokenOf"
+          :is-ending-of="isEndingOf"
           @select="store.applySelect"
           @open="openPassage"
           @create="store.createFromPhantom($event)"
@@ -318,6 +335,7 @@ function dismissNotices() {
     <EditorSettings v-if="settingsOpen" @close="settingsOpen = false" />
 
     <RecodePanel v-if="recodeOpen" @close="recodeOpen = false" />
+    <StoryStatsPanel v-if="statsOpen" @close="statsOpen = false" @open="openPassage" />
 
     <CharacterSheet
       v-if="store.state.openCharacter"

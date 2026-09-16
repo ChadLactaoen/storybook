@@ -62,6 +62,24 @@ export interface StoryNode {
   body: string
   tags: string[]
   state: NodeState
+  /**
+   * The author's claim that a route stops here.
+   *
+   * Never inferred. A passage with no outgoing links is indistinguishable from
+   * one whose links are simply unwritten, so deriving this would flag most of a
+   * draft as finished. The author says so, or it is not so.
+   *
+   * It is a claim about the *story*, not about progress — `state` is the latter.
+   * `countPaths` honours it by treating the passage as a leaf even when links
+   * still leave it, which is what makes the endings a partition of the routes
+   * rather than an overlapping tally. Anything past a marked ending is
+   * unreachable by construction, and `stats.ts` reports it as stranded.
+   *
+   * Deliberately absent from `layoutKey`, `DerivedGraph` and `NodeLayout`: it
+   * moves nothing on the canvas. It reaches the card as a prop map and path
+   * counting as an explicit argument.
+   */
+  isEnding: boolean
   /** 0 or 1. The only persisted layout input. */
   levelOffset: number
   /** Where this passage takes place. Empty when unset. */

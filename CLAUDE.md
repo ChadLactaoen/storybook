@@ -95,15 +95,18 @@ dangling on purpose, so it must be captured when the editor takes focus, not re-
 |---|---|
 | `src/types/story.ts` | The document model, its canonical comparators (`compareStr`, `compareNodes`, `compareByName`) and `emptyCharacter` / `emptyDoc` constructors |
 | `src/lib/doc/` | `mutations.ts` (all document edits), `serialize.ts` (canonical JSON + repairing parse), `storage.ts` (localStorage), `file.ts` (import/export) |
-| `src/lib/graph/` | Deterministic Sugiyama pipeline; `layoutStory` in `layout.ts` is the only entry point the UI touches. `paths.ts` and `gates.ts` are analyses over the derived graph, called by the store rather than by `layoutStory` |
+| `src/lib/graph/` | Deterministic Sugiyama pipeline; `layoutStory` in `layout.ts` is the only entry point the UI touches. `paths.ts`, `gates.ts` and `stats.ts` are analyses over the derived graph, called by the store and the panels rather than by `layoutStory` |
 | `src/lib/harlowe/` | `links.ts` (parse/retarget), `highlight.ts` (macros are highlighted, never executed), `macros.ts` (macros are *read* — spans and names — still never executed) |
 | `src/stores/story.ts` | Module-level singleton store: a `reactive` state object plus exported functions and computeds. Not Pinia |
 | `src/components/`, `src/composables/` | Presentation; viewport pan/zoom and global shortcuts |
 
 The graph pipeline runs `derive → acyclic → layering → components → layered → ordering /
-crossings → xcoord / tidy → routing` (each a module of that name). Alongside it sit two
-analyses the pipeline never calls: `paths.ts` counts distinct paths as `BigInt`, and
-`gates.ts` reads what the story's `(if:)` macros say about which routes exist. `README.md` has a per-module table.
+crossings → xcoord / tidy → routing` (each a module of that name). Alongside it sit three
+analyses the pipeline never calls: `paths.ts` counts distinct paths as `BigInt` (both
+forwards from a passage and backwards to one) and owns the one definition of a route edge,
+`gates.ts` reads what the story's `(if:)` macros say about which routes exist, and
+`stats.ts` totals the story — words, the routes reaching each ending, and the draft-health
+lint — only when the panel asks. `README.md` has a per-module table.
 
 ### Rules that are load-bearing
 
@@ -187,6 +190,62 @@ re-planned from it — that stays true whether the loop converged or ran out of 
 which a re-plan would not. `commit` is handed that same layout rather than paying for
 Sugiyama twice on one button press.
 
+**An ending is authored, and it terminates routes.** `StoryNode.isEnding` is never
+inferred: a passage with no outgoing links is indistinguishable from one whose links are
+simply unwritten, so deriving it would flag most of a draft as finished. `countPaths`
+honours it by treating the passage as a leaf *before* expanding its out-edges, which is
+what makes the endings a partition of the routes rather than an overlapping tally — and
+which is why `stats.ts` reports what sits past one as stranded. The set is an explicit
+parameter, defaulting to empty: a field on `DerivedGraph` would live inside `LayoutResult`,
+which is memoized on `layoutKey`, which deliberately excludes `isEnding` — so it would go
+stale the moment the box was ticked. For the same reason it is absent from `NodeLayout` and
+reaches the card as a prop map from `App.vue`, the way `state` and `token` do. It moves
+nothing on the canvas, and `layout.test.ts` asserts that.
+
+**A link the author wrote and an edge a route can take are different questions.**
+`forwardTargets` in `paths.ts` is the single definition of the second — no self-loop, no
+back edge, nothing leaving a passage marked as an ending — and `backwardSources` mirrors
+it, stopping at the edge's *source* rather than at `id`, which is what makes the two
+directions agree and the endings sum to the total. Everything that counts routes goes
+through them. That predicate was hand-written in six places once, and two copies had
+already drifted; the drift is the whole point, because reading an authored question off
+the route model makes the tool state something false about the prose. `Cave -> Hub` is a
+back edge, so no route takes it, but the author plainly wrote it — which is why `stats.ts`
+keeps `authoredOut` separate and answers the dead-end lint and "links per passage" with
+it. Off the route model a hub-and-spoke story accused its own spokes of being unwritten
+branches, and ticking one Ending changed the link count of passages it never touched.
+Leaving `endings` off `forwardTargets` asks the third question — what does this passage
+link to, *ignoring* the cutoff — which is exactly what the warning about an ending with
+links still leaving it needs.
+
+**A modified key that opens something must check what is already open.** `useShortcuts`
+runs its `mod` branch before the `modalOpen` stand-down on purpose: Cmd Z and the zoom keys
+still belong to the canvas under a veil. `Cmd /` is the exception in that branch, because
+it opens a sheet of its own — and the sheet and the expanded body editor both listen for
+Escape on `window`, so stacking them let one press close the editor the author was writing
+in. It guards on `dialogOpen`, which is `modalOpen` *plus* the expanded editor: that editor
+is deliberately not in `modalOpen`, since it has a textarea `isTyping` already catches, so
+a question about who owns Escape cannot be read off `modalOpen` alone. Stats itself is
+exempt, or the key that opens it could not close it again.
+
+**Revealing a passage is `App.openPassage`, not `store.select`.** Selecting sets the
+anchor; it does not move the canvas or open the sidebar, so a row that offers to jump to a
+passage has to go through `openPassage` — which is why `StoryStatsPanel` emits `open`
+rather than reaching for the store. A phantom is the case that forces the shape: it has a
+card and a place on the canvas but no passage behind it, so centring on it is right and
+opening the inspector on it is not.
+
+**A new document field must cost an existing author nothing.** `parseDoc` ignores the
+incoming `version` entirely and re-stamps `DOC_VERSION`, so there is no version gate to
+fail; every field is read with an inline default and unknown keys are ignored; `loadLocal`
+and `importDoc` both funnel through it. So a new field needs a default in exactly two
+places — `createNode` and the `parseDoc` node literal — and must push **no** warning when
+absent, since a file written before the field existed is not damaged. It must still be
+*emitted* even at its default value, or `parseDoc(serializeDoc(x))` stops round-tripping
+byte-identically. `compat.test.ts` holds this against a save file exported verbatim from
+the build before `isEnding`, asserting the same layout hash and the same route count; do
+not regenerate that fixture, and do not bump the `storybook.story.v1` localStorage key.
+
 **The left gutter is lit through the editor's veil only when nothing in it can move the
 selection.** `--veil-inset` stops `BodyDialog`'s veil at the gutter so the cheat sheet
 stays readable beside an expanded editor; `StoryNotes` qualifies too, since it writes a
@@ -223,6 +282,8 @@ tag, a state, a note, the story's scratchpad) does not re-scan every body in the
 rename cascade, tags, save file), `layering` / `layout` (levels, geometry, determinism,
 paths), `scene` (settings, cast), `profile` (character sheet traits and relations),
 `gates` (inference from conditional links, and its fail-closed conditions),
+`stats` (endings, word counts, the lint, and the line between an authored link and a
+route edge) and `compat` (save files that predate a field),
 `recode` (numbering read off the layout, in both modes),
 `macros` (reading `(set:)` and `(if:)` out of a body),
 `workflow` (end-to-end walkthroughs), `regressions`, and `render` (mounts the real

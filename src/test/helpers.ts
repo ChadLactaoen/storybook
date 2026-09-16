@@ -23,6 +23,8 @@ export function docFrom(
     casts?: Record<string, string[]>
     codes?: Record<string, string>
     tokens?: Record<string, string>
+    /** Titles to mark as endings. */
+    endings?: string[]
   } = {},
 ): StoryDoc {
   const doc = emptyDoc('Test Story')
@@ -41,6 +43,7 @@ export function docFrom(
     body: spec[title]!.map((t) => `[[Go to ${t}|${codeOf.get(t) ?? t}]]`).join('\n'),
     tags: [],
     state: 'TODO' as const,
+    isEnding: opts.endings?.includes(title) ?? false,
     levelOffset: opts.offsets?.[title] ?? 0,
     setting: opts.settings?.[title] ?? '',
     code: codeOf.get(title)!,
