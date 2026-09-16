@@ -68,6 +68,18 @@ function stageTransform(): string {
   return host.querySelector<HTMLElement>('.nodes')?.style.transform ?? ''
 }
 
+/**
+ * Switch the passage sidebar to its Advanced half.
+ *
+ * Level, Mark as Ending, Code and the path counts live there. Keyed on the
+ * `data-tab` attribute rather than the button's text, so a wording change does
+ * not silently stop switching and leave every assertion below testing the Write
+ * tab instead.
+ */
+function openAdvanced(): void {
+  host.querySelector<HTMLButtonElement>('.inspector [data-tab="advanced"]')!.click()
+}
+
 /** What the editor does: type into the body, then leave the field. */
 function writeBody(nodeId: string, body: string): void {
   const before = store.state.doc.nodes.find((n) => n.id === nodeId)!.body
@@ -117,6 +129,9 @@ describe('the app renders', () => {
     const inspector = host.querySelector('.inspector')
     expect(inspector).not.toBeNull()
     expect(inspector!.querySelector<HTMLInputElement>('#passage-title')!.value).toBe('Start')
+
+    openAdvanced()
+    await nextTick()
     expect(inspector!.textContent).toContain('Level 1')
     expect(inspector!.textContent).toContain('Unique paths from here')
     expect(problems).toEqual([])
@@ -533,6 +548,8 @@ describe('the app renders', () => {
     await nextTick()
 
     const inspector = host.querySelector('.inspector')!
+    openAdvanced()
+    await nextTick()
     expect(inspector.querySelector<HTMLInputElement>('#passage-code')!.value).toBe('A3')
 
     setPref('showCodes', true)
@@ -573,7 +590,7 @@ describe('the app renders', () => {
     expect(problems).toEqual([])
   })
 
-  it('puts Title first, then the body, then the Note, with Code tucked away', async () => {
+  it('puts Title first, then the body, then the Note, with Code on the other tab', async () => {
     mount()
     store.newStory('Render Check')
     store.select(store.state.doc.nodes[0]!.id)
@@ -587,11 +604,18 @@ describe('the app renders', () => {
     expect(sections[0]!.querySelector('#passage-title')).not.toBeNull()
     expect(sections[1]!.querySelector('.editor')).not.toBeNull()
     expect(sections[2]!.querySelector('#passage-token')).not.toBeNull()
-    expect(host.querySelector('.inspector details #passage-code')).not.toBeNull()
+
+    // Code is not here at all: it is identity, not prose, so it lives on the
+    // other tab — as a plain field, with nothing left to expand.
+    expect(host.querySelector('.inspector #passage-code')).toBeNull()
+    openAdvanced()
+    await nextTick()
+    expect(host.querySelector('.inspector #passage-code')).not.toBeNull()
+    expect(host.querySelector('.inspector details')).toBeNull()
     expect(problems).toEqual([])
   })
 
-  it('opens the code disclosure when a recode is refused', async () => {
+  it('keeps a refused code on screen until the author deals with it', async () => {
     mount()
     store.newStory('Render Check')
     const first = store.state.doc.nodes[0]!.id
@@ -599,8 +623,10 @@ describe('the app renders', () => {
     store.select(first)
     await nextTick()
 
-    const details = host.querySelector<HTMLDetailsElement>('.inspector details')!
-    expect(details.open).toBe(false)
+    openAdvanced()
+    await nextTick()
+
+    expect(host.querySelector('.inspector .hint-error')).toBeNull()
 
     // Collide with the code the linked passage just took.
     const taken = store.state.doc.nodes.find((n) => n.id !== first)!.code
@@ -610,17 +636,18 @@ describe('the app renders', () => {
     field.dispatchEvent(new Event('blur'))
     await nextTick()
 
-    // A collapsed disclosure would swallow the refusal and leave the author
-    // wondering why the code never changed.
-    expect(details.open).toBe(true)
+    // The field keeps the rejected text and says why. Anything that hid either
+    // would leave the author wondering why the code never changed.
+    expect(host.querySelector<HTMLInputElement>('#passage-code')!.value).toBe(taken)
     expect(host.querySelector('.inspector .hint-error')!.textContent).toContain(taken)
 
-    // And it survives the author's next keystroke. The Note field sits directly
-    // above and commits live, so a watcher on the node object rather than its
-    // id would clear the refusal the moment they typed anything.
+    // And it survives an edit elsewhere in the sidebar. The Note field commits
+    // live on every keystroke, so a watcher on the node object rather than its
+    // id would clear the refusal the moment the author typed anything — which is
+    // why the watcher is keyed on the id. Note now sits on the Write tab, so this
+    // reaches it through the store the way the field itself would.
     store.tokenSet(first, 'a')
     await nextTick()
-    expect(details.open).toBe(true)
     expect(host.querySelector('.inspector .hint-error')!.textContent).toContain(taken)
     expect(problems).toEqual([])
   })
@@ -653,7 +680,6 @@ describe('the app renders', () => {
 
     const warn = host.querySelector('.inspector .hint-warn')
     expect(warn?.textContent).toContain('Nothing reaches this passage')
-
     expect(problems).toEqual([])
   })
 
@@ -1347,6 +1373,9 @@ describe('endings and the stats panel', () => {
     store.select(twoId)
     await nextTick()
 
+    openAdvanced()
+    await nextTick()
+
     const box = [...host.querySelectorAll<HTMLInputElement>('.inspector input[type=checkbox]')]
     expect(box).toHaveLength(1)
     expect(box[0]!.checked).toBe(false)
@@ -1476,6 +1505,182 @@ describe('endings and the stats panel', () => {
     expect(host.querySelector('[aria-label="Story statistics"]')).not.toBeNull()
     await press('/')
     expect(host.querySelector('[aria-label="Story statistics"]')).toBeNull()
+    expect(problems).toEqual([])
+  })
+})
+
+describe('the advanced tab', () => {
+  /** Select the starter story's first passage with the sidebar open. */
+  async function openStart(): Promise<string> {
+    mount()
+    store.newStory('Render Check')
+    const id = store.state.doc.nodes[0]!.id
+    store.select(id)
+    await nextTick()
+    return id
+  }
+
+  it('splits the sidebar, keeping prose on Write and structure on Advanced', async () => {
+    await openStart()
+
+    // Write: the passage as prose. Nothing structural competes for the top of
+    // the column any more.
+    const write = host.querySelector('.inspector .scroll')!
+    expect(write.querySelector('#passage-title')).not.toBeNull()
+    expect(write.querySelector('.editor')).not.toBeNull()
+    expect(write.querySelector('#passage-token')).not.toBeNull()
+    expect(write.querySelector('#passage-code')).toBeNull()
+    expect(write.textContent).not.toContain('Level 1')
+
+    openAdvanced()
+    await nextTick()
+
+    // Advanced: the claims about where this passage sits in the story.
+    const advanced = host.querySelector('.inspector .scroll')!
+    expect(advanced.querySelector('#passage-code')).not.toBeNull()
+    expect(advanced.textContent).toContain('Level 1')
+    expect(advanced.textContent).toContain('Mark as Ending')
+    expect(advanced.querySelector('#passage-title')).toBeNull()
+    expect(advanced.querySelector('.editor')).toBeNull()
+
+    expect(problems).toEqual([])
+  })
+
+  it('switches back to a working body editor', async () => {
+    const id = await openStart()
+    openAdvanced()
+    await nextTick()
+
+    host.querySelector<HTMLButtonElement>('.inspector [data-tab="write"]')!.click()
+    await nextTick()
+
+    const area = host.querySelector<HTMLTextAreaElement>('.inspector textarea.input')!
+    area.value = 'Back at it.'
+    area.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    expect(store.state.doc.nodes.find((n) => n.id === id)!.body).toBe('Back at it.')
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * The one real hazard in the tab split.
+   *
+   * Switching unmounts the editor, and whether a focused-then-removed textarea
+   * fires `blur` is browser- and jsdom-dependent — so a tab that left link
+   * resolution to `@settle` would skip it intermittently, and the passage the
+   * link names would never be created. `pickTab` settles explicitly instead.
+   */
+  it('resolves a link the author leaves by switching tabs', async () => {
+    const id = await openStart()
+    writeBody(id, '')
+    await nextTick()
+
+    const area = host.querySelector<HTMLTextAreaElement>('.inspector textarea.input')!
+    area.value = 'One way out. [[Head north]]'
+    area.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    // Still mid-edit: written, not yet bound.
+    expect(store.state.doc.nodes).toHaveLength(1)
+
+    openAdvanced()
+    await nextTick()
+
+    const made = store.state.doc.nodes.find((n) => n.title === 'Head north')
+    expect(made).toBeDefined()
+    expect(store.state.doc.nodes.find((n) => n.id === id)!.body).toBe(
+      `One way out. [[Head north|${made!.code}]]`,
+    )
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * Every field here commits on blur, and the swap unmounts the one being typed
+   * in. Clicking a `<button>` moves focus on Chrome but not on Safari or Firefox
+   * for macOS, and no browser fires `blur` for a focused element removed from
+   * the DOM — so a draft left to `@blur` survives on some browsers and not
+   * others. jsdom fires no blur here at all, which is exactly the bad case.
+   */
+  it('commits a half-typed title and note rather than dropping them', async () => {
+    const id = await openStart()
+
+    const title = host.querySelector<HTMLInputElement>('#passage-title')!
+    title.value = 'The Long Road'
+    title.dispatchEvent(new Event('input'))
+    const note = host.querySelector<HTMLInputElement>('#passage-token')!
+    note.value = 'needs a rewrite'
+    note.dispatchEvent(new Event('input'))
+
+    openAdvanced()
+    await nextTick()
+
+    const n = store.state.doc.nodes.find((x) => x.id === id)!
+    expect(n.title).toBe('The Long Road')
+    expect(n.token).toBe('needs a rewrite')
+    expect(problems).toEqual([])
+  })
+
+  it('will not carry a refused code away to the other tab', async () => {
+    const id = await openStart()
+    writeBody(id, '[[Two]]')
+    const taken = store.state.doc.nodes.find((n) => n.id !== id)!.code
+    openAdvanced()
+    await nextTick()
+
+    const field = host.querySelector<HTMLInputElement>('#passage-code')!
+    field.value = taken
+    field.dispatchEvent(new Event('input'))
+
+    // Leaving would unmount the field holding the rejected text along with the
+    // only explanation of why the code never changed.
+    host.querySelector<HTMLButtonElement>('.inspector [data-tab="write"]')!.click()
+    await nextTick()
+
+    expect(host.querySelector('.inspector #passage-code')).not.toBeNull()
+    expect(host.querySelector('.inspector .hint-error')!.textContent).toContain(taken)
+    expect(store.state.doc.nodes.find((n) => n.id === id)!.code).not.toBe(taken)
+
+    // Escape reverts the draft, which clears the refusal and unblocks the tab.
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.inspector [data-tab="write"]')!.click()
+    await nextTick()
+    expect(host.querySelector('.inspector #passage-title')).not.toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('opens the expanded editor from either tab', async () => {
+    await openStart()
+    openAdvanced()
+    await nextTick()
+
+    // The dialog is a sibling of both panels, so the tab underneath is
+    // irrelevant to it — and closing returns the author where they were.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', metaKey: true }))
+    await nextTick()
+    expect(host.querySelector('[aria-label="Edit passage body"]')).not.toBeNull()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', metaKey: true }))
+    await nextTick()
+    expect(host.querySelector('[aria-label="Edit passage body"]')).toBeNull()
+    expect(host.querySelector('.inspector #passage-code')).not.toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('stays on the tab the author chose when the selection changes', async () => {
+    const id = await openStart()
+    writeBody(id, '[[Two]]')
+    openAdvanced()
+    await nextTick()
+
+    // Structuring several passages in a row is the workflow; a tab that snapped
+    // back to Write on every click would make it impossible.
+    store.select(store.state.doc.nodes.find((n) => n.title === 'Two')!.id)
+    await nextTick()
+
+    expect(host.querySelector('.inspector #passage-code')).not.toBeNull()
+    expect(host.querySelector('.inspector .editor')).toBeNull()
     expect(problems).toEqual([])
   })
 })

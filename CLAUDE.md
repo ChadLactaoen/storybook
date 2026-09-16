@@ -292,5 +292,7 @@ template-only mistakes, which `vue-tsc` cannot see).
 
 `render` catches template mistakes but not visual affordances: a `<summary>` styled
 `display: flex` loses its native disclosure triangle, and only opening a browser
-showed it. Prefer a real look for anything whose failure mode is "renders, but
+showed it. That disclosure is gone — the Code field it hid now sits plainly on the
+inspector's Advanced tab, and no `<details>` remains in the app — but the lesson it
+paid for stands. Prefer a real look for anything whose failure mode is "renders, but
 reads wrong".
