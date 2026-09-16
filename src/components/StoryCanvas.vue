@@ -22,7 +22,11 @@ const props = defineProps<{
   showLevels: boolean
   /** Draw each passage's code above its card. */
   showCodes: boolean
-  tokenOf: Map<string, string>
+  /**
+   * The running slug per passage, straight from the store's memoized map.
+   * A passage that is absent has no route to it and shows nothing.
+   */
+  runOf: Map<string, string>
   isEndingOf: Map<string, boolean>
 }>()
 
@@ -184,7 +188,7 @@ const levelLabels = computed(() =>
         :node="node"
         :state="stateOf.get(node.id) ?? null"
         :tags="tagsOf.get(node.id) ?? []"
-        :token="tokenOf.get(node.id) ?? ''"
+        :run="runOf.get(node.id) ?? ''"
         :tag-colors="tagColors"
         :selected="inSelection(node.id)"
         :anchor="node.id === selectedId"
@@ -256,14 +260,17 @@ const levelLabels = computed(() =>
 
 .code-tag {
   position: absolute;
-  /* Matches the card's own `.token` line in size and weight: a code above and
-     a note inside say different things about a passage, but neither is the
-     subordinate one, so they should not read as different tiers. */
+  /* Deliberately *not* the card's `.run` line any more. Both are now
+     identifiers — a code above, the route that reaches it inside — and in the
+     same 10px faint mono, stacked two lines apart, they read as one string in
+     two halves. The code is the fixed one, so it keeps the weight and the run
+     line gives up the letter-spacing. */
   font-size: 10px;
   line-height: 1;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
+  font-weight: 600;
   color: var(--text-faint);
   /* Truncated rather than wrapped: a second line would reach into the level
      above. The card's own hover title carries the code in full. */

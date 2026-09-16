@@ -292,15 +292,29 @@ describe('fields outside the layout inputs', () => {
 
   it('lays out identically whatever the notes are', () => {
     const plain = docFrom(BINARY_3)
-    const tokened = {
+    const noted = {
       ...plain,
-      nodes: plain.nodes.map((n, i) => ({ ...n, token: String.fromCharCode(65 + i) })),
+      nodes: plain.nodes.map((n, i) => ({ ...n, note: String.fromCharCode(65 + i) })),
     }
     // A note is authoring metadata: it moves nothing. This is the guard on
     // that — put it in `layoutKey` and every keystroke in the field would
     // re-derive the graph, re-parsing every body in the story.
-    expect(layoutStory(tokened).nodes).toEqual(layoutStory(plain).nodes)
-    expect(layoutStory(tokened).stats.hash).toBe(layoutStory(plain).stats.hash)
+    expect(layoutStory(noted).nodes).toEqual(layoutStory(plain).nodes)
+    expect(layoutStory(noted).stats.hash).toBe(layoutStory(plain).stats.hash)
+  })
+
+  it('lays out identically whatever the slugs are', () => {
+    const plain = docFrom(BINARY_3)
+    const slugged = {
+      ...plain,
+      nodes: plain.nodes.map((n, i) => ({ ...n, slug: String.fromCharCode(65 + i) })),
+    }
+    // The running slug is derived from the graph, never an input to it. This is
+    // the guard against "fixing" a stale running-slug memo by adding `slug` to
+    // `layoutKey`: that would work, and it would re-run Sugiyama on every
+    // keystroke in a ten-character field. The memo takes its own key instead.
+    expect(layoutStory(slugged).nodes).toEqual(layoutStory(plain).nodes)
+    expect(layoutStory(slugged).stats.hash).toBe(layoutStory(plain).stats.hash)
   })
 
   it('lays out identically whatever is marked as an ending', () => {

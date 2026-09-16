@@ -2,7 +2,7 @@ import type { NodeId } from '../../types/story'
 import type { DerivedGraph, EdgeId } from './types'
 
 /** No passage marked as an ending — the shape every call had before endings existed. */
-const NO_ENDINGS: ReadonlySet<NodeId> = new Set()
+export const NO_ENDINGS: ReadonlySet<NodeId> = new Set()
 
 /**
  * The passages a route can reach in one step from `id`.

@@ -12,8 +12,9 @@ import {
   setCode,
   setStoryNotes,
   setTagColor,
-  setToken,
-  TOKEN_MAX,
+  setNote,
+  setSlug,
+  SLUG_MAX,
 } from '../lib/doc/mutations'
 import { parseDoc, serializeDoc } from '../lib/doc/serialize'
 import { deriveGraph } from '../lib/graph/derive'
@@ -23,53 +24,46 @@ import { docFrom, shuffled } from './helpers'
 describe('passage note', () => {
   const doc = docFrom({ One: ['Two'], Two: [] })
   const one = doc.nodes[0]!.id
-  const noteOf = (d: typeof doc) => d.nodes.find((n) => n.id === one)!.token
+  const noteOf = (d: typeof doc) => d.nodes.find((n) => n.id === one)!.note
 
   it('keeps whatever the author typed', () => {
     // Free text now. The field once carried a grammar so that per-passage
-    // tokens could concatenate into a route; the concatenation turned out to
-    // be noise, and what survived needs no grammar at all.
-    expect(noteOf(setToken(doc, one, 'ate dragonfruit'))).toBe('ate dragonfruit')
-    expect(noteOf(setToken(doc, one, '*-?!'))).toBe('*-?!')
+    // notes could concatenate into a route; the concatenation turned out to
+    // be noise, and what survived needs no grammar at all. The concatenation
+    // came back on `slug`, which is a separate field for that reason — see
+    // `normalizeSlug`.
+    expect(noteOf(setNote(doc, one, 'ate dragonfruit'))).toBe('ate dragonfruit')
+    expect(noteOf(setNote(doc, one, '*-?!'))).toBe('*-?!')
   })
 
-  it('trims and caps at the note length', () => {
-    expect(noteOf(setToken(doc, one, '  spaced  '))).toBe('spaced')
-    expect(noteOf(setToken(doc, one, 'a'.repeat(TOKEN_MAX * 2)))).toBe('a'.repeat(TOKEN_MAX))
-  })
-
-  it('normalizes to something it would not change again', () => {
-    // Cut mid-space and a second pass would trim, so a hand-edited file would
-    // not re-serialize to itself — which is the canonical-JSON invariant.
-    const cut = setToken(doc, one, 'a'.repeat(TOKEN_MAX - 1) + ' b')
-    const back = parseDoc(serializeDoc(cut)).doc
-    expect(serializeDoc(back)).toBe(serializeDoc(cut))
-  })
-
-  it('counts characters, not UTF-16 units, so an emoji is never halved', () => {
-    // Exactly at the cap in characters, one over it in UTF-16 units.
-    expect(noteOf(setToken(doc, one, 'a'.repeat(TOKEN_MAX - 1) + '\u{1F525}'))).toBe(
-      'a'.repeat(TOKEN_MAX - 1) + '\u{1F525}',
-    )
+  it('keeps leading and trailing space, and any length at all', () => {
+    // Nothing normalizes on the way out or back in, so the round trip is
+    // identity rather than a fixed point — the same bargain `story notes`
+    // makes. Trailing whitespace is where the caret is parked, and the field is
+    // a textarea now, so trimming would eat it mid-sentence.
+    const typed = '  two things still owed here\n\n  - a better ending\n'
+    const set = setNote(doc, one, typed)
+    expect(noteOf(set)).toBe(typed)
+    expect(parseDoc(serializeDoc(set)).doc.nodes.find((n) => n.id === one)!.note).toBe(typed)
   })
 
   it('returns the identical document for a no-op, protecting the undo stack', () => {
-    const set = setToken(doc, one, 'a note')
-    // Committed on every keystroke, so past the cap every further character
-    // would otherwise push an empty undo entry.
-    expect(setToken(set, one, 'a note ')).toBe(set)
-    expect(setToken(set, one, 'a note!')).not.toBe(set)
+    const set = setNote(doc, one, 'a note')
+    // This matters more without a cap, not less: the cap used to swallow every
+    // keystroke past thirty characters, and now every one of them commits.
+    expect(setNote(set, one, 'a note')).toBe(set)
+    expect(setNote(set, one, 'a note ')).not.toBe(set)
   })
 
   it('survives a save-file round trip', () => {
-    const set = setToken(doc, one, 'turning point')
+    const set = setNote(doc, one, 'turning point')
     const back = parseDoc(serializeDoc(set)).doc
-    expect(back.nodes.find((n) => n.id === one)!.token).toBe('turning point')
+    expect(back.nodes.find((n) => n.id === one)!.note).toBe('turning point')
     expect(serializeDoc(back)).toBe(serializeDoc(set))
   })
 
   it('serializes byte-identically however the nodes are ordered', () => {
-    const set = setToken(setToken(doc, one, 'first'), doc.nodes[1]!.id, 'second')
+    const set = setNote(setNote(doc, one, 'first'), doc.nodes[1]!.id, 'second')
     const base = serializeDoc(set)
     for (let i = 0; i < 4; i++) {
       expect(serializeDoc({ ...set, nodes: shuffled(set.nodes, i + 7) })).toBe(base)
@@ -80,7 +74,80 @@ describe('passage note', () => {
     const { doc: back, warnings } = parseDoc(
       JSON.stringify({ nodes: [{ id: '1', title: 'One', code: 'P1', body: '' }] }),
     )
-    expect(back.nodes[0]!.token).toBe('')
+    expect(back.nodes[0]!.note).toBe('')
+    expect(warnings).toEqual([])
+  })
+})
+
+describe('passage slug', () => {
+  const doc = docFrom({ One: ['Two'], Two: [] })
+  const one = doc.nodes[0]!.id
+  const slugOf = (d: typeof doc) => d.nodes.find((n) => n.id === one)!.slug
+
+  it('keeps whatever the author typed, up to the cap', () => {
+    expect(slugOf(setSlug(doc, one, 'LY'))).toBe('LY')
+    expect(slugOf(setSlug(doc, one, '  spaced  '))).toBe('spaced')
+    expect(slugOf(setSlug(doc, one, 'a'.repeat(SLUG_MAX * 2)))).toBe('a'.repeat(SLUG_MAX))
+  })
+
+  it('strips the asterisk, because that is the ambiguity marker', () => {
+    // A literal `*` in a slug could not be told from the `*` a running slug
+    // writes where routes disagree, and the card would state something false.
+    expect(slugOf(setSlug(doc, one, 'a*b'))).toBe('ab')
+    expect(slugOf(setSlug(doc, one, '***'))).toBe('')
+  })
+
+  it('normalizes to something it would not change again', () => {
+    // Cut mid-space and a second pass would trim, so a hand-edited file would
+    // not re-serialize to itself — which is the canonical-JSON invariant.
+    const cut = setSlug(doc, one, 'a'.repeat(SLUG_MAX - 1) + ' b')
+    const back = parseDoc(serializeDoc(cut)).doc
+    expect(serializeDoc(back)).toBe(serializeDoc(cut))
+  })
+
+  it('counts characters, not UTF-16 units, so an emoji is never halved', () => {
+    // Exactly at the cap in characters, one over it in UTF-16 units.
+    expect(slugOf(setSlug(doc, one, 'a'.repeat(SLUG_MAX - 1) + '\u{1F525}'))).toBe(
+      'a'.repeat(SLUG_MAX - 1) + '\u{1F525}',
+    )
+  })
+
+  it('returns the identical document for a no-op, protecting the undo stack', () => {
+    const set = setSlug(doc, one, 'LY')
+    // Committed on every keystroke, so past the cap every further character
+    // would otherwise push an empty undo entry.
+    expect(setSlug(set, one, 'LY ')).toBe(set)
+    expect(setSlug(set, one, 'LZ')).not.toBe(set)
+  })
+
+  it('does not have to be unique', () => {
+    // A running slug identifies the route so far, not the passage at the end of
+    // it, so two passages sharing a mark is ordinary rather than a conflict —
+    // unlike `code`, which `setCode` refuses to duplicate.
+    const both = setSlug(setSlug(doc, one, 'A'), doc.nodes[1]!.id, 'A')
+    expect(both.nodes.map((n) => n.slug)).toEqual(['A', 'A'])
+  })
+
+  it('survives a save-file round trip', () => {
+    const set = setSlug(doc, one, 'LY')
+    const back = parseDoc(serializeDoc(set)).doc
+    expect(back.nodes.find((n) => n.id === one)!.slug).toBe('LY')
+    expect(serializeDoc(back)).toBe(serializeDoc(set))
+  })
+
+  it('serializes byte-identically however the nodes are ordered', () => {
+    const set = setSlug(setSlug(doc, one, 'A'), doc.nodes[1]!.id, 'B')
+    const base = serializeDoc(set)
+    for (let i = 0; i < 4; i++) {
+      expect(serializeDoc({ ...set, nodes: shuffled(set.nodes, i + 7) })).toBe(base)
+    }
+  })
+
+  it('loads a save file written before slugs existed', () => {
+    const { doc: back, warnings } = parseDoc(
+      JSON.stringify({ nodes: [{ id: '1', title: 'One', code: 'P1', body: '' }] }),
+    )
+    expect(back.nodes[0]!.slug).toBe('')
     expect(warnings).toEqual([])
   })
 })

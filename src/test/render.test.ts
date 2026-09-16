@@ -573,44 +573,117 @@ describe('the app renders', () => {
     expect(problems).toEqual([])
   })
 
-  it('gives the in-card line to the note, and collapses it when there is none', async () => {
+  it('gives the in-card line to the running slug, and collapses it when there is none', async () => {
     mount()
     store.newStory('Render Check')
     const id = store.state.doc.nodes[0]!.id
     writeBody(id, '[[Two]]')
     await nextTick()
 
-    // Nothing noted yet, so no card spends a line on one.
-    expect(host.querySelectorAll('.card .token')).toHaveLength(0)
+    // Nothing marked yet, so no card spends a line on one.
+    expect(host.querySelectorAll('.card .run')).toHaveLength(0)
 
-    store.tokenSet(id, 'turning point')
+    store.slugSet(id, 'A')
     await nextTick()
-    const notes = [...host.querySelectorAll('.card .token')].map((el) => el.textContent)
-    expect(notes).toEqual(['turning point'])
+
+    // One card, not two. The passage downstream really does inherit the mark —
+    // a running slug names the route so far rather than the passage at the end
+    // of it, so both *are* `A` — but nothing below it carries a mark, so its
+    // code is finished and the card stops repeating it.
+    const runs = [...host.querySelectorAll('.card .run')].map((el) => el.textContent)
+    expect(runs).toEqual(['A'])
+
+    const other = store.state.doc.nodes.find((n) => n.id !== id)!.id
+    expect(store.runningSlugs.value.get(other)).toBe('A')
     expect(problems).toEqual([])
   })
 
-  it('puts Title first, then the body, then the Note, with Code on the other tab', async () => {
+  it('drops the in-card line once nothing below carries a mark', async () => {
+    mount()
+    store.newStory('Render Check')
+    const one = store.state.doc.nodes[0]!.id
+    writeBody(one, '[[Two]]')
+    const two = store.state.doc.nodes.find((n) => n.id !== one)!.id
+    writeBody(two, '[[Three]]')
+    const three = store.state.doc.nodes.find((n) => n.id !== one && n.id !== two)!.id
+
+    store.slugSet(one, 'A')
+    await nextTick()
+
+    // Only the marked passage: the two below it would spell `A` for ever.
+    const shown = () =>
+      [...host.querySelectorAll('.card')].map((c) => c.querySelector('.run')?.textContent ?? null)
+    expect(shown()).toEqual(['A', null, null])
+
+    // Mark the far end and the middle is on the way somewhere again.
+    store.slugSet(three, 'Z')
+    await nextTick()
+    expect(shown()).toEqual(['A', 'A', 'AZ'])
+
+    // The code itself never went anywhere — the search box still has it.
+    store.slugSet(three, '')
+    await nextTick()
+    expect(store.runningSlugs.value.get(three)).toBe('A')
+    expect(store.cardSlugs.value.get(three)).toBe('')
+    expect(problems).toEqual([])
+  })
+
+  it('shows the tail of a long running slug, and the whole of it on hover', async () => {
+    mount()
+    store.newStory('Render Check')
+
+    // A chain long enough to outrun the card line, each passage marked.
+    let prev = store.state.doc.nodes[0]!.id
+    store.slugSet(prev, 'aaaa')
+    for (let i = 2; i <= 8; i += 1) {
+      const before = new Set(store.state.doc.nodes.map((n) => n.id))
+      writeBody(prev, `[[Step ${i}]]`)
+      const next = store.state.doc.nodes.find((n) => !before.has(n.id))!.id
+      store.slugSet(next, 'aaaa')
+      prev = next
+    }
+    await nextTick()
+
+    const last = [...host.querySelectorAll('.card .run')].pop()!
+    const full = 'aaaa'.repeat(8)
+    // Cut from the front: the end is where this passage is, and the front is
+    // what every sibling shares.
+    expect(last.textContent).toBe('\u2026' + full.slice(full.length - 21))
+    // The whole run, and the label with it: this line sits over the top of the
+    // card, so its own tooltip replaces the card's for that strip. Dropping the
+    // label there would leave the one region of the card that cannot say which
+    // passage it is — and titles repeat, which is why the card has a tooltip.
+    const title = last.getAttribute('title')!
+    expect(title).toContain(full)
+    expect(title).toContain(last.closest('.card')!.querySelector('.title')!.textContent!)
+    expect(problems).toEqual([])
+  })
+
+  it('puts Title first, then the body, with the Note and the Code on the other tab', async () => {
     mount()
     store.newStory('Render Check')
     store.select(store.state.doc.nodes[0]!.id)
     await nextTick()
 
-    // The body is the work, so it sits as high as a title allows. A note is
-    // about the passage rather than part of it, so it follows. Code is still
-    // editable — links name it — but it is set for you and changing it rewrites
-    // prose, so it sits behind a disclosure further down.
+    // The body is the work, so it sits as high as a title allows. Everything
+    // that is *about* the passage rather than part of it — what it is called to
+    // the links, its mark, your notes on it — is on the other tab.
+    //
+    // Asserted as relative order, not as fixed indices: what this test is about
+    // is the sequence, and a section added or moved above should not have to
+    // renumber a row it says nothing about.
     const sections = [...host.querySelectorAll('.inspector .scroll > section')]
-    expect(sections[0]!.querySelector('#passage-title')).not.toBeNull()
-    expect(sections[1]!.querySelector('.editor')).not.toBeNull()
-    expect(sections[2]!.querySelector('#passage-token')).not.toBeNull()
+    const at = (sel: string) => sections.findIndex((s) => s.querySelector(sel) !== null)
 
-    // Code is not here at all: it is identity, not prose, so it lives on the
-    // other tab — as a plain field, with nothing left to expand.
+    expect(at('#passage-title')).toBe(0)
+    expect(at('.editor')).toBeGreaterThan(at('#passage-title'))
+
     expect(host.querySelector('.inspector #passage-code')).toBeNull()
+    expect(host.querySelector('.inspector #passage-note')).toBeNull()
     openAdvanced()
     await nextTick()
     expect(host.querySelector('.inspector #passage-code')).not.toBeNull()
+    expect(host.querySelector('.inspector #passage-note')).not.toBeNull()
     expect(host.querySelector('.inspector details')).toBeNull()
     expect(problems).toEqual([])
   })
@@ -646,7 +719,7 @@ describe('the app renders', () => {
     // id would clear the refusal the moment the author typed anything — which is
     // why the watcher is keyed on the id. Note now sits on the Write tab, so this
     // reaches it through the store the way the field itself would.
-    store.tokenSet(first, 'a')
+    store.noteSet(first, 'a')
     await nextTick()
     expect(host.querySelector('.inspector .hint-error')!.textContent).toContain(taken)
     expect(problems).toEqual([])
@@ -1541,8 +1614,9 @@ describe('the advanced tab', () => {
     const write = host.querySelector('.inspector .scroll')!
     expect(write.querySelector('#passage-title')).not.toBeNull()
     expect(write.querySelector('.editor')).not.toBeNull()
-    expect(write.querySelector('#passage-token')).not.toBeNull()
+    expect(write.querySelector('#passage-note')).toBeNull()
     expect(write.querySelector('#passage-code')).toBeNull()
+    expect(write.querySelector('#passage-slug')).toBeNull()
     expect(write.textContent).not.toContain('Level 1')
 
     openAdvanced()
@@ -1551,6 +1625,8 @@ describe('the advanced tab', () => {
     // Advanced: the claims about where this passage sits in the story.
     const advanced = host.querySelector('.inspector .scroll')!
     expect(advanced.querySelector('#passage-code')).not.toBeNull()
+    expect(advanced.querySelector('#passage-slug')).not.toBeNull()
+    expect(advanced.querySelector('#passage-note')).not.toBeNull()
     expect(advanced.textContent).toContain('Level 1')
     expect(advanced.textContent).toContain('Mark as Ending')
     expect(advanced.textContent).toContain('Routes from here')
@@ -1616,22 +1692,135 @@ describe('the advanced tab', () => {
    * the DOM — so a draft left to `@blur` survives on some browsers and not
    * others. jsdom fires no blur here at all, which is exactly the bad case.
    */
-  it('commits a half-typed title and note rather than dropping them', async () => {
+  it('commits a half-typed title rather than dropping it', async () => {
     const id = await openStart()
 
     const title = host.querySelector<HTMLInputElement>('#passage-title')!
     title.value = 'The Long Road'
     title.dispatchEvent(new Event('input'))
-    const note = host.querySelector<HTMLInputElement>('#passage-token')!
-    note.value = 'needs a rewrite'
-    note.dispatchEvent(new Event('input'))
 
     openAdvanced()
     await nextTick()
 
+    expect(store.state.doc.nodes.find((x) => x.id === id)!.title).toBe('The Long Road')
+    expect(problems).toEqual([])
+  })
+
+  it('commits a half-typed note and slug rather than dropping them', async () => {
+    const id = await openStart()
+    openAdvanced()
+    await nextTick()
+
+    // Advanced holds three fields that commit on blur — note, slug and code —
+    // and `v-if` unmounts all three at once. Whether a focused-then-removed
+    // field fires `blur` is browser-dependent, so the swap commits them itself.
+    const note = host.querySelector<HTMLTextAreaElement>('#passage-note')!
+    note.value = 'needs a rewrite\n\nand a name for the innkeeper'
+    note.dispatchEvent(new Event('input'))
+    const slug = host.querySelector<HTMLInputElement>('#passage-slug')!
+    slug.value = 'LY'
+    slug.dispatchEvent(new Event('input'))
+
+    host.querySelector<HTMLButtonElement>('.inspector [data-tab="write"]')!.click()
+    await nextTick()
+
     const n = store.state.doc.nodes.find((x) => x.id === id)!
-    expect(n.title).toBe('The Long Road')
-    expect(n.token).toBe('needs a rewrite')
+    expect(n.note).toBe('needs a rewrite\n\nand a name for the innkeeper')
+    expect(n.slug).toBe('LY')
+    expect(problems).toEqual([])
+  })
+
+  it('shows the note filter chip only when a note exists, and filters on it', async () => {
+    mount()
+    store.newStory('Render Check')
+    const id = store.state.doc.nodes[0]!.id
+    writeBody(id, '[[Two]]')
+    await nextTick()
+
+    const chip = () =>
+      [...host.querySelectorAll('.bar .chip')].find((c) => c.textContent?.trim() === 'Note')
+    expect(chip()).toBeUndefined()
+
+    store.noteSet(id, 'the innkeeper still needs a name')
+    await nextTick()
+    expect(chip()).not.toBeUndefined()
+
+    ;(chip() as HTMLButtonElement).click()
+    await nextTick()
+    expect(store.state.noteFilter).toBe(true)
+    expect([...(store.matches.value ?? [])]).toEqual([id])
+    expect(chip()!.getAttribute('aria-pressed')).toBe('true')
+
+    store.clearFilters()
+    await nextTick()
+    expect(problems).toEqual([])
+  })
+
+  it('marks the Advanced tab when the passage is carrying a note', async () => {
+    const id = await openStart()
+    const dot = () => host.querySelector('.inspector [data-tab="advanced"] .dot')
+
+    // Nothing to say yet.
+    expect(dot()).toBeNull()
+
+    store.noteSet(id, 'the innkeeper still needs a name')
+    await nextTick()
+    // The note lives behind this tab now, so the tab is the only thing that can
+    // say it is there without opening it.
+    expect(dot()).not.toBeNull()
+    expect(
+      host.querySelector('.inspector [data-tab="advanced"]')!.getAttribute('title'),
+    ).toContain('note')
+
+    store.noteSet(id, '')
+    await nextTick()
+    expect(dot()).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('reads the route out without contradicting itself', async () => {
+    const id = await openStart()
+    writeBody(id, '[[Two]]')
+    const two = store.state.doc.nodes.find((n) => n.id !== id)!.id
+    store.slugSet(id, 'A')
+    store.slugSet(two, 'B')
+    store.select(two)
+    await nextTick()
+    openAdvanced()
+    await nextTick()
+
+    // The readout is one chain. Written as two, the `v-else` meant for "no
+    // route arrives" paired with the note above it and fired for every marked
+    // passage the canvas was drawing — printing the route and then denying it.
+    const readout = host.querySelector('.readout')!.textContent!.replace(/\s+/g, ' ')
+    expect(readout).toContain('AB')
+    expect(readout).not.toContain('No route')
+    expect(readout).not.toContain('Not on the card')
+    expect(problems).toEqual([])
+  })
+
+  it('lets an undo take the field back with the document', async () => {
+    const id = await openStart()
+    openAdvanced()
+    await nextTick()
+
+    const field = () => host.querySelector<HTMLInputElement>('#passage-slug')!
+    field().value = 'LY'
+    field().dispatchEvent(new Event('input'))
+    field().dispatchEvent(new Event('blur'))
+    await nextTick()
+    expect(store.state.doc.nodes.find((n) => n.id === id)!.slug).toBe('LY')
+
+    store.undo()
+    await nextTick()
+
+    // Keyed on the passage's id rather than the passage, the draft would still
+    // be holding `LY` here — and the next blur would commit it back over the
+    // undo, which is a mutation the author never made.
+    expect(field().value).toBe('')
+    field().dispatchEvent(new Event('blur'))
+    await nextTick()
+    expect(store.state.doc.nodes.find((n) => n.id === id)!.slug).toBe('')
     expect(problems).toEqual([])
   })
 

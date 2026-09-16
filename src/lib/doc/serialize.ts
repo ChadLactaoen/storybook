@@ -16,7 +16,7 @@ import {
   isTagColor,
   orderRoster,
 } from '../../types/story'
-import { codeShape, mintCode, normalizeToken } from './mutations'
+import { codeShape, mintCode, normalizeSlug } from './mutations'
 
 /**
  * Canonical serialization.
@@ -57,11 +57,12 @@ function canonicalNode(n: StoryNode) {
     id: n.id,
     isEnding: n.isEnding,
     levelOffset: n.levelOffset,
+    note: n.note,
     setting: n.setting,
+    slug: n.slug,
     state: n.state,
     tags: [...n.tags].sort(compareStr),
     title: n.title,
-    token: n.token,
   }
 }
 
@@ -109,7 +110,10 @@ interface RawNode {
   levelOffset?: unknown
   level?: unknown
   setting?: unknown
+  slug?: unknown
   code?: unknown
+  note?: unknown
+  /** What `note` was called before it was prose. Read, never written. */
   token?: unknown
   characters?: unknown
 }
@@ -288,7 +292,13 @@ export function parseDoc(json: string): ParsedDoc {
       levelOffset,
       setting: (str(entry.setting) ?? '').trim(),
       code,
-      token: normalizeToken(str(entry.token) ?? ''),
+      slug: normalizeSlug(str(entry.slug) ?? ''),
+      // `token` is what this field was called when it was a 30-character
+      // identifier rather than prose. The fallback is permanent, not a
+      // migration step: it costs one `??` and it means every save file ever
+      // exported keeps loading, with no version gate to fail and no warning to
+      // push — a file written before the rename is not damaged.
+      note: str(entry.note) ?? str(entry.token) ?? '',
       characters: readSceneCharacters(entry.characters),
     }
     nodes.push(node)

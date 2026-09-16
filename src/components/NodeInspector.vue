@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { TOKEN_MAX } from '../lib/doc/mutations'
+import { SLUG_MAX } from '../lib/doc/mutations'
 import { authoredIn, authoredOut, forwardTargets, formatCount, share } from '../lib/graph/paths'
 import { prefs } from '../stores/prefs'
 import * as store from '../stores/story'
@@ -39,11 +39,41 @@ const titleDraft = ref('')
 const codeDraft = ref('')
 const codeError = ref<string | null>(null)
 
+/**
+ * A draft synced on blur, not a computed writing through on every keystroke.
+ *
+ * `setNote` no longer normalizes, so the old argument for this is gone — but
+ * the field is a textarea now, and committing a multi-paragraph note on every
+ * keystroke would push an undo entry per character through a field people write
+ * sentences in. Blur is the right granularity for prose; `titleDraft` and
+ * `codeDraft` are drafts for their own reasons.
+ */
+const noteDraft = ref('')
+
+/**
+ * A draft for the same reason, and one sharper one.
+ *
+ * `normalizeSlug` strips `*`. Written through on every keystroke, typing one
+ * would delete the character as it appeared, leave the document unchanged, and
+ * — on the next character that did commit — snap the caret to the end. On blur
+ * the author sees the `*` they typed quietly dropped, once, which is what the
+ * hint below the field warns them about.
+ */
+const slugDraft = ref('')
+
+// Keyed on the node, not on its id. Every mutation clones, so this re-reads
+// after one — which is the point: keyed on the id, an undo would revert the
+// document while the field went on showing the value that was undone, and the
+// next blur would commit it straight back and quietly defeat the undo. Nothing
+// here is typed into without committing on the way out, so re-reading costs no
+// keystrokes. `codeError` below is the deliberate exception.
 watch(
   node,
   (n) => {
     titleDraft.value = n?.title ?? ''
     codeDraft.value = n?.code ?? ''
+    slugDraft.value = n?.slug ?? ''
+    noteDraft.value = n?.note ?? ''
   },
   { immediate: true },
 )
@@ -60,29 +90,56 @@ watch(
   { immediate: true },
 )
 
-/**
- * A draft synced on blur, not a computed writing through on every keystroke.
- *
- * `setToken` trims, so a write-through would let the input and the document
- * disagree: typing a leading space normalises away, the document does not
- * change, nothing re-renders, and the field keeps showing text the story does
- * not have — until the next character commits and Vue snaps the caret to the
- * end. The same reason `titleDraft` and `codeDraft` exist.
- */
-const tokenDraft = ref('')
-watch(
-  () => node.value?.id,
-  () => {
-    tokenDraft.value = node.value?.token ?? ''
-  },
-  { immediate: true },
-)
 
-function commitToken() {
+function commitNote() {
   if (!node.value) return
-  store.tokenSet(node.value.id, tokenDraft.value)
-  tokenDraft.value = node.value.token
+  store.noteSet(node.value.id, noteDraft.value)
+  noteDraft.value = node.value.note
 }
+
+
+function commitSlug() {
+  if (!node.value) return
+  store.slugSet(node.value.id, slugDraft.value)
+  slugDraft.value = node.value.slug
+}
+
+/**
+ * The whole running slug, untruncated.
+ *
+ * The card shows only the tail, because the line is 161px wide and a running
+ * slug grows with depth. This is the one place the full string is readable, so
+ * it is not abbreviated here whatever its length.
+ *
+ * `null` means no route from the start arrives — a different thing from `''`,
+ * which means the route is real and nothing on it carries a mark yet.
+ */
+const runningSlug = computed<string | null>(() => {
+  const id = node.value?.id
+  if (id === undefined) return null
+  return store.runningSlugs.value.get(id) ?? null
+})
+
+/**
+ * Whether the card is drawing it too.
+ *
+ * It is not, once nothing at or below this passage carries a mark — the code is
+ * finished and the canvas stops repeating it. Saying so here is what keeps a
+ * blank card line from reading as a bug.
+ */
+/**
+ * Whether this passage is carrying a note.
+ *
+ * Read off the document rather than the draft: a half-typed note has not been
+ * committed yet, and the tab should not start claiming one mid-keystroke and
+ * then lose it if the author clears the field again.
+ */
+const hasNote = computed(() => (node.value?.note ?? '').length > 0)
+
+const runOnCard = computed(() => {
+  const id = node.value?.id
+  return id !== undefined && (store.cardSlugs.value.get(id) ?? '') !== ''
+})
 
 const inferred = store.selectedGate
 
@@ -188,9 +245,10 @@ function pickTab(next: 'write' | 'advanced') {
   if (next === tab.value) return
   if (tab.value === 'write') {
     commitTitle()
-    commitToken()
     settleBody()
   } else {
+    commitNote()
+    commitSlug()
     commitCode()
     if (codeError.value !== null) return
   }
@@ -461,9 +519,15 @@ const upBlockedBy = computed(() => store.blockingParent.value)
           :aria-selected="tab === 'advanced'"
           aria-controls="passage-panel"
           data-tab="advanced"
+          :title="hasNote ? 'Advanced \u2014 this passage has a note' : 'Advanced'"
           @click="pickTab('advanced')"
         >
           Advanced
+          <!-- The note moved behind this tab, so the tab has to say it is
+               holding one. Not the accent the State dots take: this sits right
+               beside the active tab, which is accent-coloured, and a purple dot
+               against a purple tab is one nobody sees. -->
+          <span v-if="hasNote" class="dot note-dot" aria-hidden="true" />
         </button>
       </div>
     </div>
@@ -503,28 +567,6 @@ const upBlockedBy = computed(() => store.blockingParent.value)
             @update:model-value="onBodyInput"
             @settle="settleBody"
           />
-        </section>
-
-        <section>
-          <label class="label" for="passage-token">Note</label>
-          <input
-            id="passage-token"
-            v-model="tokenDraft"
-            class="field"
-            :maxlength="TOKEN_MAX"
-            placeholder="A word or two, for you"
-            @blur="commitToken"
-            @keydown.enter.prevent="commitToken"
-          />
-          <p class="hint">
-            A note to yourself &mdash; what this scene is for, what you still owe it, whatever
-            you want to find it by later. It shows on the card in place of the code, and the
-            search box looks at it.
-          </p>
-          <p class="hint">
-            Nothing structural reads it. Notes may repeat, may be blank, and never affect
-            links, levels or export &mdash; that is the Code, over on Advanced.
-          </p>
         </section>
 
         <section>
@@ -684,6 +726,71 @@ const upBlockedBy = computed(() => store.blockingParent.value)
             updates every <code>[[link]]</code> pointing here. Most stories never need to
             &mdash; it is set for you. Codes are also what a reader&rsquo;s story code is
             made of: the ones they visited, in order.
+          </p>
+        </section>
+
+        <section>
+          <label class="label" for="passage-slug">Slug</label>
+          <input
+            id="passage-slug"
+            v-model="slugDraft"
+            class="field"
+            placeholder="Optional"
+            @blur="commitSlug"
+            @keydown.enter.prevent="commitSlug"
+          />
+          <p class="hint">
+            <!-- No `maxlength`: the DOM counts UTF-16 units, so it would stop an
+                 author at five emoji rather than ten characters and let a typed
+                 `*` eat a slot before it is stripped. `normalizeSlug` counts
+                 code points and is the one authority on the cap. -->
+            At most {{ SLUG_MAX }} characters. A mark for this passage in a shareable route code. On its own it means nothing:
+            what a reader quotes is the marks along their route, run together &mdash;
+            <code>A</code> then <code>B</code> then <code>D</code> reads <code>ABD</code>.
+            Slugs need not be unique, and most passages want none.
+          </p>
+          <p class="hint">
+            Brackets group part of a mark, and the parts are compared on their own:
+            two branches marked <code>A(a)</code> and <code>A(b)</code> meet as
+            <code>A(*)</code> rather than losing the <code>A</code> as well.
+          </p>
+          <p class="hint">
+            <code>*</code> is reserved: it is what the card shows where the routes here
+            disagree, so it is dropped from anything you type.
+          </p>
+          <div class="readout">
+            <span class="muted">Route here</span>
+            <template v-if="runningSlug">
+              <strong class="mono">{{ runningSlug }}</strong>
+              <span v-if="!runOnCard" class="sub">
+                Not on the card: nothing from here on carries a slug, so the code is
+                finished and the canvas stops repeating it.
+              </span>
+            </template>
+            <span v-else-if="runningSlug === ''" class="sub">
+              Nothing on the route here carries a slug yet.
+            </span>
+            <span v-else class="sub">No route from the start reaches this passage.</span>
+          </div>
+        </section>
+
+        <section>
+          <label class="label" for="passage-note">Note</label>
+          <!-- A textarea, and deliberately no `.enter.prevent`: on a one-line
+               input that key meant "done", here it would swallow the newline
+               the author is trying to type. Blur still commits, and so does
+               leaving the tab. -->
+          <textarea
+            id="passage-note"
+            v-model="noteDraft"
+            class="field pad"
+            spellcheck="true"
+            placeholder="What this scene is for, what you still owe it, anything you want to find it by later."
+            @blur="commitNote"
+          />
+          <p class="hint">
+            A note to yourself, as long as you like. The search box looks at it; nothing else
+            does. Notes may repeat, may be blank, and never affect links, levels or export.
           </p>
         </section>
 
@@ -935,6 +1042,10 @@ code {
   background: var(--state);
 }
 
+.seg .note-dot {
+  background: var(--note);
+}
+
 .seg.on {
   border-color: var(--state);
   background: color-mix(in srgb, var(--state) 14%, transparent);
@@ -990,6 +1101,31 @@ code {
   font-size: 15px;
 }
 
+/* The card shows the tail of this; here it wraps and shows all of it, however
+   long the story makes it. */
+/* Prose, so it gets room to be prose. Fixed rather than `flex: 1`, because the
+   sections on this tab are `flex: 0 0 auto` and one of them growing would take
+   the scroll away from the rest. */
+.pad {
+  min-height: 120px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.readout {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.readout .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.readout .sub,
 .stat .sub {
   font-size: 10px;
   line-height: 1.3;

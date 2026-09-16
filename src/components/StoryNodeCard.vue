@@ -13,8 +13,12 @@ const props = defineProps<{
   selected: boolean
   /** The one selected card the inspector is describing. */
   anchor: boolean
-  /** The author's note, shown in place of an identifier. Empty for most passages. */
-  token: string
+  /**
+   * The running slug: the marks along the route here, with `*` where the routes
+   * disagree. Empty when nothing on the route carries one, and when no route
+   * reaches this passage at all.
+   */
+  run: string
   isStart: boolean
   /** The author marked this as a place a route stops. Never derived. */
   isEnding: boolean
@@ -39,6 +43,33 @@ function modeOf(e: MouseEvent): SelectMode {
 /** Only coloured tags earn a stripe; `none` tags still show as a chip below. */
 /** Hover text: titles repeat, so the code has to be in here to identify the card. */
 const label = computed(() => nodeLabel(props.node.code, props.node.title))
+
+/**
+ * How much of a running slug the card line holds, in characters.
+ *
+ * 22 at 10px in this mono stack is about 141px against 161px of line, and about
+ * 155px on a plain card's 11px — so the cut lands before the text does, and the
+ * `text-overflow` below stays a backstop rather than the mechanism.
+ */
+const RUN_MAX = 22
+
+/**
+ * The tail of the running slug, not the head.
+ *
+ * A running slug reads backwards: the end is where this passage is, and the
+ * front is the part of the route every sibling shares. CLAUDE.md records that
+ * exactly this — leading characters being something to strip rather than
+ * context to read — is what killed the note's original grammar, so the card
+ * shows the half that is worth reading and the inspector keeps the whole of it.
+ *
+ * Cut by code point: a slug may hold an emoji, and half a surrogate pair is not
+ * a character.
+ */
+const runShown = computed(() => {
+  const chars = [...props.run]
+  if (chars.length <= RUN_MAX) return props.run
+  return '\u2026' + chars.slice(chars.length - (RUN_MAX - 1)).join('')
+})
 
 const stripes = computed(() =>
   props.tags
@@ -87,7 +118,7 @@ const style = computed(() => ({
     <span v-if="!node.isPhantom" class="badge" :title="state ?? 'TODO'" />
 
     <div class="body">
-      <div v-if="token" class="token"><span class="token-text">{{ token }}</span></div>
+      <div v-if="run" class="run" :title="`${label} \u2014 ${run}`">{{ runShown }}</div>
       <div v-if="node.title" class="title">{{ node.title }}</div>
       <div v-else class="title untitled">Untitled</div>
 
@@ -215,11 +246,11 @@ const style = computed(() => ({
 /* A detailed card stacks up to five things inside 96 fixed pixels — stripe,
    note, title, chips, footer — and the footer only appears on a passage that is
    a start, an ending or carries a path count, which is why the squeeze shows up
-   there and nowhere else. Every height in that stack is a constant (the note's
+   there and nowhere else. Every height in that stack is a constant (the run's
    line-height is 1, the title's 1.3, a chip's 1.5, the footer's 1.2 below), so
    the padding and the gaps are the only slack there is; they are tuned to leave
    the fullest legal card a few pixels spare rather than to look generous. Do not
-   restore the roomier 9/6/5 they were before — a note, a title, one coloured tag
+   restore the roomier 9/6/5 they were before — the line above, a title, one coloured tag
    and an END flag together overran the body by 5px, and flex paid for it by
    shaving the bottom border off the chip. */
 .body {
@@ -231,75 +262,38 @@ const style = computed(() => ({
   gap: 3px;
 }
 
-.token {
+.run {
   /* Tight by design: the detailed card has almost no spare height, so this line
      borrows as little of it as possible. */
   font-size: 10px;
   line-height: 1;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
   color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
-  /* The marquee below sizes its travel against this line in `cqw`, which is how
-     the distance stays exact without measuring text in the DOM. */
-  container-type: inline-size;
-}
-
-/* A full-length note is wider than the card can show (161px of line for up to
-   193px of text), so at rest it ellipsises exactly as it did before. The
-   `max-content` width is what makes the marquee's `100%` mean the text's width
-   rather than the line's. */
-.token-text {
-  display: block;
-  width: max-content;
-  max-width: 100%;
-  overflow: hidden;
+  /* A backstop, not the mechanism: `runShown` has already cut the string to
+     something this line fits, and it cut the *front*, which is the end CSS
+     cannot ellipsise without reordering the text. */
   text-overflow: ellipsis;
 }
 
-/* Only the anchor card scrolls: selection can cover a whole subtree, and a
-   hundred cards marqueeing at once is noise rather than information. The anchor
-   is always exactly one card, and it is the one the inspector is describing. */
-.card.anchor .token-text {
-  max-width: none;
-  text-overflow: clip;
-  animation: token-marquee 5s ease-in-out infinite alternate;
-}
+/* The marquee that used to live here is gone with the note it was built for. It
+   scrolled up to 193px of text through a 161px line; a running slug on a deep
+   story is an order of magnitude longer than that, which at its speed is motion
+   rather than reading — and the whole string is a hover away on the card and
+   always present in the inspector. */
 
-/* `100cqw` is the line's width and `100%` the text's own, so the shift is
-   precisely the hidden remainder. The `min` with zero is what keeps a note that
-   already fits from sliding off its own card: for it the shift is positive, and
-   zero wins. */
-@keyframes token-marquee {
-  0%,
-  18% {
-    transform: translateX(0);
-  }
-  82%,
-  100% {
-    transform: translateX(min(0px, calc(100cqw - 100%)));
-  }
-}
-
-/* Motion here is a convenience, never the only way to read a note — the
-   inspector always has the whole of it — so it is safe to simply drop. */
-@media (prefers-reduced-motion: reduce) {
-  .card.anchor .token-text {
-    max-width: 100%;
-    text-overflow: ellipsis;
-    animation: none;
-  }
-}
-
-.card.plain .token {
+.card.plain .run {
   font-size: 11px;
 }
 
-/* Only when a note is actually there: an untokened card has the line collapsed,
-   and the title should take the space rather than clamp for nothing. */
-.card:not(.plain) .token + .title {
+/* Only when the line is actually there: a card with no running slug has it
+   collapsed, and the title should take the space rather than clamp for nothing.
+   Note this now fires on most cards rather than a few — the height budget above
+   is what requires it, and the title losing its second line is the price of the
+   line above it. */
+.card:not(.plain) .run + .title {
   -webkit-line-clamp: 1;
   line-clamp: 1;
 }

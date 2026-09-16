@@ -26,6 +26,16 @@
      overridden for dark, like the state and tag colours it sits with. */
   --ending: #0d9488;
 
+  /* Content, not progress and not structure. Warm on purpose: the only place
+     it is drawn is beside --accent, and a purple dot next to a purple active
+     tab is a dot nobody sees. Orange is the furthest thing in this palette from
+     --accent, and it claims no state (red, amber, green) and no structure
+     (teal). It *is* --tag-orange's value, which is why it must stay out of any
+     row where tag colours appear — a coloured chip beside coloured tag chips
+     would mean two things in one hue, which is the mistake --ending exists to
+     avoid. Not overridden for dark, like the colours it sits with. */
+  --note: #e07b39;
+
   --tag-none: #b6bcc5;
   --tag-red: #d94a4a;
   --tag-orange: #e07b39;

@@ -133,6 +133,7 @@ canonical JSON; **Import** reads it back.
 | `stats` | word count, the routes reaching each ending, and the draft-health lint |
 | `recode` | a numbering read off the drawing, so codes can be renamed to match the tree |
 | `gates` | what conditional links prove: which choice a passage is locked behind, and which branches are dead |
+| `slugs` | the running slug per passage &mdash; the marks along the route here, with `*` where the routes disagree |
 | `macros` *(in `lib/harlowe/`)* | reads `(set:)` and `(if:)` as text, so a guarded link can narrow a trail |
 
 `layoutStory(doc)` is the only entry point the UI touches: pure, synchronous and
