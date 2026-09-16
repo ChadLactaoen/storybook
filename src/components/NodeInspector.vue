@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { TOKEN_MAX } from '../lib/doc/mutations'
-import { forwardTargets, formatCount } from '../lib/graph/paths'
+import { authoredIn, authoredOut, forwardTargets, formatCount, share } from '../lib/graph/paths'
 import { prefs } from '../stores/prefs'
 import * as store from '../stores/story'
 import type { NodeState, TagColor } from '../types/story'
@@ -11,7 +11,7 @@ import CharacterPicker from './CharacterPicker.vue'
 import HarloweEditor from './HarloweEditor.vue'
 import TagPicker from './TagPicker.vue'
 
-const emit = defineEmits<{ close: []; cheatSheet: [] }>()
+const emit = defineEmits<{ close: []; cheatSheet: []; open: [id: string] }>()
 
 const node = store.selected
 const geom = store.selectedLayout
@@ -38,7 +38,6 @@ function confirmDeleteSelection() {
 const titleDraft = ref('')
 const codeDraft = ref('')
 const codeError = ref<string | null>(null)
-const codeOpen = ref(false)
 
 watch(
   node,
@@ -57,16 +56,9 @@ watch(
   () => node.value?.id,
   () => {
     codeError.value = null
-    codeOpen.value = false
   },
   { immediate: true },
 )
-
-// A refusal must never be hidden by a collapsed disclosure: the field would
-// silently keep the old code and the author would have no idea why.
-watch(codeError, (e) => {
-  if (e) codeOpen.value = true
-})
 
 /**
  * A draft synced on blur, not a computed writing through on every keystroke.
@@ -157,16 +149,140 @@ function settleBody() {
   if (node.value && was !== null) store.resolveBody(node.value.id, was)
 }
 
+/* ---------- tabs ---------- */
+
+/**
+ * Which half of the sidebar is showing.
+ *
+ * Global rather than per-passage, and deliberately sticky across a selection
+ * change: the component stays mounted and only `node` swaps, so structuring
+ * several passages in a row keeps the same half in front of you. A per-passage
+ * memory would change the sidebar's shape as you arrow through cards, which is
+ * a mode moving under the author.
+ */
+const tab = ref<'write' | 'advanced'>('write')
+
+/**
+ * Commit everything the swap is about to unmount, *before* it does.
+ *
+ * Every field in this sidebar commits on blur, and a tab switch removes the one
+ * being typed in. Whether that produces a `blur` at all is browser-dependent —
+ * clicking a `<button>` moves focus on Chrome but not on Safari or Firefox for
+ * macOS, and no browser fires `blur` for a focused element removed from the DOM.
+ * So a draft left to `@blur` is discarded on some browsers and not others, and
+ * the next document change resets it from the document, wiping what the author
+ * typed with no trace. Each `commit*` is already a no-op when nothing changed,
+ * so a switch without an edit costs nothing.
+ *
+ * `settleBody` is the one that matters most: it is `resolveLinks`, so skipping
+ * it means a link the author just wrote never binds and the passage it names is
+ * never created.
+ *
+ * A refused code is the one thing that can *stop* the swap. It is only legible
+ * beside the field holding the rejected text, and that field lives here — so
+ * leaving would discard the refusal along with it and the code would silently
+ * keep its old value, which is the very failure the Code disclosure's forced
+ * open used to guard. Escape in the field reverts and unblocks.
+ */
+function pickTab(next: 'write' | 'advanced') {
+  if (next === tab.value) return
+  if (tab.value === 'write') {
+    commitTitle()
+    commitToken()
+    settleBody()
+  } else {
+    commitCode()
+    if (codeError.value !== null) return
+  }
+  tab.value = next
+}
+
 /** What the editor's link picker offers, here and in the pop-out. */
 const targets = computed(() =>
   [...store.state.doc.nodes].sort(compareNodes).map((n) => ({ code: n.code, title: n.title })),
 )
 
-const pathCount = computed(() =>
-  node.value ? formatCount(store.pathsFrom(node.value.id)) : '0',
+/**
+ * Hoisted rather than called from each of its two readers: `pathsFrom` rebuilds
+ * the ending set and runs a fresh BigInt walk every time, and both the tile and
+ * the coverage share below want the same number on every document change.
+ */
+const routesOut = computed(() => (node.value ? store.pathsFrom(node.value.id) : 0n))
+const pathCount = computed(() => formatCount(routesOut.value))
+
+/** Routes the reader can take from the start to get here. */
+const routesIn = computed(() => (node.value ? store.pathsTo(node.value.id) : 0n))
+const routesInCount = computed(() => formatCount(routesIn.value))
+
+/**
+ * How much of the story runs through this passage.
+ *
+ * A complete route is one the reader can actually finish: start to wherever
+ * nothing leads on — a dead end, or an Ending the author marked. The routes
+ * through here are exactly the ways of getting here times the ways of carrying
+ * on, because forward levels increase strictly, so no route can visit this
+ * passage twice and every route through it splits at it exactly once.
+ *
+ * The Ending flag matters to this only in a story that has already been warned
+ * about: a marked Ending with links still leaving it is not a leaf, and routes
+ * stop there anyway. Counting it any other way would have the same tile read
+ * "Routes leading here: 0" and "on 100% of all routes" about one passage.
+ *
+ * `null` when there is no start, or nothing to be a share of.
+ */
+const routeCoverage = computed<number | null>(() => {
+  const id = node.value?.id
+  const startId = store.state.doc.startNodeId
+  if (id === undefined || startId === null) return null
+  const total = store.pathsFrom(startId)
+  if (total <= 0n) return null
+  return share(routesIn.value * routesOut.value, total)
+})
+
+/**
+ * The share as the tile prints it.
+ *
+ * `share` divides in BigInt before rounding, so anything under 0.05% comes back
+ * as exactly `0` — and "Routes leading here: 1" above "on 0% of all routes"
+ * reads as a broken sum rather than a small number. A story only needs a couple
+ * of thousand routes to get there.
+ */
+const coverageLabel = computed<string | null>(() => {
+  const pct = routeCoverage.value
+  if (pct === null) return null
+  return pct === 0 && routesIn.value > 0n ? '<0.1' : String(pct)
+})
+
+/**
+ * Links the author wrote, not edges a route can take — the other question, and
+ * the reason `authoredOut` lives in `paths.ts` beside `forwardTargets` rather
+ * than being spelled out here. Off the route model a hub-and-spoke story
+ * reports its own spokes as unwritten, and ticking one Ending changes the link
+ * count of passages it never touched. The labels say "links" for the same reason.
+ */
+const linksOut = computed(() =>
+  node.value ? authoredOut(store.layout.value.graph, node.value.id) : 0,
+)
+const linksIn = computed(() =>
+  node.value ? authoredIn(store.layout.value.graph, node.value.id) : 0,
 )
 
 const isStart = computed(() => node.value?.id === store.state.doc.startNodeId)
+
+/**
+ * No route from the start arrives here.
+ *
+ * Broader than the gate inference's `dead` flag, and cheaper to explain: it
+ * catches an orphan, a passage stranded behind an Ending, and a branch whose
+ * condition nothing can satisfy, all as the one thing the author actually cares
+ * about. The start passage itself is exempt — routes begin there rather than
+ * reaching it, so `countPathsTo` counts zero and means nothing by it — and so is
+ * every passage when the story has no start at all, where the count is zero for
+ * a reason this sentence would misreport.
+ */
+const unreached = computed(
+  () => routesIn.value === 0n && !isStart.value && store.state.doc.startNodeId !== null,
+)
 
 /**
  * Does a passage marked as an ending still link somewhere?
@@ -321,220 +437,241 @@ const upBlockedBy = computed(() => store.blockingParent.value)
       <button class="btn btn-ghost btn-icon" title="Close" @click="emit('close')">&times;</button>
     </header>
 
-    <div class="scroll">
-      <section>
-        <label class="label" for="passage-title">Title</label>
-        <input
-          id="passage-title"
-          v-model="titleDraft"
-          class="field"
-          @blur="commitTitle"
-          @keydown.enter.prevent="commitTitle"
-          @keydown.esc="revertTitle"
-        />
-        <p class="hint">
-          A name for you. Two passages may share one, and it never affects links.
-        </p>
-      </section>
-
-      <section class="grow">
-        <div class="body-head">
-          <span class="label">Body <span class="muted">Harlowe</span></span>
-          <button class="expand" title="Edit in a larger window" @click="expanded = true">
-            &#10530; Expand
-          </button>
-        </div>
-        <p class="hint above">
-          Link with <code>[[Text|Code]]</code>, <code>[[Text-&gt;Code]]</code> or
-          <code>[[Code&lt;-Text]]</code>. A link to a code that doesn&rsquo;t exist creates the
-          passage when you leave the editor.
-        </p>
-        <HarloweEditor
-          :model-value="body"
-          :targets="targets"
-          @update:model-value="onBodyInput"
-          @settle="settleBody"
-        />
-      </section>
-
-      <section>
-        <label class="label" for="passage-token">Note</label>
-        <input
-          id="passage-token"
-          v-model="tokenDraft"
-          class="field"
-          :maxlength="TOKEN_MAX"
-          placeholder="A word or two, for you"
-          @blur="commitToken"
-          @keydown.enter.prevent="commitToken"
-        />
-        <p v-if="inferred.dead" class="hint hint-warn">
-          Nothing reaches this passage: no route satisfies the condition on the links
-          that point here. Check the spelling of the value against the
-          <code>(set:)</code> that should supply it.
-        </p>
-        <p v-else-if="inferred.gate" class="hint">
-          Only reached after &ldquo;{{ nodeLabel(inferred.gate.code, inferred.gate.title) }}&rdquo;
-          &mdash; read from the <code>(if:)</code> on the links that point here, which no
-          other passage can satisfy.
-        </p>
-        <p class="hint">
-          A note to yourself &mdash; what this scene is for, what you still owe it, whatever
-          you want to find it by later. It shows on the card in place of the code, and the
-          search box looks at it.
-        </p>
-        <p class="hint">
-          Nothing structural reads it. Notes may repeat, may be blank, and never affect
-          links, levels or export &mdash; that is the Code below.
-        </p>
-      </section>
-
-      <section>
-        <span class="label">State</span>
-        <div class="segmented">
-          <button
-            v-for="s in NODE_STATES"
-            :key="s"
-            class="seg"
-            :class="[`state-${s}`, { on: node.state === s }]"
-            @click="store.changeState(node.id, s as NodeState)"
-          >
-            <span class="dot" />
-            {{ s }}
-          </button>
-        </div>
-      </section>
-
-      <section>
-        <span class="label">Tags</span>
-        <TagPicker
-          :tags="node.tags"
-          :all-tags="store.tags.value"
-          :colors="store.tagColors.value"
-          @add="store.tagAdd(node.id, $event)"
-          @remove="store.tagRemove(node.id, $event)"
-          @recolor="(tag: string, color: TagColor) => store.tagRecolor(tag, color)"
-        />
-      </section>
-
-      <section>
-        <label class="label" for="passage-setting">Setting</label>
-        <input
-          id="passage-setting"
-          v-model="setting"
-          class="field"
-          list="known-settings"
-          placeholder="Where does this happen?"
-        />
-        <datalist id="known-settings">
-          <option v-for="value in store.settingSuggestions.value" :key="value" :value="value" />
-        </datalist>
-        <p class="hint">{{ settingHint }}</p>
-      </section>
-
-      <section>
-        <span class="label">Characters</span>
-        <CharacterPicker
-          ref="castPicker"
-          :cast="node.characters"
-          :roster="store.roster.value"
-          @add="store.castAdd(node.id, $event)"
-          @create="castCreate"
-          @remove="store.castRemove(node.id, $event)"
-          @note="castNote"
-        />
-        <p class="hint">{{ castHint }}</p>
+    <!-- `.seg.on` says which half is showing with a border colour and a tint,
+         which is nothing at all to a screen reader. The roles carry it instead:
+         without them the sidebar's whole contents change with no announcement
+         and no way to tell which of two unlabelled buttons is current. -->
+    <div class="tabs">
+      <div class="segmented" role="tablist" aria-label="Passage sections">
         <button
-          v-if="node.characters.length > 0"
-          class="cheat-link"
-          title="Every cast member's traits and relations, side by side"
-          @click="emit('cheatSheet')"
+          class="seg"
+          role="tab"
+          :class="{ on: tab === 'write' }"
+          :aria-selected="tab === 'write'"
+          aria-controls="passage-panel"
+          data-tab="write"
+          @click="pickTab('write')"
         >
-          Character Cheat Sheet
+          Write
         </button>
-      </section>
-
-      <section>
-        <span class="label">Level</span>
-        <div class="level">
-          <div class="level-now">
-            <strong>Level {{ geom.level }}</strong>
-            <span class="muted">{{ pushedDown ? 'nudged down' : 'auto' }}</span>
-          </div>
-          <div class="level-btns">
-            <button
-              class="btn btn-icon"
-              :disabled="!pushedDown"
-              :title="
-                pushedDown
-                  ? `Return to level ${geom.minLevel}`
-                  : upBlockedBy
-                    ? `Blocked by “${nodeLabel(upBlockedBy.code, upBlockedBy.title)}” at level ${upBlockedBy.level}`
-                    : 'Already at the earliest possible level'
-              "
-              @click="setOffset(0)"
-            >
-              &uarr;
-            </button>
-            <button
-              class="btn btn-icon"
-              :disabled="pushedDown"
-              :title="`Push down to level ${geom.minLevel + 1}`"
-              @click="setOffset(1)"
-            >
-              &darr;
-            </button>
-          </div>
-        </div>
-        <p class="hint">
-          <template v-if="pushedDown">
-            Sitting one level below its natural spot ({{ geom.minLevel }}).
-          </template>
-          <template v-else-if="upBlockedBy">
-            Can&rsquo;t move up: &ldquo;{{ nodeLabel(upBlockedBy.code, upBlockedBy.title) }}&rdquo; links here from level
-            {{ upBlockedBy.level }}.
-          </template>
-          <template v-else>
-            Levels come from your links, not from dragging &mdash; a passage sits one level below
-            the deepest passage that links to it.
-          </template>
-        </p>
-      </section>
-
-      <section>
-        <label class="pref">
-          <input
-            type="checkbox"
-            :checked="node.isEnding"
-            @change="store.endingSet(node.id, ($event.target as HTMLInputElement).checked)"
-          />
-          <span class="text">
-            Mark as Ending
-            <span class="hint">
-              Routes stop here. The card gets a teal underline and an END flag, and Story Stats
-              counts how many routes reach it.
-            </span>
-          </span>
-        </label>
-        <p v-if="node.isEnding && endingHasLinks" class="hint hint-warn">
-          Links still lead out of this passage. Nothing past it is reachable any more.
-        </p>
-      </section>
-
-      <section>
-        <details
-          class="disclose"
-          :open="codeOpen"
-          @toggle="codeOpen = ($event.target as HTMLDetailsElement).open"
+        <button
+          class="seg"
+          role="tab"
+          :class="{ on: tab === 'advanced' }"
+          :aria-selected="tab === 'advanced'"
+          aria-controls="passage-panel"
+          data-tab="advanced"
+          @click="pickTab('advanced')"
         >
-          <summary>
-            <span class="label">Code</span>
-            <code class="summary-value">{{ node.code }}</code>
-          </summary>
+          Advanced
+        </button>
+      </div>
+    </div>
+
+    <div id="passage-panel" class="scroll" role="tabpanel">
+      <template v-if="tab === 'write'">
+        <section>
+          <label class="label" for="passage-title">Title</label>
+          <input
+            id="passage-title"
+            v-model="titleDraft"
+            class="field"
+            @blur="commitTitle"
+            @keydown.enter.prevent="commitTitle"
+            @keydown.esc="revertTitle"
+          />
+          <p class="hint">
+            A name for you. Two passages may share one, and it never affects links.
+          </p>
+        </section>
+
+        <section class="grow">
+          <div class="body-head">
+            <span class="label">Body <span class="muted">Harlowe</span></span>
+            <button class="expand" title="Edit in a larger window" @click="expanded = true">
+              &#10530; Expand
+            </button>
+          </div>
+          <p class="hint above">
+            Link with <code>[[Text|Code]]</code>, <code>[[Text-&gt;Code]]</code> or
+            <code>[[Code&lt;-Text]]</code>. A link to a code that doesn&rsquo;t exist creates the
+            passage when you leave the editor.
+          </p>
+          <HarloweEditor
+            :model-value="body"
+            :targets="targets"
+            @update:model-value="onBodyInput"
+            @settle="settleBody"
+          />
+        </section>
+
+        <section>
+          <label class="label" for="passage-token">Note</label>
+          <input
+            id="passage-token"
+            v-model="tokenDraft"
+            class="field"
+            :maxlength="TOKEN_MAX"
+            placeholder="A word or two, for you"
+            @blur="commitToken"
+            @keydown.enter.prevent="commitToken"
+          />
+          <p class="hint">
+            A note to yourself &mdash; what this scene is for, what you still owe it, whatever
+            you want to find it by later. It shows on the card in place of the code, and the
+            search box looks at it.
+          </p>
+          <p class="hint">
+            Nothing structural reads it. Notes may repeat, may be blank, and never affect
+            links, levels or export &mdash; that is the Code, over on Advanced.
+          </p>
+        </section>
+
+        <section>
+          <span class="label">State</span>
+          <div class="segmented">
+            <button
+              v-for="s in NODE_STATES"
+              :key="s"
+              class="seg"
+              :class="[`state-${s}`, { on: node.state === s }]"
+              @click="store.changeState(node.id, s as NodeState)"
+            >
+              <span class="dot" />
+              {{ s }}
+            </button>
+          </div>
+        </section>
+
+        <section>
+          <span class="label">Tags</span>
+          <TagPicker
+            :tags="node.tags"
+            :all-tags="store.tags.value"
+            :colors="store.tagColors.value"
+            @add="store.tagAdd(node.id, $event)"
+            @remove="store.tagRemove(node.id, $event)"
+            @recolor="(tag: string, color: TagColor) => store.tagRecolor(tag, color)"
+          />
+        </section>
+
+        <section>
+          <label class="label" for="passage-setting">Setting</label>
+          <input
+            id="passage-setting"
+            v-model="setting"
+            class="field"
+            list="known-settings"
+            placeholder="Where does this happen?"
+          />
+          <datalist id="known-settings">
+            <option v-for="value in store.settingSuggestions.value" :key="value" :value="value" />
+          </datalist>
+          <p class="hint">{{ settingHint }}</p>
+        </section>
+
+        <section>
+          <span class="label">Characters</span>
+          <CharacterPicker
+            ref="castPicker"
+            :cast="node.characters"
+            :roster="store.roster.value"
+            @add="store.castAdd(node.id, $event)"
+            @create="castCreate"
+            @remove="store.castRemove(node.id, $event)"
+            @note="castNote"
+          />
+          <p class="hint">{{ castHint }}</p>
+          <button
+            v-if="node.characters.length > 0"
+            class="cheat-link"
+            title="Every cast member's traits and relations, side by side"
+            @click="emit('cheatSheet')"
+          >
+            Character Cheat Sheet
+          </button>
+        </section>
+      </template>
+
+      <template v-else>
+        <section>
+          <span class="label">Level</span>
+          <div class="level">
+            <div class="level-now">
+              <strong>Level {{ geom.level }}</strong>
+              <span class="muted">{{ pushedDown ? 'nudged down' : 'auto' }}</span>
+            </div>
+            <div class="level-btns">
+              <button
+                class="btn btn-icon"
+                :disabled="!pushedDown"
+                :title="
+                  pushedDown
+                    ? `Return to level ${geom.minLevel}`
+                    : upBlockedBy
+                      ? `Blocked by “${nodeLabel(upBlockedBy.code, upBlockedBy.title)}” at level ${upBlockedBy.level}`
+                      : 'Already at the earliest possible level'
+                "
+                @click="setOffset(0)"
+              >
+                &uarr;
+              </button>
+              <button
+                class="btn btn-icon"
+                :disabled="pushedDown"
+                :title="`Push down to level ${geom.minLevel + 1}`"
+                @click="setOffset(1)"
+              >
+                &darr;
+              </button>
+            </div>
+          </div>
+          <p class="hint">
+            <template v-if="pushedDown">
+              Sitting one level below its natural spot ({{ geom.minLevel }}).
+            </template>
+            <template v-else-if="upBlockedBy">
+              Can&rsquo;t move up: &ldquo;{{ nodeLabel(upBlockedBy.code, upBlockedBy.title) }}&rdquo; links here from level
+              {{ upBlockedBy.level }}.
+            </template>
+            <template v-else>
+              Levels come from your links, not from dragging &mdash; a passage sits one level below
+              the deepest passage that links to it.
+            </template>
+          </p>
+        </section>
+
+        <section>
+          <label class="pref">
+            <input
+              type="checkbox"
+              :checked="node.isEnding"
+              @change="store.endingSet(node.id, ($event.target as HTMLInputElement).checked)"
+            />
+            <span class="text">
+              Mark as Ending
+              <span class="hint">
+                Routes stop here. The card gets a teal underline and an END flag, and Story Stats
+                counts how many routes reach it.
+              </span>
+            </span>
+          </label>
+          <p v-if="node.isEnding && endingHasLinks" class="hint hint-warn">
+            Links still lead out of this passage. Nothing past it is reachable any more.
+          </p>
+        </section>
+
+        <!-- A plain field, not a disclosure. It sat behind one while it shared a
+             column with the body editor and everything else; on a tab of its own
+             there is nothing to save it from. That also retires the rule the
+             disclosure needed — a refusal can no longer be swallowed by a
+             collapsed section, because the field it belongs to is always on
+             screen whenever it can be produced. -->
+        <section>
+          <label class="label" for="passage-code">Code</label>
           <input
             id="passage-code"
             v-model="codeDraft"
-            aria-label="Code"
             class="field"
             :class="{ 'field-error': codeError }"
             @blur="commitCode"
@@ -548,26 +685,70 @@ const upBlockedBy = computed(() => store.blockingParent.value)
             &mdash; it is set for you. Codes are also what a reader&rsquo;s story code is
             made of: the ones they visited, in order.
           </p>
-        </details>
-      </section>
+        </section>
 
-      <section class="stats">
-        <div class="stat">
-          <span class="muted">Unique paths from here</span>
-          <strong>{{ pathCount }}</strong>
-        </div>
-        <div class="stat">
-          <span class="muted">Order on level</span>
-          <strong>{{ geom.order + 1 }}</strong>
-        </div>
-      </section>
+        <section>
+          <span class="label">Metrics</span>
+          <div class="stats">
+            <div class="stat">
+              <span class="muted">Routes from here</span>
+              <strong>{{ pathCount }}</strong>
+            </div>
+            <div class="stat">
+              <span class="muted">Routes leading here</span>
+              <strong>{{ routesInCount }}</strong>
+              <span v-if="coverageLabel !== null" class="sub">
+                on {{ coverageLabel }}% of all routes
+              </span>
+            </div>
+            <div class="stat">
+              <span class="muted">Links out</span>
+              <strong>{{ linksOut }}</strong>
+            </div>
+            <div class="stat">
+              <span class="muted">Links in</span>
+              <strong>{{ linksIn }}</strong>
+            </div>
+            <div class="stat">
+              <span class="muted">Order on level</span>
+              <strong>{{ geom.order + 1 }}</strong>
+            </div>
+          </div>
+
+          <!-- The one home for what the macros say about arriving here. It read
+               on the Note field too until the two wordings started to differ;
+               one inference stated two ways is one of them going stale. -->
+          <p v-if="unreached" class="hint hint-warn">
+            No route from the start reaches this passage. Nothing links here, or everything
+            that does sits behind an Ending.
+          </p>
+          <p v-else-if="inferred.dead" class="hint hint-warn">
+            Nothing reaches this passage: no route satisfies the condition on the links
+            that point here. Check the spelling of the value against the
+            <code>(set:)</code> that should supply it.
+          </p>
+          <p v-else-if="inferred.gate" class="hint">
+            Every route here passes
+            <button class="jump" @click="emit('open', inferred.gate.id)">
+              {{ nodeLabel(inferred.gate.code, inferred.gate.title) }}
+            </button>
+            &mdash; read from the <code>(if:)</code> on the links that point here, which no
+            other passage can satisfy.
+          </p>
+          <p class="hint">
+            A route runs from the start until nothing leads on &mdash; a dead end, or an
+            Ending you marked. Links are what you wrote, counted as written, so the two
+            disagree wherever a link loops back or leaves an Ending.
+          </p>
+        </section>
+      </template>
     </div>
 
     <footer>
       <button
         class="btn"
         :disabled="isStart"
-        :title="isStart ? 'Path counts are measured from here' : 'Measure path counts from this passage'"
+        :title="isStart ? 'Route counts are measured from here' : 'Measure route counts from this passage'"
         @click="store.makeStart(node.id)"
       >
         {{ isStart ? 'This is the start' : 'Make start' }}
@@ -601,47 +782,6 @@ const upBlockedBy = computed(() => store.blockingParent.value)
 </template>
 
 <style scoped>
-.disclose > summary {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  cursor: pointer;
-  /* `display: flex` suppresses the native marker, and without one the row reads
-     as a plain label rather than something that opens. */
-  list-style: none;
-}
-
-.disclose > summary::-webkit-details-marker {
-  display: none;
-}
-
-.disclose > summary::before {
-  content: '\25B8';
-  font-size: 9px;
-  line-height: 1.4;
-  color: var(--text-faint);
-}
-
-.disclose[open] > summary::before {
-  content: '\25BE';
-}
-
-.disclose > summary .label {
-  display: inline;
-}
-
-.disclose > summary .summary-value {
-  font-size: 11px;
-  color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.disclose[open] > summary {
-  margin-bottom: 6px;
-}
-
 .inspector {
   display: flex;
   flex-direction: column;
@@ -667,6 +807,23 @@ header {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-faint);
+}
+
+/* Reuses `.seg`, the way RecodePanel's mode switch does. `--state` is set on
+   the container rather than by a `state-*` class on each button, which is what
+   lets `.seg.on` paint without borrowing the State control's colour vocabulary;
+   scoping it to `.tabs` leaves the State segmented control below to keep its own
+   per-button `--state`. */
+.tabs {
+  display: flex;
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs .segmented {
+  --state: var(--accent);
+  flex: 1;
 }
 
 .scroll {
@@ -807,12 +964,12 @@ code {
 }
 
 .stats {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
 .stat {
-  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -823,8 +980,34 @@ code {
   font-size: 11px;
 }
 
+/* Five tiles in two columns leave the last one alone on its row; spanning it
+   reads as the layout meaning it rather than running out. */
+.stat:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
 .stat strong {
   font-size: 15px;
+}
+
+.stat .sub {
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--text-faint);
+}
+
+/* A jump inside running prose, so it is styled as a link rather than a control
+   — same treatment as `.cheat-link` above, which is the other one of these. */
+.jump {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+}
+
+.jump:hover {
+  text-decoration: underline;
 }
 
 footer {

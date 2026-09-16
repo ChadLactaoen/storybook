@@ -59,8 +59,17 @@ function plural(n: number, one: string, many = one + 's'): string {
   return `${n} ${n === 1 ? one : many}`
 }
 
-/** Path counts are BigInt-backed strings, so pluralise on the formatted text. */
-const pathsLabel = computed(() => `${totalPaths.value} ${totalPaths.value === '1' ? 'path' : 'paths'}`)
+/**
+ * Route counts are BigInt-backed strings, so pluralise on the formatted text.
+ *
+ * "Routes", not "paths": the inspector's tiles and the stats panel both call
+ * this quantity a route, and this pill renders the identical
+ * `pathsFrom(start)`. Three names for one number gave the author no way to see
+ * they were the same thing.
+ */
+const pathsLabel = computed(
+  () => `${totalPaths.value} ${totalPaths.value === '1' ? 'route' : 'routes'}`,
+)
 
 const fileInput = ref<HTMLInputElement | null>(null)
 

@@ -325,6 +325,7 @@ function dismissNotices() {
         ref="inspector"
         @close="inspectorOpen = false"
         @cheat-sheet="leftPanel = 'cheat'"
+        @open="openPassage"
       />
     </main>
 

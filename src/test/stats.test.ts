@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { findBackEdges } from '../lib/graph/acyclic'
 import { deriveGraph } from '../lib/graph/derive'
 import { layoutStory } from '../lib/graph/layout'
-import { countPaths, countPathsTo } from '../lib/graph/paths'
+import { countPaths, countPathsTo, countPathsToAll, share } from '../lib/graph/paths'
 import { computeStoryStats, wordCount } from '../lib/graph/stats'
 import type { StoryDoc } from '../types/story'
 import { docFrom } from './helpers'
@@ -95,6 +95,61 @@ describe('the endings table', () => {
       { start: 'A', endings: ['Z', 'Y'] },
     )
     expect(stats(doc).endings.rows.map((r) => r.title)).toEqual(['Z', 'Y'])
+  })
+})
+
+describe('countPathsToAll', () => {
+  /** The property that lets the two coexist: one is the other's one-entry case. */
+  function agrees(doc: StoryDoc) {
+    const g = deriveGraph(doc)
+    const { backEdges } = findBackEdges(g, doc.startNodeId)
+    const endings = new Set(doc.nodes.filter((n) => n.isEnding).map((n) => n.id))
+    const all = countPathsToAll(g, backEdges, doc.startNodeId, endings)
+    // Phantoms included: `g.ids` is every node the graph knows, real or not.
+    return g.ids.every(
+      (id) => all.get(id) === countPathsTo(g, backEdges, id, doc.startNodeId, endings),
+    )
+  }
+
+  it('agrees with countPathsTo on every passage', () => {
+    expect(agrees(docFrom({ A: ['B', 'C'], B: ['D'], C: ['D'], D: [] }))).toBe(true)
+    expect(agrees(docFrom({ A: ['B'], B: [], Orphan: [] }))).toBe(true)
+    expect(agrees(docFrom({ Hub: ['Forest'], Forest: ['Cave'], Cave: ['Hub'] }))).toBe(true)
+    expect(agrees(docFrom({ A: ['B', 'Ghost'], B: [] }))).toBe(true)
+    expect(agrees(docFrom({ A: ['B'], B: ['C'], C: [] }, { endings: ['B'] }))).toBe(true)
+  })
+
+  it('answers for phantoms too, so the shares on a level still sum', () => {
+    const doc = docFrom({ A: ['B', 'Ghost'], B: [] })
+    const g = deriveGraph(doc)
+    const { backEdges } = findBackEdges(g, doc.startNodeId)
+    const all = countPathsToAll(g, backEdges, doc.startNodeId)
+    const ghost = g.ids.find((id) => g.codeOf.get(id) === 'Ghost')!
+    expect(all.get(ghost)).toBe(1n)
+  })
+
+  it('reports every passage as zero when the story has no start', () => {
+    const doc = { ...docFrom({ A: ['B'], B: [] }), startNodeId: null }
+    const g = deriveGraph(doc)
+    const { backEdges } = findBackEdges(g, doc.startNodeId)
+    const all = countPathsToAll(g, backEdges, doc.startNodeId)
+    expect([...all.values()].every((v) => v === 0n)).toBe(true)
+  })
+})
+
+describe('share', () => {
+  it('rounds to a tenth rather than truncating', () => {
+    expect(share(2n, 3n)).toBe(66.7)
+    expect(share(1n, 3n)).toBe(33.3)
+  })
+
+  it('stays honest past what a double can hold', () => {
+    const huge = 10n ** 40n
+    expect(share(huge, huge * 4n)).toBe(25)
+  })
+
+  it('reports nothing rather than dividing by zero', () => {
+    expect(share(0n, 0n)).toBe(0)
   })
 })
 
