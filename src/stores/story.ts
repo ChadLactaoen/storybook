@@ -11,7 +11,7 @@ import { isPhantomId } from '../lib/graph/constants'
 import { layoutStory } from '../lib/graph/layout'
 import { gatesOf } from '../lib/graph/gates'
 import type { GateEntry } from '../lib/graph/gates'
-import { countPaths } from '../lib/graph/paths'
+import { countPaths, countPathsTo } from '../lib/graph/paths'
 import { drawingOrder, planRecode } from '../lib/graph/recode'
 import type { RecodeEntry, RecodeOptions } from '../lib/graph/recode'
 import { reachableFrom, strandedBy } from '../lib/graph/reachability'
@@ -890,6 +890,20 @@ export const blockingParent = computed(() => {
 export function pathsFrom(id: string): bigint {
   const { graph, backEdges } = layout.value
   return countPaths(graph, backEdges, id, endingIds(state.doc))
+}
+
+/**
+ * The mirror of `pathsFrom`: routes that run from the start down to `id`.
+ *
+ * Safe for the same reason, and reusing the same retained graph. It does not
+ * mirror `pathsFrom` exactly, and should not: `countPathsTo` counts a passage
+ * nothing links to as zero rather than one, because that is a passage no reader
+ * reaches rather than a route of length one. Zero is a finding worth showing,
+ * not an empty state.
+ */
+export function pathsTo(id: string): bigint {
+  const { graph, backEdges } = layout.value
+  return countPathsTo(graph, backEdges, id, state.doc.startNodeId, endingIds(state.doc))
 }
 
 /**

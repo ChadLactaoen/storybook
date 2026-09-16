@@ -35,6 +35,25 @@ export function forwardTargets(
 }
 
 /**
+ * How many links the author wrote out of, and into, `id`.
+ *
+ * The *other* question from `forwardTargets` — every `[[...]]` as written, self
+ * loops, back edges and links out of an Ending included. It is one expression,
+ * which is exactly why it belongs here: this predicate was hand-written in six
+ * places once and two copies had drifted, and reading an authored question off
+ * the route model is what made the tool state something false about the prose.
+ * One home for each question, so the inspector's tile and the stats panel's
+ * lint cannot disagree.
+ */
+export function authoredOut(g: DerivedGraph, id: NodeId): number {
+  return (g.outAdj.get(id) ?? []).length
+}
+
+export function authoredIn(g: DerivedGraph, id: NodeId): number {
+  return (g.inAdj.get(id) ?? []).length
+}
+
+/**
  * The mirror of `forwardTargets`: the passages a route can arrive from.
  *
  * The asymmetry is deliberate. Forwards, an ending stops the walk at itself;
@@ -130,7 +149,49 @@ export function countPathsTo(
   startId: NodeId | null,
   endings: ReadonlySet<NodeId> = NO_ENDINGS,
 ): bigint {
+  // The one-entry case of `countPathsToAll`, the way `retargetLinks` is the
+  // one-entry case of `remapLinks`: the recurrence lives in one place, so the
+  // single-passage question and the whole-story one cannot drift apart.
   if (startId === null) return 0n
+  return reverseCounter(g, backEdges, startId, endings)(targetId)
+}
+
+/**
+ * `countPathsTo` for every passage at once, sharing a single memo.
+ *
+ * Asking per passage costs a full walk each time — O(V) walks of O(V+E) — which
+ * is what the story stats did, and what a per-level share in the inspector would
+ * do on every keystroke. One shared memo answers the whole story in one pass.
+ *
+ * Ids are visited in `g.ids` order, which is canonical, so the map is built the
+ * same way every time. That matters beyond tidiness: the cycle guard below
+ * returns `0n` for a node already on the stack, so were `backEdges` ever to
+ * leave a cycle behind, a shared memo could otherwise record a value that
+ * depended on which passage was asked about first.
+ */
+export function countPathsToAll(
+  g: DerivedGraph,
+  backEdges: ReadonlySet<EdgeId>,
+  startId: NodeId | null,
+  endings: ReadonlySet<NodeId> = NO_ENDINGS,
+): Map<NodeId, bigint> {
+  const out = new Map<NodeId, bigint>()
+  if (startId === null) {
+    for (const id of g.ids) out.set(id, 0n)
+    return out
+  }
+  const count = reverseCounter(g, backEdges, startId, endings)
+  for (const id of g.ids) out.set(id, count(id))
+  return out
+}
+
+/** The shared recurrence behind both counters above. */
+function reverseCounter(
+  g: DerivedGraph,
+  backEdges: ReadonlySet<EdgeId>,
+  startId: NodeId,
+  endings: ReadonlySet<NodeId>,
+): (id: NodeId) => bigint {
   const memo = new Map<NodeId, bigint>()
   const visiting = new Set<NodeId>()
 
@@ -149,7 +210,24 @@ export function countPathsTo(
     return total
   }
 
-  return walk(targetId)
+  return walk
+}
+
+/**
+ * `n` as a percentage of `total`, to one decimal place.
+ *
+ * The division happens in BigInt so a story with more routes than a double can
+ * hold still reports an honest share; only the small result is narrowed. BigInt
+ * division truncates, so the tenth is rounded afterwards — otherwise two of
+ * three routes reads as `66.6%`, which looks like a rounding bug rather than a
+ * third. One decimal, not two: `66.66%` claims a precision nobody needs.
+ *
+ * Lives here beside `formatCount` rather than in `stats.ts`, because presenting
+ * a BigInt route count is this module's job and two callers now ask for it.
+ */
+export function share(n: bigint, total: bigint): number {
+  if (total <= 0n) return 0
+  return Math.round(Number((n * 10000n) / total) / 10) / 10
 }
 
 /** Format a possibly-enormous count for display. */

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { TOKEN_MAX } from '../lib/doc/mutations'
-import { forwardTargets, formatCount } from '../lib/graph/paths'
+import { authoredIn, authoredOut, forwardTargets, formatCount, share } from '../lib/graph/paths'
 import { prefs } from '../stores/prefs'
 import * as store from '../stores/story'
 import type { NodeState, TagColor } from '../types/story'
@@ -11,7 +11,7 @@ import CharacterPicker from './CharacterPicker.vue'
 import HarloweEditor from './HarloweEditor.vue'
 import TagPicker from './TagPicker.vue'
 
-const emit = defineEmits<{ close: []; cheatSheet: [] }>()
+const emit = defineEmits<{ close: []; cheatSheet: []; open: [id: string] }>()
 
 const node = store.selected
 const geom = store.selectedLayout
@@ -202,11 +202,87 @@ const targets = computed(() =>
   [...store.state.doc.nodes].sort(compareNodes).map((n) => ({ code: n.code, title: n.title })),
 )
 
-const pathCount = computed(() =>
-  node.value ? formatCount(store.pathsFrom(node.value.id)) : '0',
+/**
+ * Hoisted rather than called from each of its two readers: `pathsFrom` rebuilds
+ * the ending set and runs a fresh BigInt walk every time, and both the tile and
+ * the coverage share below want the same number on every document change.
+ */
+const routesOut = computed(() => (node.value ? store.pathsFrom(node.value.id) : 0n))
+const pathCount = computed(() => formatCount(routesOut.value))
+
+/** Routes the reader can take from the start to get here. */
+const routesIn = computed(() => (node.value ? store.pathsTo(node.value.id) : 0n))
+const routesInCount = computed(() => formatCount(routesIn.value))
+
+/**
+ * How much of the story runs through this passage.
+ *
+ * A complete route is one the reader can actually finish: start to wherever
+ * nothing leads on — a dead end, or an Ending the author marked. The routes
+ * through here are exactly the ways of getting here times the ways of carrying
+ * on, because forward levels increase strictly, so no route can visit this
+ * passage twice and every route through it splits at it exactly once.
+ *
+ * The Ending flag matters to this only in a story that has already been warned
+ * about: a marked Ending with links still leaving it is not a leaf, and routes
+ * stop there anyway. Counting it any other way would have the same tile read
+ * "Routes leading here: 0" and "on 100% of all routes" about one passage.
+ *
+ * `null` when there is no start, or nothing to be a share of.
+ */
+const routeCoverage = computed<number | null>(() => {
+  const id = node.value?.id
+  const startId = store.state.doc.startNodeId
+  if (id === undefined || startId === null) return null
+  const total = store.pathsFrom(startId)
+  if (total <= 0n) return null
+  return share(routesIn.value * routesOut.value, total)
+})
+
+/**
+ * The share as the tile prints it.
+ *
+ * `share` divides in BigInt before rounding, so anything under 0.05% comes back
+ * as exactly `0` — and "Routes leading here: 1" above "on 0% of all routes"
+ * reads as a broken sum rather than a small number. A story only needs a couple
+ * of thousand routes to get there.
+ */
+const coverageLabel = computed<string | null>(() => {
+  const pct = routeCoverage.value
+  if (pct === null) return null
+  return pct === 0 && routesIn.value > 0n ? '<0.1' : String(pct)
+})
+
+/**
+ * Links the author wrote, not edges a route can take — the other question, and
+ * the reason `authoredOut` lives in `paths.ts` beside `forwardTargets` rather
+ * than being spelled out here. Off the route model a hub-and-spoke story
+ * reports its own spokes as unwritten, and ticking one Ending changes the link
+ * count of passages it never touched. The labels say "links" for the same reason.
+ */
+const linksOut = computed(() =>
+  node.value ? authoredOut(store.layout.value.graph, node.value.id) : 0,
+)
+const linksIn = computed(() =>
+  node.value ? authoredIn(store.layout.value.graph, node.value.id) : 0,
 )
 
 const isStart = computed(() => node.value?.id === store.state.doc.startNodeId)
+
+/**
+ * No route from the start arrives here.
+ *
+ * Broader than the gate inference's `dead` flag, and cheaper to explain: it
+ * catches an orphan, a passage stranded behind an Ending, and a branch whose
+ * condition nothing can satisfy, all as the one thing the author actually cares
+ * about. The start passage itself is exempt — routes begin there rather than
+ * reaching it, so `countPathsTo` counts zero and means nothing by it — and so is
+ * every passage when the story has no start at all, where the count is zero for
+ * a reason this sentence would misreport.
+ */
+const unreached = computed(
+  () => routesIn.value === 0n && !isStart.value && store.state.doc.startNodeId !== null,
+)
 
 /**
  * Does a passage marked as an ending still link somewhere?
@@ -440,16 +516,6 @@ const upBlockedBy = computed(() => store.blockingParent.value)
             @blur="commitToken"
             @keydown.enter.prevent="commitToken"
           />
-          <p v-if="inferred.dead" class="hint hint-warn">
-            Nothing reaches this passage: no route satisfies the condition on the links
-            that point here. Check the spelling of the value against the
-            <code>(set:)</code> that should supply it.
-          </p>
-          <p v-else-if="inferred.gate" class="hint">
-            Only reached after &ldquo;{{ nodeLabel(inferred.gate.code, inferred.gate.title) }}&rdquo;
-            &mdash; read from the <code>(if:)</code> on the links that point here, which no
-            other passage can satisfy.
-          </p>
           <p class="hint">
             A note to yourself &mdash; what this scene is for, what you still owe it, whatever
             you want to find it by later. It shows on the card in place of the code, and the
@@ -621,15 +687,59 @@ const upBlockedBy = computed(() => store.blockingParent.value)
           </p>
         </section>
 
-        <section class="stats">
-          <div class="stat">
-            <span class="muted">Unique paths from here</span>
-            <strong>{{ pathCount }}</strong>
+        <section>
+          <span class="label">Metrics</span>
+          <div class="stats">
+            <div class="stat">
+              <span class="muted">Routes from here</span>
+              <strong>{{ pathCount }}</strong>
+            </div>
+            <div class="stat">
+              <span class="muted">Routes leading here</span>
+              <strong>{{ routesInCount }}</strong>
+              <span v-if="coverageLabel !== null" class="sub">
+                on {{ coverageLabel }}% of all routes
+              </span>
+            </div>
+            <div class="stat">
+              <span class="muted">Links out</span>
+              <strong>{{ linksOut }}</strong>
+            </div>
+            <div class="stat">
+              <span class="muted">Links in</span>
+              <strong>{{ linksIn }}</strong>
+            </div>
+            <div class="stat">
+              <span class="muted">Order on level</span>
+              <strong>{{ geom.order + 1 }}</strong>
+            </div>
           </div>
-          <div class="stat">
-            <span class="muted">Order on level</span>
-            <strong>{{ geom.order + 1 }}</strong>
-          </div>
+
+          <!-- The one home for what the macros say about arriving here. It read
+               on the Note field too until the two wordings started to differ;
+               one inference stated two ways is one of them going stale. -->
+          <p v-if="unreached" class="hint hint-warn">
+            No route from the start reaches this passage. Nothing links here, or everything
+            that does sits behind an Ending.
+          </p>
+          <p v-else-if="inferred.dead" class="hint hint-warn">
+            Nothing reaches this passage: no route satisfies the condition on the links
+            that point here. Check the spelling of the value against the
+            <code>(set:)</code> that should supply it.
+          </p>
+          <p v-else-if="inferred.gate" class="hint">
+            Every route here passes
+            <button class="jump" @click="emit('open', inferred.gate.id)">
+              {{ nodeLabel(inferred.gate.code, inferred.gate.title) }}
+            </button>
+            &mdash; read from the <code>(if:)</code> on the links that point here, which no
+            other passage can satisfy.
+          </p>
+          <p class="hint">
+            A route runs from the start until nothing leads on &mdash; a dead end, or an
+            Ending you marked. Links are what you wrote, counted as written, so the two
+            disagree wherever a link loops back or leaves an Ending.
+          </p>
         </section>
       </template>
     </div>
@@ -854,12 +964,12 @@ code {
 }
 
 .stats {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
 .stat {
-  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -870,8 +980,34 @@ code {
   font-size: 11px;
 }
 
+/* Five tiles in two columns leave the last one alone on its row; spanning it
+   reads as the layout meaning it rather than running out. */
+.stat:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
 .stat strong {
   font-size: 15px;
+}
+
+.stat .sub {
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--text-faint);
+}
+
+/* A jump inside running prose, so it is styled as a link rather than a control
+   — same treatment as `.cheat-link` above, which is the other one of these. */
+.jump {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+}
+
+.jump:hover {
+  text-decoration: underline;
 }
 
 footer {

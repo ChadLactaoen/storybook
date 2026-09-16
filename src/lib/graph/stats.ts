@@ -15,7 +15,7 @@
 
 import type { NodeId, NodeState, StoryDoc } from '../../types/story'
 import { compareStr } from '../../types/story'
-import { countPaths, countPathsTo, forwardTargets } from './paths'
+import { authoredOut as outDegree, countPaths, countPathsToAll, forwardTargets, share } from './paths'
 import { reachableFrom } from './reachability'
 import type { LayoutResult } from './types'
 
@@ -106,20 +106,6 @@ export function wordCount(body: string): number {
   return t.length === 0 ? 0 : t.split(/\s+/).length
 }
 
-/**
- * `n` as a percentage of `total`, to one decimal place.
- *
- * The division happens in BigInt so a story with more routes than a double can
- * hold still reports an honest share; only the small result is narrowed. BigInt
- * division truncates, so the tenth is rounded afterwards — otherwise two of
- * three routes reads as `66.6%`, which looks like a rounding bug rather than a
- * third. One decimal, not two: `66.66%` claims a precision nobody needs.
- */
-function share(n: bigint, total: bigint): number {
-  if (total <= 0n) return 0
-  return Math.round(Number((n * 10000n) / total) / 10) / 10
-}
-
 function pct(n: number, total: number): number {
   return total === 0 ? 0 : Math.round((n / total) * 1000) / 10
 }
@@ -137,11 +123,9 @@ export function computeStoryStats(doc: StoryDoc, layout: LayoutResult): StorySta
   // Forward and reverse counts for every real passage, computed once and
   // reused by the endings table, the lint and the playthrough mean.
   const from = new Map<NodeId, bigint>()
-  const to = new Map<NodeId, bigint>()
-  for (const n of doc.nodes) {
-    from.set(n.id, countPaths(graph, backEdges, n.id, endings))
-    to.set(n.id, countPathsTo(graph, backEdges, n.id, startId, endings))
-  }
+  for (const n of doc.nodes) from.set(n.id, countPaths(graph, backEdges, n.id, endings))
+  // One pass for the reverse direction, rather than a walk per passage.
+  const to = countPathsToAll(graph, backEdges, startId, endings)
   const totalRoutes = startId === null ? 0n : (from.get(startId) ?? 0n)
 
   /** The route model's view: no self-loops, no back edges, nothing past an ending. */
@@ -155,7 +139,7 @@ export function computeStoryStats(doc: StoryDoc, layout: LayoutResult): StorySta
    * the author still wrote it. The route model drops both, and reading a lint
    * or a link count off it states something false about the prose.
    */
-  const authoredOut = (id: NodeId): number => (graph.outAdj.get(id) ?? []).length
+  const authoredOut = (id: NodeId): number => outDegree(graph, id)
 
   const titleOf = (id: NodeId) => graph.titleOf.get(id) ?? ''
   const codeOf = (id: NodeId) => graph.codeOf.get(id) ?? ''

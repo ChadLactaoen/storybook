@@ -133,7 +133,7 @@ describe('the app renders', () => {
     openAdvanced()
     await nextTick()
     expect(inspector!.textContent).toContain('Level 1')
-    expect(inspector!.textContent).toContain('Unique paths from here')
+    expect(inspector!.textContent).toContain('Routes from here')
     expect(problems).toEqual([])
   })
 
@@ -662,10 +662,19 @@ describe('the app renders', () => {
     store.select(byTitle('Onward'))
     await nextTick()
 
+    // One home for the inference, beside the route counts it explains — and the
+    // only place it is offered as a jump.
+    expect(host.querySelector('.inspector .jump')).toBeNull()
+    openAdvanced()
+    await nextTick()
+
     const hints = [...host.querySelectorAll('.inspector .hint')].map((h) =>
       h.textContent?.replace(/\s+/g, ' ').trim(),
     )
-    expect(hints.some((h) => h?.startsWith('Only reached after'))).toBe(true)
+    expect(hints.some((h) => h?.startsWith('Every route here passes'))).toBe(true)
+    // The gate is the passage that *assigns* the value, not the one carrying the
+    // (if:) — Start does the (set:), so every route here has been through it.
+    expect(host.querySelector('.inspector .jump')!.textContent).toContain('Start')
     expect(problems).toEqual([])
   })
 
@@ -677,7 +686,11 @@ describe('the app renders', () => {
     writeBody(first, '(if:$idol is "nope")[[Onward]]')
     store.select(store.state.doc.nodes.find((n) => n.title === 'Onward')!.id)
     await nextTick()
+    openAdvanced()
+    await nextTick()
 
+    // The graph still links here, so this is the macro-level claim rather than
+    // the "no route reaches it" one that sits above it.
     const warn = host.querySelector('.inspector .hint-warn')
     expect(warn?.textContent).toContain('Nothing reaches this passage')
     expect(problems).toEqual([])
@@ -1540,6 +1553,7 @@ describe('the advanced tab', () => {
     expect(advanced.querySelector('#passage-code')).not.toBeNull()
     expect(advanced.textContent).toContain('Level 1')
     expect(advanced.textContent).toContain('Mark as Ending')
+    expect(advanced.textContent).toContain('Routes from here')
     expect(advanced.querySelector('#passage-title')).toBeNull()
     expect(advanced.querySelector('.editor')).toBeNull()
 
@@ -1665,6 +1679,190 @@ describe('the advanced tab', () => {
     await nextTick()
     expect(host.querySelector('[aria-label="Edit passage body"]')).toBeNull()
     expect(host.querySelector('.inspector #passage-code')).not.toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('counts routes in both directions, and links as written', async () => {
+    mount()
+    store.newStory('Render Check')
+    const startId = store.state.doc.nodes[0]!.id
+    writeBody(startId, '[[Two]]\n[[Three]]')
+    const twoId = store.state.doc.nodes.find((n) => n.title === 'Two')!.id
+    writeBody(twoId, '[[Three]]')
+    store.select(twoId)
+    await nextTick()
+    openAdvanced()
+    await nextTick()
+
+    const tiles = [...host.querySelectorAll('.inspector .stat')].map((el) => [
+      el.querySelector('.muted')!.textContent!.trim(),
+      el.querySelector('strong')!.textContent!.trim(),
+    ])
+    expect(Object.fromEntries(tiles)).toMatchObject({
+      'Routes from here': '1',
+      'Routes leading here': '1',
+      'Links out': '1',
+      'Links in': '1',
+    })
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * The number the sidebar could not show before, and the reason it is worth a
+   * tile: zero means the author cannot get here, which nothing on the canvas says.
+   */
+  it('reports the share of complete routes running through a passage', async () => {
+    mount()
+    store.newStory('Render Check')
+    const startId = store.state.doc.nodes[0]!.id
+    // Start branches to A and B; A branches again to C and D. Three complete
+    // routes: Start->A->C, Start->A->D, Start->B.
+    writeBody(startId, '[[A]]\n[[B]]')
+    const aId = store.state.doc.nodes.find((n) => n.title === 'A')!.id
+    writeBody(aId, '[[C]]\n[[D]]')
+
+    const sub = () =>
+      host.querySelector('.inspector .stat .sub')?.textContent!.replace(/\s+/g, ' ').trim()
+
+    store.select(aId)
+    await nextTick()
+    openAdvanced()
+    await nextTick()
+    expect(sub()).toBe('on 66.7% of all routes')
+
+    // A leaf is on exactly the routes that reach it.
+    store.select(store.state.doc.nodes.find((n) => n.title === 'C')!.id)
+    await nextTick()
+    expect(sub()).toBe('on 33.3% of all routes')
+
+    // Every route passes the start.
+    store.select(startId)
+    await nextTick()
+    expect(sub()).toBe('on 100% of all routes')
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * An Ending that still has links leaving it is allowed — `setEnding` has no
+   * guard, and the app reports it rather than refusing it. So "leaf" and
+   * "terminal" can disagree, and the share has to agree with the count beside
+   * it rather than counting straight through.
+   */
+  it('stops counting at a marked Ending, the way the count beside it does', async () => {
+    mount()
+    store.newStory('Render Check')
+    const startId = store.state.doc.nodes[0]!.id
+    writeBody(startId, '[[A]]')
+    const aId = store.state.doc.nodes.find((n) => n.title === 'A')!.id
+    writeBody(aId, '[[B]]')
+    const bId = store.state.doc.nodes.find((n) => n.title === 'B')!.id
+
+    store.select(bId)
+    await nextTick()
+    openAdvanced()
+    await nextTick()
+    const sub = () =>
+      host.querySelector('.inspector .stat .sub')?.textContent!.replace(/\s+/g, ' ').trim()
+    expect(sub()).toBe('on 100% of all routes')
+
+    store.endingSet(aId, true)
+    await nextTick()
+
+    // B is stranded now. Both halves of the tile must say so together.
+    expect(sub()).toBe('on 0% of all routes')
+    expect(host.querySelector('.inspector')!.textContent).toContain(
+      'No route from the start reaches this passage',
+    )
+    expect(problems).toEqual([])
+  })
+
+  it('reports a passage no route reaches, and exempts the start', async () => {
+    mount()
+    store.newStory('Render Check')
+    const startId = store.state.doc.nodes[0]!.id
+    writeBody(startId, '[[Two]]')
+    const twoId = store.state.doc.nodes.find((n) => n.title === 'Two')!.id
+
+    // Marking the start as an Ending strands everything past it.
+    store.endingSet(startId, true)
+    store.select(twoId)
+    await nextTick()
+    openAdvanced()
+    await nextTick()
+
+    expect(host.querySelector('.inspector')!.textContent).toContain(
+      'No route from the start reaches this passage',
+    )
+
+    // The start itself counts zero because routes begin there rather than
+    // arriving, so it must never be accused.
+    store.select(startId)
+    await nextTick()
+    expect(host.querySelector('.inspector')!.textContent).not.toContain(
+      'No route from the start reaches this passage',
+    )
+    expect(problems).toEqual([])
+  })
+
+  it('jumps to the passage a gate names', async () => {
+    mount()
+    store.newStory('Render Check')
+    const startId = store.state.doc.nodes[0]!.id
+    writeBody(startId, '[[Camp]]')
+    const campId = store.state.doc.nodes.find((n) => n.title === 'Camp')!.id
+    writeBody(campId, '(set: $lantern to "lit")\n[[Cellar]]')
+    const cellarId = store.state.doc.nodes.find((n) => n.title === 'Cellar')!.id
+    writeBody(cellarId, '(if: $lantern is "lit")[ [[Deeper]] ]')
+    store.select(store.state.doc.nodes.find((n) => n.title === 'Deeper')!.id)
+    await nextTick()
+    openAdvanced()
+    await nextTick()
+
+    const jump = host.querySelector<HTMLButtonElement>('.inspector .jump')
+    expect(jump).not.toBeNull()
+    expect(jump!.textContent!.trim()).toContain('Camp')
+
+    // Revealing is App.openPassage, not a bare select: it centres the canvas too.
+    jump!.click()
+    await nextTick()
+    expect(store.state.selectedId).toBe(campId)
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * `share` divides in BigInt before rounding, so anything under 0.05% comes
+   * back as exactly 0 — and a tile reading "Routes leading here: 1" above "on
+   * 0% of all routes" looks like a broken sum rather than a small number.
+   */
+  it('says <0.1% rather than 0% under a count that is not zero', async () => {
+    mount()
+    store.newStory('Render Check')
+    const startId = store.state.doc.nodes[0]!.id
+    const idOf = (t: string) => store.state.doc.nodes.find((n) => n.title === t)!.id
+    const codeOf = (t: string) => store.state.doc.nodes.find((n) => n.title === t)!.code
+
+    // Eleven diamonds in a chain double the routes each time, so 2048 run to the
+    // end. The side branch off the start sits on exactly one of the 2049 — which
+    // is 0.049%, under the tenth `share` can express.
+    writeBody(startId, '[[Side]]\n[[N0]]')
+    for (let i = 0; i < 11; i++) {
+      writeBody(idOf(`N${i}`), `[[A${i}]]\n[[B${i}]]`)
+      writeBody(idOf(`A${i}`), `[[N${i + 1}]]`)
+      writeBody(idOf(`B${i}`), `[[N${i + 1}|${codeOf(`N${i + 1}`)}]]`)
+    }
+
+    store.select(idOf('Side'))
+    await nextTick()
+    openAdvanced()
+    await nextTick()
+
+    const tile = [...host.querySelectorAll('.inspector .stat')].find((e) =>
+      e.textContent!.includes('leading here'),
+    )!
+    expect(tile.querySelector('strong')!.textContent!.trim()).toBe('1')
+    expect(tile.querySelector('.sub')!.textContent!.replace(/\s+/g, ' ').trim()).toBe(
+      'on <0.1% of all routes',
+    )
     expect(problems).toEqual([])
   })
 
