@@ -484,6 +484,10 @@ export function changeState(id: string, value: NodeState): void {
   commit(M.setState(state.doc, id, value))
 }
 
+export function endingSet(id: string, value: boolean): void {
+  commit(M.setEnding(state.doc, id, value))
+}
+
 export function changeLevelOffset(id: string, offset: number): void {
   commit(M.setLevelOffset(state.doc, id, offset))
 }
@@ -885,7 +889,22 @@ export const blockingParent = computed(() => {
  */
 export function pathsFrom(id: string): bigint {
   const { graph, backEdges } = layout.value
-  return countPaths(graph, backEdges, id)
+  return countPaths(graph, backEdges, id, endingIds(state.doc))
+}
+
+/**
+ * The passages the author marked as endings.
+ *
+ * Read from `state.doc` on every call rather than cached on the layout: the
+ * flag is deliberately absent from `layoutKey`, so a layout memoized before the
+ * box was ticked is still the right layout, and a set cached on it would be the
+ * wrong set. Reading the document here is also what keeps the toolbar and
+ * inspector computeds reactive to the checkbox.
+ */
+export function endingIds(doc: StoryDoc): Set<string> {
+  const out = new Set<string>()
+  for (const n of doc.nodes) if (n.isEnding) out.add(n.id)
+  return out
 }
 
 let lastGateKey = ''

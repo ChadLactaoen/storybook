@@ -15,6 +15,15 @@ export interface ShortcutHandlers {
   toggleCheatSheet: () => void
   toggleNotes: () => void
   openHelp: () => void
+  openStats: () => void
+  /** True while the stats sheet itself is what is up. */
+  statsOpen: () => boolean
+  /**
+   * True while any dialog that owns Escape is up — `modalOpen` plus the
+   * expanded body editor, which is not a modal for the purposes below because
+   * it has a textarea `isTyping` already catches.
+   */
+  dialogOpen: () => boolean
   /** True while a full-screen modal is up; the unmodified keys stand down. */
   modalOpen: () => boolean
 }
@@ -88,6 +97,25 @@ export function useShortcuts(handlers: ShortcutHandlers) {
           if (nativeEditing) return
           e.preventDefault()
           handlers.toggleNotes()
+          return
+        // Not a letter: the editor owns Mod B / I / Shift . / Shift K for
+        // markup, and a global binding on one of those would fire alongside it.
+        // `/` also puts stats next to `?` for help, which is where it belongs.
+        //
+        // Same carve-out as the panels above: the sheet is reachable
+        // mid-sentence and closes with the key that opened it, so standing down
+        // while typing would open it with no way back.
+        case '/':
+          if (nativeEditing) return
+          // The one key in this branch that opens a modal of its own, so it is
+          // also the one that has to respect a modal already up. Stacking the
+          // sheet over the expanded editor left both listening for Escape, and
+          // one press closed the editor the author was writing in along with
+          // it. Stats itself is exempt, or the key that opens it could not
+          // close it again.
+          if (handlers.dialogOpen() && !handlers.statsOpen()) return
+          e.preventDefault()
+          handlers.openStats()
           return
         case 'z':
           if (typing) return

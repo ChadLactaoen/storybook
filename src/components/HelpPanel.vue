@@ -20,6 +20,7 @@ const SHORTCUTS: { keys: string; what: string }[] = [
   { keys: `${MOD} E`, what: 'Expand the selected passage’s body editor' },
   { keys: `${MOD} K`, what: 'Character cheat sheet for the selected passage' },
   { keys: `${MOD} J`, what: 'Story notes, a scratchpad for the whole story' },
+  { keys: `${MOD} /`, what: 'Story stats — routes, endings, word count, draft health' },
   { keys: `${MOD} B`, what: 'Bold the selected prose' },
   { keys: `${MOD} I`, what: 'Italicise the selected prose' },
   { keys: `${MOD} ⇧ .`, what: 'Quote the selected lines' },

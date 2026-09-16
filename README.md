@@ -60,6 +60,8 @@ choice a passage is locked behind, or that no route reaches it at all.
 | Relations | One-directional — Mira→Tam records only how Mira regards Tam. The sheet shows the reverse as dimmed read-only context. Renaming or deleting a character cascades through every relation |
 | Story index | Toolbar → **Index**: every setting and character with a passage count. Click a row to filter the tree; rename from here to update every passage at once. The cast lists in roster order, reordered with the ▲▼ arrows on each row or alphabetized with **Sort A–Z** |
 | State | TODO / Draft / Done, shown as a coloured badge on each card |
+| Endings | Tick **Mark as Ending** in the sidebar and the card gets a teal underline and an **END** flag. Never guessed for you &mdash; a passage with no links yet is indistinguishable from one you meant to finish. Routes stop at an ending, so the endings divide the story's routes between them rather than overlapping, and anything linked *past* one is unreachable (Story stats says so) |
+| Story stats | Toolbar &rarr; **Stats**, the routes pill, or `Cmd /`. Word count, every ending with the share of routes reaching it, and a draft-health list &mdash; broken links, unreachable passages, dead ends you never marked. Click any row to jump to the passage. Computed when you open it, not as you type |
 | Levels | Assigned automatically. A passage can be nudged down exactly one level; moving up is structurally impossible and the inspector says which parent pins it |
 | Story codes | A reader's route is the codes of the passages they visited, `P1->P3->P7`. Print it at the end of your story with `(joined: "->", ...(history:), (passage:)'s name)` |
 | Conditional links | An `(if: $v is "x")` guarding a link is read and matched against the `(set: $v to "x")` that supplies it. When every route into a passage needs the same value, the sidebar names the choice it is locked behind. Only `if` and `else-if` with a plain `$v is "…"` are read |
@@ -127,7 +129,8 @@ canonical JSON; **Import** reads it back.
 | `xcoord` | lay each component out, then pack them left to right |
 | `tidy` | bottom-up rigid-subtree placement: parents land on the midpoint of their outermost children — exactly so for a tree, best effort once a passage has two parents |
 | `routing` | C1-smooth cubics, straight-run collapse, arrowheads clipped to card boundaries |
-| `paths` | distinct path counts as BigInt (they grow exponentially) |
+| `paths` | distinct path counts as BigInt (they grow exponentially), forwards from a passage and backwards to one; also the one definition of an edge a route can take |
+| `stats` | word count, the routes reaching each ending, and the draft-health lint |
 | `recode` | a numbering read off the drawing, so codes can be renamed to match the tree |
 | `gates` | what conditional links prove: which choice a passage is locked behind, and which branches are dead |
 | `macros` *(in `lib/harlowe/`)* | reads `(set:)` and `(if:)` as text, so a guarded link can narrow a trail |

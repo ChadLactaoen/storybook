@@ -16,6 +16,8 @@ const props = defineProps<{
   /** The author's note, shown in place of an identifier. Empty for most passages. */
   token: string
   isStart: boolean
+  /** The author marked this as a place a route stops. Never derived. */
+  isEnding: boolean
   dimmed: boolean
   detailed: boolean
   pathCount: string | null
@@ -63,6 +65,7 @@ const style = computed(() => ({
         phantom: node.isPhantom,
         dimmed,
         start: isStart,
+        ending: isEnding,
         plain: !detailed,
       },
     ]"
@@ -105,8 +108,9 @@ const style = computed(() => ({
       </template>
     </div>
 
-    <div v-if="detailed && (isStart || pathCount)" class="foot">
+    <div v-if="detailed && (isStart || isEnding || pathCount)" class="foot">
       <span v-if="isStart" class="flag">START</span>
+      <span v-if="isEnding" class="flag flag-end">END</span>
       <span v-if="pathCount" class="paths">{{ pathCount }} paths</span>
     </div>
   </div>
@@ -146,6 +150,35 @@ const style = computed(() => ({
 
 .card.start {
   border-left: 3px solid var(--accent);
+}
+
+/* The floor of a route, and drawn on the floor of the card.
+   The tree runs top to bottom: routes arrive at a card's top edge and leave
+   from its bottom, so "nothing leaves the bottom" is what an ending *is* —
+   this draws the fact rather than a symbol standing in for it. The right edge
+   was tried first, for symmetry with START, and lost on sight: a card is
+   200x96, so a horizontal rule gets twice the pixels of a vertical one, and
+   zoomed out the vertical version read as chrome in the gutter between cards
+   while a row of underlines reads instantly as the story's floor. The lost
+   symmetry costs little — START's left edge is itself arbitrary, since routes
+   do not enter from the left either.
+   It also leaves the card's edges fully spoken for without collisions: top is
+   tag stripes, top-right is state, left is START, bottom is this.
+   Background would have been louder still and is the one channel that is not
+   free — `.card.selected.anchor` uses fill to say which card the inspector is
+   describing, and `.card.phantom` uses it too. */
+.card.ending {
+  border-bottom: 3px solid var(--ending);
+}
+
+/* The marker grows as the detail shrinks. Below DETAIL_ZOOM the footer is not
+   rendered at all, so the END flag is gone and this edge is the only thing
+   left saying so — exactly when "where are my endings" is the question being
+   asked. 3px cannot carry that alone; the tag stripes are 5px and are the
+   evidence that an edge at this scale can. Border-box means the extra width
+   eats content, never geometry. */
+.card.plain.ending {
+  border-bottom-width: 9px;
 }
 
 .card.phantom {
@@ -330,5 +363,9 @@ const style = computed(() => ({
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--accent);
+}
+
+.flag-end {
+  color: var(--ending);
 }
 </style>

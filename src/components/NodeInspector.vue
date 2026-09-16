@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { TOKEN_MAX } from '../lib/doc/mutations'
-import { formatCount } from '../lib/graph/paths'
+import { forwardTargets, formatCount } from '../lib/graph/paths'
 import { prefs } from '../stores/prefs'
 import * as store from '../stores/story'
 import type { NodeState, TagColor } from '../types/story'
@@ -169,6 +169,22 @@ const pathCount = computed(() =>
 const isStart = computed(() => node.value?.id === store.state.doc.startNodeId)
 
 /**
+ * Does a passage marked as an ending still link somewhere?
+ *
+ * Worth saying out loud right where the box is ticked: marking an ending is the
+ * one edit in the app that can make other passages unreachable, and the author
+ * should learn that here rather than from the stats panel later.
+ */
+const endingHasLinks = computed(() => {
+  const id = node.value?.id
+  if (!id) return false
+  const { graph, backEdges } = store.layout.value
+  // No `endings` argument: the passage is marked, and the warning is about the
+  // links that marking it just stranded. The same call the stats lint makes.
+  return forwardTargets(graph, backEdges, id).length > 0
+})
+
+/**
  * The inspector is a fixed-width column, so long prose is written through a
  * letterbox. Expanding swaps in the same editor over the whole window; both
  * write the same v-model, so there is nothing to sync when it closes.
@@ -182,6 +198,8 @@ defineExpose({
   toggleExpanded: () => {
     if (node.value && geom.value) expanded.value = !expanded.value
   },
+  /** For the shortcut layer: the expanded editor is a dialog that owns Escape. */
+  isExpanded: () => expanded.value,
 })
 
 /* ---------- scene ---------- */
@@ -480,6 +498,26 @@ const upBlockedBy = computed(() => store.blockingParent.value)
             Levels come from your links, not from dragging &mdash; a passage sits one level below
             the deepest passage that links to it.
           </template>
+        </p>
+      </section>
+
+      <section>
+        <label class="pref">
+          <input
+            type="checkbox"
+            :checked="node.isEnding"
+            @change="store.endingSet(node.id, ($event.target as HTMLInputElement).checked)"
+          />
+          <span class="text">
+            Mark as Ending
+            <span class="hint">
+              Routes stop here. The card gets a teal underline and an END flag, and Story Stats
+              counts how many routes reach it.
+            </span>
+          </span>
+        </label>
+        <p v-if="node.isEnding && endingHasLinks" class="hint hint-warn">
+          Links still lead out of this passage. Nothing past it is reachable any more.
         </p>
       </section>
 
@@ -852,5 +890,30 @@ footer .btn {
 
 .confirm span {
   flex: 1;
+}
+
+/* Copied from EditorSettings, which owns the only other checkbox in the app.
+   Scoped styles mean the rules cannot be shared; keeping them identical is what
+   makes the two read as the same control. */
+.pref {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.pref input {
+  width: 15px;
+  height: 15px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.pref .text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 </style>

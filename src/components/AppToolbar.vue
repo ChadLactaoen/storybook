@@ -16,6 +16,7 @@ const emit = defineEmits<{
   toggleIndex: []
   toggleNotes: []
   openHelp: []
+  openStats: []
   openSettings: []
   openRecode: []
 }>()
@@ -128,9 +129,13 @@ async function onFile(e: Event) {
 
     <div class="group stats">
       <span class="pill">{{ plural(store.state.doc.nodes.length, 'passage') }}</span>
-      <span class="pill paths" title="Distinct routes from the start passage to an ending">
+      <button
+        class="pill paths"
+        title="Story stats — routes, endings, word count, draft health"
+        @click="emit('openStats')"
+      >
         {{ pathsLabel }}
-      </span>
+      </button>
       <!-- Named, not just coloured: these are the only legend for the status
            dot on each card, so bare digits left it unexplained. -->
       <span class="tally">
@@ -156,6 +161,13 @@ async function onFile(e: Event) {
     </div>
 
     <div class="group">
+      <button
+        class="btn"
+        title="Story stats — routes, endings, word count, draft health (Cmd /)"
+        @click="emit('openStats')"
+      >
+        Stats
+      </button>
       <button class="btn" title="Show or hide the level guide lines" @click="emit('toggleLevels')">
         Levels
       </button>
@@ -263,6 +275,18 @@ async function onFile(e: Event) {
   border: 1px solid var(--border);
   font-size: 11px;
   white-space: nowrap;
+}
+
+/* The one pill that is also a button. It is a shortcut, not the way in — a pill
+   reads as a readout however it is styled, so discovery belongs to the labelled
+   Stats button and this just saves a trip for anyone who finds it. */
+.pill.paths {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pill.paths:hover {
+  border-color: var(--accent);
 }
 
 .pill.paths {

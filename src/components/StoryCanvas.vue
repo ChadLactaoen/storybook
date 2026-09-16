@@ -23,6 +23,7 @@ const props = defineProps<{
   /** Draw each passage's code above its card. */
   showCodes: boolean
   tokenOf: Map<string, string>
+  isEndingOf: Map<string, boolean>
 }>()
 
 /**
@@ -188,6 +189,7 @@ const levelLabels = computed(() =>
         :selected="inSelection(node.id)"
         :anchor="node.id === selectedId"
         :is-start="node.id === startNodeId"
+        :is-ending="isEndingOf.get(node.id) ?? false"
         :dimmed="dimmed(node)"
         :detailed="detailed"
         :path-count="null"

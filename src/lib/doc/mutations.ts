@@ -180,6 +180,7 @@ export function createNode(
     body: opts.body ?? '',
     tags: [],
     state: 'TODO',
+    isEnding: false,
     levelOffset: 0,
     setting: opts.setting?.trim() ?? '',
     characters: castFrom(next, opts.characters),
@@ -427,6 +428,19 @@ export function materializePhantom(
 
 export function setState(doc: StoryDoc, id: string, state: NodeState): StoryDoc {
   return replaceNode(doc, id, { state })
+}
+
+/**
+ * Mark a passage as a place a route stops, or unmark it.
+ *
+ * Guarded like `setToken`: `commit` compares by reference, so returning a fresh
+ * document for an unchanged value would push an empty undo entry and wipe redo.
+ * A checkbox is easy to toggle twice.
+ */
+export function setEnding(doc: StoryDoc, id: string, value: boolean): StoryDoc {
+  const node = doc.nodes.find((n) => n.id === id)
+  if (!node || node.isEnding === value) return doc
+  return replaceNode(doc, id, { isEnding: value })
 }
 
 export function setLevelOffset(doc: StoryDoc, id: string, offset: number): StoryDoc {

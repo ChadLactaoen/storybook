@@ -728,3 +728,64 @@ describe('recoding the whole story', () => {
     expect(store.state.doc).toBe(before)
   })
 })
+
+describe('marking endings', () => {
+  beforeEach(() => store.newStory('Endings'))
+
+  it('survives a save and reload', () => {
+    write(idOf('Start'), '[[Two]]\n[[Three]]')
+    store.endingSet(idOf('Two'), true)
+    const json = serializeDoc(store.state.doc)
+
+    store.loadStory(json)
+    expect(store.state.doc.nodes.find((n) => n.title === 'Two')!.isEnding).toBe(true)
+    expect(store.state.doc.nodes.find((n) => n.title === 'Three')!.isEnding).toBe(false)
+    expect(serializeDoc(store.state.doc)).toBe(json)
+  })
+
+  it('undoes and redoes as one step', () => {
+    write(idOf('Start'), '[[Two]]')
+    const id = idOf('Two')
+    const isEnding = () => store.state.doc.nodes.find((n) => n.id === id)!.isEnding
+
+    store.endingSet(id, true)
+    expect(isEnding()).toBe(true)
+    store.undo()
+    expect(isEnding()).toBe(false)
+    store.redo()
+    expect(isEnding()).toBe(true)
+  })
+
+  it('does not commit when the value is already what was asked for', () => {
+    write(idOf('Start'), '[[Two]]')
+    const id = idOf('Two')
+
+    store.endingSet(id, true)
+    store.undo()
+    expect(store.canRedo.value).toBe(true)
+
+    // The guard in `setEnding`. A checkbox is easy to re-fire, and `commit`
+    // compares by reference: an unguarded write of the value already there
+    // would push an empty undo entry and throw the redo away. Watching redo
+    // survive is what proves no commit happened.
+    store.endingSet(id, false)
+    expect(store.canRedo.value).toBe(true)
+
+    store.redo()
+    expect(store.state.doc.nodes.find((n) => n.id === id)!.isEnding).toBe(true)
+  })
+
+  it('changes the route count without redrawing the tree', () => {
+    write(idOf('Start'), '[[Two]]\n[[Three]]')
+    write(idOf('Two'), '[[Four]]')
+    const hash = store.layout.value.stats.hash
+    expect(store.pathsFrom(idOf('Start'))).toBe(2n)
+
+    store.endingSet(idOf('Two'), true)
+
+    // Two still counts as a route, but Four is no longer on one.
+    expect(store.pathsFrom(idOf('Start'))).toBe(2n)
+    expect(store.pathsFrom(idOf('Four'))).toBe(1n)
+    expect(store.layout.value.stats.hash).toBe(hash)
+  })
+})
