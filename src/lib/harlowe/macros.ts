@@ -12,6 +12,15 @@
  * `(set: $v to "x")` plus a later link guarded on `(if: $v is "x")` proves every
  * route to that link's target passed the first passage.
  *
+ * A second consumer wants the opposite of what gate inference wants. The
+ * playthrough reader's evaluator (`run.ts`) needs breadth, because a condition
+ * it cannot evaluate looks to an author like lost prose, where a guessed gate
+ * is a lie about the story's shape. That split is visible below: `GUARD_MACROS`
+ * reads two macros, while `chainsOf` sees all four branching ones. Nothing here
+ * has grown the ability to *run* a macro — positions and adjacency are still
+ * structure, and the exports exist so that there is exactly one `closeHook` in
+ * the repo rather than one per consumer.
+ *
  * Everything is deliberately narrow. A construct this cannot read with
  * certainty is reported as unreadable rather than guessed at, because the
  * consumer turns a guess into a confident claim about the story's shape.
@@ -70,7 +79,21 @@ const GUARD_MACROS = new Set(['if', 'else-if'])
 const OPAQUE_MACROS = new Set(['put', 'move', 'unpack'])
 
 const MACRO_OPEN = /\(\s*([A-Za-z_][A-Za-z0-9_-]*)\s*:/g
-const VAR = /[$_][A-Za-z_][A-Za-z0-9_-]*/g
+/**
+ * Every `$variable` or `_temp` name in a fragment of macro source.
+ *
+ * Exported so the reader's interpolation cannot drift from what the gate path
+ * reads: two copies of this pattern would be two definitions of what counts as
+ * a variable name.
+ *
+ * It carries `g`, and therefore `lastIndex`. `String.prototype.match` resets
+ * that before it runs and leaves it at 0, which is what makes the two uses
+ * below immune to whoever else holds this regex; `exec` and `test` do not, so a
+ * consumer wanting a scan loop must build its own
+ * `new RegExp(VARIABLE_RE.source, 'g')` — the idiom `parseMacros` uses with
+ * `MACRO_OPEN` just above.
+ */
+export const VARIABLE_RE = /[$_][A-Za-z_][A-Za-z0-9_-]*/g
 
 /**
  * The whole condition, anchored end to end.
@@ -86,8 +109,14 @@ const CONDITION = /^\$([A-Za-z_][A-Za-z0-9_-]*)\s+is\s+(".*"|'.*')$/
 /** One assignment of the exact form `$v to "literal"`, anchored the same way. */
 const ASSIGN = /^\$([A-Za-z_][A-Za-z0-9_-]*)\s+(?:to|into)\s+(".*"|'.*')$/
 
-/** A complete string literal and nothing else, escapes honoured. */
-function stringValue(text: string): string | null {
+/**
+ * A complete string literal and nothing else, escapes honoured.
+ *
+ * Shared with the reader so a literal means the same thing to both: an
+ * evaluator reading `"a\"b"` differently from the gate path is a story that
+ * analyses one way and plays another.
+ */
+export function stringValue(text: string): string | null {
   const quote = text[0]
   if (quote !== '"' && quote !== "'") return null
   let out = ''
@@ -151,8 +180,13 @@ function closeParen(src: string, open: number): number {
  * hook opens and closes two brackets, which a naive depth counter happens to
  * balance, but `[[A]]` standing alone balances too — so counting cannot tell a
  * hook containing a link from a bare link.
+ *
+ * Exported for the reader, which walks hooks to decide what to descend into. A
+ * second copy of this is a guaranteed divergence: the `[[`-inside-a-hook case
+ * is the only genuinely hard thing in this file, and it reads as an
+ * off-by-a-bracket detail right up until it silently swallows a branch.
  */
-function closeHook(src: string, open: number): number {
+export function closeHook(src: string, open: number): number {
   let depth = 0
   let i = open
   while (i < src.length) {
@@ -177,14 +211,56 @@ function closeHook(src: string, open: number): number {
 }
 
 /** First index at or after `i` that is not whitespace. */
-function skipSpace(src: string, i: number): number {
+export function skipSpace(src: string, i: number): number {
   let j = i
   while (j < src.length && /\s/.test(src[j]!)) j++
   return j
 }
 
-/** Split macro arguments on the commas that sit at depth zero. */
-function splitArgs(text: string): string[] {
+/**
+ * Index just past whatever body attaches to a macro ending at `macroEnd`: its
+ * hook, the bare link the author wrote instead of one, or nothing at all.
+ *
+ * `closeHook` alone cannot answer this. It jumps `[[`..`]]` wholesale on
+ * purpose, so at the `[` of `(if: $v is "x")[[A|P2]]` it treats the link as a
+ * jumped span, runs off the end of the body and returns -1 — right for its own
+ * question, useless for this one.
+ *
+ * `parseGuardSpans` splits the same cases just below and is deliberately *not*
+ * refactored onto this. It has to *name* which case happened (`hook` versus
+ * `anchor`), it never computes a bare link's end at all, and it emits no span
+ * where this falls back to `macroEnd`. Sharing would mean rewriting the gate
+ * path's most delicate twelve lines for no gain; the genuinely hard part,
+ * `closeHook`, is already shared.
+ *
+ * An unterminated hook returns `macroEnd`, leaving its own `[` in whatever the
+ * caller reads next. For `chainsOf` that breaks the chain, which is the safe
+ * direction — an unreadable branch stands alone rather than silently joining.
+ */
+export function attachedEnd(src: string, macroEnd: number): number {
+  const at = skipSpace(src, macroEnd)
+  if (src[at] === '[' && src[at + 1] === '[') {
+    // No hook in the source at all: both brackets belong to the link.
+    const close = src.indexOf(']]', at + 2)
+    return close === -1 ? macroEnd : close + 2
+  }
+  if (src[at] === '[') {
+    const close = closeHook(src, at)
+    return close === -1 ? macroEnd : close
+  }
+  return macroEnd
+}
+
+/**
+ * Split macro arguments on the commas that sit at depth zero.
+ *
+ * Exported as-is, and the signature is frozen: it returns text, never offsets.
+ * Offsets would make this a change on the gate path, which reads these same
+ * args for `(set:)` — the one place in the reader work whose failure mode is a
+ * wrong gate rather than a missing one. The evaluator needs only the text, for
+ * a multi-assignment `(set: $a to "x", $b to "y")`.
+ */
+export function splitArgs(text: string): string[] {
   const out: string[] = []
   let start = 0
   let depth = 0
@@ -207,25 +283,45 @@ function splitArgs(text: string): string[] {
   return out
 }
 
-interface RawMacro {
+/** One `(name: ...)` call, located exactly in the body it came from. */
+export interface RawMacro {
   name: string
   /** Argument text between the `:` and the closing `)`. */
   args: string
+  /** Index of the `(`. */
+  start: number
+  /** Index just past the `:`, where `args` begins. */
+  argsStart: number
   /** Index just past the closing `)`. */
   end: number
 }
 
-/** Every `(name: ...)` call in `body`, with its arguments and extent. */
-function parseMacros(body: string): RawMacro[] {
+/**
+ * Every `(name: ...)` call in `body`, with its arguments and extent.
+ *
+ * Positions, not just text. A caller that walks these as *statements* has to
+ * tell a macro standing on its own from one sitting inside another's
+ * arguments, and comparing `start` against the previous statement's `end` is
+ * the only thing that answers it — without that filter, the reader would
+ * execute a `(set:)` that is merely an operand. The gate path never asked,
+ * which is why the positions were not here before.
+ */
+export function parseMacros(body: string): RawMacro[] {
   const re = new RegExp(MACRO_OPEN.source, 'g')
   const out: RawMacro[] = []
   let m: RegExpExecArray | null
   while ((m = re.exec(body)) !== null) {
     const end = closeParen(body, m.index)
     if (end === -1) continue
+    // `closeParen` does not touch `re`, so `lastIndex` still sits just past the
+    // `:`. Slicing `args` *from* `argsStart` rather than alongside it makes
+    // `args === body.slice(argsStart, end - 1)` true by construction.
+    const argsStart = re.lastIndex
     out.push({
       name: m[1]!.toLowerCase(),
-      args: body.slice(re.lastIndex, end - 1),
+      args: body.slice(argsStart, end - 1),
+      start: m.index,
+      argsStart,
       end,
     })
     // Nested calls are found by the ongoing scan; only skip the opener itself
@@ -319,7 +415,7 @@ export function parseAssignments(body: string, macros = parseMacros(body)): Assi
     if (OPAQUE_MACROS.has(macro.name)) {
       // `(put: "x" into $v)` — reversed operands, and `(move:)`/`(unpack:)`
       // can write several at once. Every variable mentioned is suspect.
-      for (const v of macro.args.match(VAR) ?? []) {
+      for (const v of macro.args.match(VARIABLE_RE) ?? []) {
         if (v.startsWith('$')) opaque.add(v.slice(1))
       }
       continue
@@ -337,12 +433,130 @@ export function parseAssignments(body: string, macros = parseMacros(body)): Assi
       }
       // Unreadable: a computed value, `it + "a"`, another variable, a temp.
       // Mark whatever it looks like it writes, so the gate check can refuse.
-      const dest = text.match(VAR)?.[0]
+      const dest = text.match(VARIABLE_RE)?.[0]
       if (dest?.startsWith('$')) opaque.add(dest.slice(1))
     }
   }
 
   return { literal, opaque }
+}
+
+/** The four macros that can stand in an `(if:)`-style chain. */
+export type ChainKind = 'if' | 'else-if' | 'else' | 'unless'
+
+export interface ChainSlot {
+  /** Which chain, numbered in source order from 0 within one body. */
+  chainId: number
+  /** 0 for the macro that opens the chain, 1 for the first continuation, … */
+  position: number
+  kind: ChainKind
+}
+
+/** A `Map` rather than a `Set`, so the lookup narrows to `ChainKind` for free. */
+const CHAIN_KIND = new Map<string, ChainKind>([
+  ['if', 'if'],
+  ['else-if', 'else-if'],
+  ['else', 'else'],
+  ['unless', 'unless'],
+])
+
+/** Kinds a later branch may be joined *to*. `(else:)` ends a chain. */
+const CHAIN_OPENERS: ReadonlySet<ChainKind> = new Set<ChainKind>(['if', 'else-if', 'unless'])
+
+/**
+ * Kinds that may join an open chain.
+ *
+ * `(if:)` and `(unless:)` are absent on purpose: each carries its own test, so
+ * two of them packed tight against each other are two independent conditions,
+ * not alternatives. Reading adjacency alone would make the second exclusive
+ * with the first and hide a branch the author wrote.
+ *
+ * `(else-if:)` is in both sets, which is exactly what it is.
+ */
+const CHAIN_CONTINUATIONS: ReadonlySet<ChainKind> = new Set<ChainKind>(['else-if', 'else'])
+
+/** A branch still open: the slot it took, and where its own body ended. */
+interface OpenBranch {
+  slot: ChainSlot
+  after: number
+}
+
+/**
+ * Which `(if:)`-style chain each branching macro belongs to, keyed by the
+ * macro's `start`.
+ *
+ * A different question from gate inference, deliberately. `GUARD_MACROS` reads
+ * `if` and `else-if` only, because `(unless:)` means the opposite of what it
+ * looks like and `(else:)` carries no condition — that is about what a
+ * condition *claims*. This asks which branches are alternatives of one another,
+ * which is a property of the source layout and true of all four kinds. Nothing
+ * here reads a condition, and nothing on the gate path calls it.
+ *
+ * Adjacency is all Harlowe gives: a branch belongs to the one before it when
+ * nothing but whitespace separates that branch's body from this macro's `(`.
+ * That is stricter than Harlowe itself, which tolerates prose before an
+ * `(else:)`, and the strictness errs toward *more* chains — an unchained
+ * `(else:)` is one the reader shows rather than one it hides, so the cost is
+ * prose repeated, never prose eaten. Fail open, the reader's direction, which
+ * is the inverse of the fail-closed rule `gates.ts` runs on.
+ *
+ * `macros` must be in source order, which is what `parseMacros` returns.
+ * `readStoryMacros` does not call this — it is off the typing path, so
+ * `attachedEnd`, the one part here that is not O(1), never runs per keystroke.
+ */
+export function chainsOf(body: string, macros = parseMacros(body)): Map<number, ChainSlot> {
+  const out = new Map<number, ChainSlot>()
+  const open: OpenBranch[] = []
+  let nextChain = 0
+  /** `end` of the last macro read as a statement rather than as an operand. */
+  let prevEnd = -1
+
+  for (const macro of macros) {
+    // `parseMacros` yields a macro sitting in another's *arguments* as well as
+    // the one containing it. An operand is not a branch: without this,
+    // `(if: (not: $x))[A]` leaves `(not:)` as the macro a following `(else:)`
+    // is measured against, and every chain whose condition calls a macro
+    // silently breaks. It also swallows the phantom a string literal can
+    // produce — `MACRO_OPEN` scans the whole body, so `(set: $v to "(if: x)")`
+    // yields a bogus `if` from inside the quotes.
+    if (macro.start < prevEnd) continue
+    prevEnd = macro.end
+
+    const kind = CHAIN_KIND.get(macro.name)
+    if (kind === undefined) continue
+
+    // Pop every branch whose body has already closed; the last one popped is
+    // this macro's *sibling*, the branch beside it at its own nesting depth.
+    // A single "previous branch" variable cannot do this: it would orphan the
+    // trailing `(else:)` of `(if:)[ (if:)[X](else:)[Y] ](else:)[Z]`, whose
+    // opener is the outer `(if:)` and not the inner chain just above it.
+    let sibling: OpenBranch | null = null
+    while (open.length > 0 && open[open.length - 1]!.after <= macro.start) sibling = open.pop()!
+
+    // Comparing positions rather than trimming `body.slice(after, start)` is
+    // what keeps a nested branch out of the chain enclosing it: that slice runs
+    // backwards, and a backwards slice is the empty string, which passes any
+    // whitespace test.
+    const previous =
+      sibling !== null &&
+      CHAIN_OPENERS.has(sibling.slot.kind) &&
+      CHAIN_CONTINUATIONS.has(kind) &&
+      skipSpace(body, sibling.after) === macro.start
+        ? sibling.slot
+        : null
+
+    // An orphan `(else:)` or `(else-if:)` opens a chain of its own at position
+    // 0, so the reader can spot one with a single lookup and leave `undefined`
+    // meaning only "not a branching macro at all".
+    const slot: ChainSlot = previous
+      ? { chainId: previous.chainId, position: previous.position + 1, kind }
+      : { chainId: nextChain++, position: 0, kind }
+
+    out.set(macro.start, slot)
+    open.push({ slot, after: attachedEnd(body, macro.end) })
+  }
+
+  return out
 }
 
 /** Everything a whole story's macros say, gathered in one pass over its bodies. */
