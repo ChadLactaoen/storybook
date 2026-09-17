@@ -17,6 +17,7 @@ const emit = defineEmits<{
   toggleNotes: []
   openHelp: []
   openStats: []
+  openTags: []
   openReader: []
   openSettings: []
   openRecode: []
@@ -192,6 +193,13 @@ async function onFile(e: Event) {
         @click="emit('openStats')"
       >
         Stats
+      </button>
+      <button
+        class="btn"
+        title="Tags — how many routes run through each tag, and which routes collect several (Cmd G)"
+        @click="emit('openTags')"
+      >
+        Tags
       </button>
       <button class="btn" title="Show or hide the level guide lines" @click="emit('toggleLevels')">
         Levels

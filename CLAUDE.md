@@ -150,7 +150,8 @@ crossings → xcoord / tidy → routing` (each a module of that name). Alongside
 analyses the pipeline never calls: `paths.ts` counts distinct paths as `BigInt` (both
 forwards from a passage and backwards to one) and owns the one definition of a route edge,
 `gates.ts` reads what the story's `(if:)` macros say about which routes exist, `slugs.ts`
-spells out what a reader would have collected on the way to a passage, and
+spells out what a reader would have collected on the way to a passage, `tags.ts` measures
+how much of the story a tag covers, and
 `recode.ts` reads a numbering off the drawing, and
 `stats.ts` totals the story — words, the routes reaching each ending, and the draft-health
 lint — only when the panel asks. `README.md` has a per-module table.
@@ -265,6 +266,27 @@ Leaving `endings` off `forwardTargets` asks the third question — what does thi
 link to, *ignoring* the cutoff — which is exactly what the warning about an ending with
 links still leaving it needs.
 
+**Tags do not partition the routes, so a tag is counted by complement.** The endings
+table sums `to(n)` across endings because a route stops at exactly one of them; a route
+may collect the same tag three times, and a per-passage sum counts it three times. So
+`tags.ts` asks the opposite question — `countPathsAvoiding`, the routes that never enter
+any passage carrying the tag — and subtracts. The same primitive answers "which routes
+collect *all* of these", by inclusion–exclusion over which of the chosen tags a route is
+allowed to miss, at one graph walk per subset; the cap on how many tags may be combined
+therefore lives in `tags.ts`, not in the panel, because each tag added doubles the work.
+Two orderings inside `forwardCounter` are load-bearing and both state something false if
+tidied: `blocked` is checked **before** `endings`, or a passage that is both a marked
+ending and carries the tag returns `1n` as an ending before anyone notices it is blocked;
+and `kids` is **never** filtered, because `kids.length === 0` means *a route ends here*, so
+pruning blocked children invents a route that stops in the middle of the story. Like
+`gates.ts`, it runs outside `layoutStory` — a tag moves nothing on the canvas — and it
+needs no store memo at all, because only the panel reads it and the panel only exists
+while it is open. A memo keyed on `layoutVersion` alone would be the exact trap
+`runningSlugs` documents, since `tags` is deliberately absent from `layoutKey`. What it
+cannot see is a reader looping back: dropping back edges only ever *removes* a
+collection, so "all of these" is a lower bound and "none of these" is an **upper** one —
+the panel names the model rather than letting the number speak for itself.
+
 **A modified key that opens something must check what is already open.** `useShortcuts`
 runs its `mod` branch before the `modalOpen` stand-down on purpose: Cmd Z and the zoom keys
 still belong to the canvas under a veil. `Cmd /` is the exception in that branch, because
@@ -329,6 +351,8 @@ tag, a state, a note, the story's scratchpad) does not re-scan every body in the
 rename cascade, tags, save file), `layering` / `layout` (levels, geometry, determinism,
 paths), `scene` (settings, cast), `profile` (character sheet traits and relations),
 `gates` (inference from conditional links, and its fail-closed conditions),
+`tags` (routes through a tag, and the combinations of several, against a brute-force
+walk of every route),
 `stats` (endings, word counts, the lint, and the line between an authored link and a
 route edge) and `compat` (save files that predate a field),
 `recode` (numbering read off the layout, in both modes),

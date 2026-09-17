@@ -193,6 +193,31 @@ describe('the spec walkthrough', () => {
     expect(store.state.doc.nodes.every((n) => n.tags.includes('exposition'))).toBe(true)
   })
 
+  it('removes a tag nothing carries, and takes the filter with it', () => {
+    store.tagAdd(idOf('One'), 'exposition')
+    store.toggleFilter('tagFilter', 'exposition')
+    expect(store.state.tagFilter).toEqual(['exposition'])
+
+    // While a passage carries it, the tag stays — and so does the filter.
+    store.tagDelete('exposition')
+    expect(store.tags.value).toContain('exposition')
+    expect(store.state.tagFilter).toEqual(['exposition'])
+
+    store.tagRemove(idOf('One'), 'exposition')
+    store.tagDelete('exposition')
+    expect(store.tags.value).not.toContain('exposition')
+    // The chip that would switch this filter back off is drawn from `tags`, so
+    // leaving the name here would dim the canvas with nothing left to click.
+    expect(store.state.tagFilter).toEqual([])
+  })
+
+  it('pushes no undo entry for a removal it refused', () => {
+    store.tagAdd(idOf('One'), 'exposition')
+    const before = store.state.doc
+    store.tagDelete('exposition')
+    expect(store.state.doc).toBe(before)
+  })
+
   it('filters by search, tag and state together', () => {
     write(idOf('One'), '[[Two]]\n[[Three]]')
     store.tagAdd(idOf('Two'), 'combat')

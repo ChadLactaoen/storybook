@@ -4,6 +4,10 @@ import type { DerivedGraph, EdgeId } from './types'
 /** No passage marked as an ending — the shape every call had before endings existed. */
 export const NO_ENDINGS: ReadonlySet<NodeId> = new Set()
 
+/** Nothing blocked: what `countPaths` asks, and a shared empty set so the
+ *  per-passage loop in `stats.ts` does not allocate one per call. */
+export const NO_BLOCKED: ReadonlySet<NodeId> = new Set()
+
 /**
  * The passages a route can reach in one step from `id`.
  *
@@ -103,10 +107,73 @@ export function countPaths(
   startId: NodeId,
   endings: ReadonlySet<NodeId> = NO_ENDINGS,
 ): bigint {
+  // The no-passages-blocked case of `countPathsAvoiding`, the way `countPathsTo`
+  // is the one-passage case of `countPathsToAll`: the recurrence lives in one
+  // place, so the plain count and the avoiding one cannot drift apart.
+  return forwardCounter(g, backEdges, endings, NO_BLOCKED)(startId)
+}
+
+/**
+ * Count distinct story paths from `startId` that never enter a blocked passage.
+ *
+ * The complement is the point. "How many routes pass through at least one
+ * passage tagged `combat`" cannot be answered by summing over the tagged
+ * passages the way the endings table sums over endings: a route stops at
+ * exactly one ending, so endings partition the routes, but a route may collect
+ * the same tag three times and would be counted three times. Blocking them all
+ * and subtracting counts each route once, by construction:
+ *
+ *   touching(T) = countPaths(start) - countPathsAvoiding(start, passages tagged T)
+ *
+ * A null `startId` counts zero rather than one, the same answer `countPathsTo`
+ * gives: a story with no start has no routes, and walking an id the graph does
+ * not hold would otherwise report it as a terminal worth a route.
+ */
+export function countPathsAvoiding(
+  g: DerivedGraph,
+  backEdges: ReadonlySet<EdgeId>,
+  startId: NodeId | null,
+  blocked: ReadonlySet<NodeId>,
+  endings: ReadonlySet<NodeId> = NO_ENDINGS,
+): bigint {
+  if (startId === null) return 0n
+  return forwardCounter(g, backEdges, endings, blocked)(startId)
+}
+
+/**
+ * The shared recurrence behind both counters above.
+ *
+ * Two orderings in here are load-bearing, and both state something false if
+ * they are swapped or tidied:
+ *
+ * - **`blocked` is checked before `endings`.** A passage can be both marked as
+ *   an ending and carry the tag being asked about. Checked the other way it
+ *   returns `1n` as an ending before anyone notices it is blocked, so the
+ *   routes that stop there get counted as avoiding the very tag they end on.
+ * - **`kids` is never filtered.** The block check returns `0n` at the top of
+ *   the walk; it does not prune children on the way out. Filtering them instead
+ *   would leave a passage whose every successor is blocked with no kids at all,
+ *   and `kids.length === 0` means *one route ends here* — inventing a route
+ *   that stops in the middle of the story.
+ *
+ * A counter is only sound for the `(endings, blocked)` pair it closed over, so
+ * each question gets its own. Sharing one memo across different blocked sets
+ * would make every number it produced arbitrary.
+ */
+function forwardCounter(
+  g: DerivedGraph,
+  backEdges: ReadonlySet<EdgeId>,
+  endings: ReadonlySet<NodeId>,
+  blocked: ReadonlySet<NodeId>,
+): (id: NodeId) => bigint {
   const memo = new Map<NodeId, bigint>()
   const visiting = new Set<NodeId>()
 
   const walk = (id: NodeId): bigint => {
+    // Before the memo as well as before the endings check: a blocked passage is
+    // a constant zero, and keeping it out of the memo keeps the memo about the
+    // graph rather than about the question.
+    if (blocked.has(id)) return 0n
     const cached = memo.get(id)
     if (cached !== undefined) return cached
     if (visiting.has(id)) return 0n
@@ -125,7 +192,7 @@ export function countPaths(
     return result
   }
 
-  return walk(startId)
+  return walk
 }
 
 /**
