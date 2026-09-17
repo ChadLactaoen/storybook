@@ -1,5 +1,5 @@
 import type { StoryDoc, StoryNode } from '../types/story'
-import { compareByName, emptyCharacter, emptyDoc } from '../types/story'
+import { compareByName, compareStr, emptyCharacter, emptyDoc } from '../types/story'
 
 /**
  * Build a document from a compact adjacency spec: `{ One: ['Two', 'Three'] }`
@@ -12,7 +12,9 @@ import { compareByName, emptyCharacter, emptyDoc } from '../types/story'
  *
  * `opts.casts` also seeds the roster, in order of first appearance: a scene
  * name that is not on `doc.characters` is off-invariant, and nothing built here
- * should start out breaking one.
+ * should start out breaking one. `opts.tags` seeds `doc.tagColors` for the same
+ * reason — a tag no entry in the registry names is a tag `addTag` would never
+ * have produced.
  */
 export function docFrom(
   spec: Record<string, string[]>,
@@ -24,6 +26,7 @@ export function docFrom(
     codes?: Record<string, string>
     notes?: Record<string, string>
     slugs?: Record<string, string>
+    tags?: Record<string, string[]>
     /** Titles to mark as endings. */
     endings?: string[]
   } = {},
@@ -38,11 +41,20 @@ export function docFrom(
   }
   doc.characters = roster.map((name, i) => emptyCharacter(name, i))
 
+  const registry: string[] = []
+  for (const names of Object.values(opts.tags ?? {})) {
+    for (const name of names) if (!registry.includes(name)) registry.push(name)
+  }
+  doc.tagColors = registry
+    .map((name) => ({ name, color: 'none' as const }))
+    .sort((a, b) => compareStr(a.name, b.name))
+
   const nodes: StoryNode[] = titles.map((title, i) => ({
     id: String(i + 1),
     title,
     body: spec[title]!.map((t) => `[[Go to ${t}|${codeOf.get(t) ?? t}]]`).join('\n'),
-    tags: [],
+    // Sorted, the way both `addTag` and `serializeDoc` store them.
+    tags: [...(opts.tags?.[title] ?? [])].sort(compareStr),
     state: 'TODO' as const,
     isEnding: opts.endings?.includes(title) ?? false,
     levelOffset: opts.offsets?.[title] ?? 0,

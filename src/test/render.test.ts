@@ -286,6 +286,30 @@ describe('the app renders', () => {
     expect(problems).toEqual([])
   })
 
+  it('opens the tag analyzer from the toolbar and counts routes through a tag', async () => {
+    mount()
+    store.newStory('Tag Check')
+    await nextTick()
+
+    const first = store.state.doc.nodes[0]!.id
+    store.tagAdd(first, 'opening')
+    await nextTick()
+
+    const tagsButton = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === 'Tags',
+    )!
+    tagsButton.click()
+    await nextTick()
+
+    const panel = host.querySelector('[aria-label="Tag analyzer"]')!
+    expect(panel).not.toBeNull()
+    const text = panel.textContent!.replace(/\s+/g, ' ')
+    // The tag is on the only passage, so every route runs through it.
+    expect(text).toContain('opening')
+    expect(text).toContain('100%')
+    expect(problems).toEqual([])
+  })
+
   it('pops the body editor out over the window, writing the same document', async () => {
     mount()
     store.newStory('Roomy')

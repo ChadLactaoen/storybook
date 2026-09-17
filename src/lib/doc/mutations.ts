@@ -526,6 +526,27 @@ export function renameTag(doc: StoryDoc, from: string, to: string): StoryDoc {
   return next
 }
 
+/**
+ * Drop a tag from the story's registry.
+ *
+ * Only when nothing carries it. A tag still in use is refused rather than
+ * stripped from the passages carrying it: removing a label is a tidying-up
+ * action, and quietly rewriting six passages because a button said "remove" is
+ * not what anyone pressing it meant. Un-tag them first and the tag becomes
+ * removable — which is also why `allTags` keeps reporting the unused ones:
+ * they are the rows this exists to clear.
+ *
+ * Refusing returns the document unchanged, by reference, so `commit` pushes no
+ * undo entry for a press that did nothing. Same rule `setTagColor` follows.
+ */
+export function deleteTag(doc: StoryDoc, tag: string): StoryDoc {
+  if (doc.nodes.some((n) => n.tags.includes(tag))) return doc
+  if (!doc.tagColors.some((t) => t.name === tag)) return doc
+  const next = clone(doc)
+  next.tagColors = next.tagColors.filter((t) => t.name !== tag)
+  return next
+}
+
 /** Every tag in use, plus any registered but currently unused. */
 export function allTags(doc: StoryDoc): string[] {
   const set = new Set<string>()

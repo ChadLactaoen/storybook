@@ -551,6 +551,22 @@ export function tagRecolor(tag: string, color: TagColor): void {
   commit(M.setTagColor(state.doc, tag, color))
 }
 
+/**
+ * Remove a tag from the story entirely. Refused while any passage carries it.
+ *
+ * The filter has to come with it, the way `characterDelete` takes the cast
+ * filter with it: the chip that would un-toggle the filter is drawn from
+ * `tags`, so a tag deleted while still filtered on would leave the canvas dimmed
+ * with nothing left on screen to switch it back off.
+ */
+export function tagDelete(tag: string): void {
+  const next = M.deleteTag(state.doc, tag)
+  if (next === state.doc) return
+  commit(next)
+  const i = state.tagFilter.indexOf(tag)
+  if (i !== -1) state.tagFilter.splice(i, 1)
+}
+
 /** Returns an error message when the code is already taken, else null. */
 export function codeSet(id: string, value: string): string | null {
   const { doc: next, error } = M.setCode(state.doc, id, value)

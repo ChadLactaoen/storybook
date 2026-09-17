@@ -53,7 +53,7 @@ choice a passage is locked behind, or that no route reaches it at all.
 | Recoding everything | Toolbar &rarr; **Recode** renames every passage&rsquo;s code at once, from the tree as drawn. **Level and node** gives `3N01` &mdash; the level, then the position within it, left to right. **Node** gives `P04` &mdash; the position in the whole story, top to bottom, left to right within each level. Both take a prefix and a separator, so `3/01`, `L3P01` or a bare `04` are all available. Numbers are padded to at least two digits &mdash; `P04`, `3N01` &mdash; and wider once the story needs it, so codes sort in the order they are drawn and growing past ten does not rewrite every code. Inbound links follow; a link to a passage that doesn&rsquo;t exist is left alone. One undo step |
 | Renaming a title | Just a field write. Nothing points at a title, so nothing has to follow it |
 | Deleting | Leaves inbound `[[...]]` alone — your prose is never rewritten. The link shows as a dashed phantom card you can click to recreate. Refused if it would cut a surviving passage off from the start |
-| Tags | Story-global, reusable from a dropdown, colour-coded from Twine's palette. Recolouring a tag repaints every passage carrying it |
+| Tags | Story-global, reusable from a dropdown, colour-coded from Twine's palette. Recolouring a tag repaints every passage carrying it. A tag sticks around once created, so it stays offerable &mdash; **Tags** &rarr; **Remove** clears out one nothing carries |
 | Setting | Free text, with autocomplete from settings already used. A passage linked from another inherits its setting |
 | Characters | A story-global cast roster, kept in the author's own order — leads first, walk-ons last. A passage picks its cast from the roster and gives each one a note for *that scene* |
 | Character sheet | Per character: a description, plus **Personality**, **Dialogue characteristics**, **Mannerisms** and **Relations** as discrete key points. Open it from the index or from a passage's cast |
@@ -62,6 +62,7 @@ choice a passage is locked behind, or that no route reaches it at all.
 | State | TODO / Draft / Done, shown as a coloured badge on each card |
 | Endings | Tick **Mark as Ending** in the sidebar and the card gets a teal underline and an **END** flag. Never guessed for you &mdash; a passage with no links yet is indistinguishable from one you meant to finish. Routes stop at an ending, so the endings divide the story's routes between them rather than overlapping, and anything linked *past* one is unreachable (Story stats says so) |
 | Reader | Toolbar &rarr; **Play**, or `Cmd P`: read the draft back a choice at a time, as a book page. Conditions actually run, so you can watch which branch fires; a console shows the variables you are carrying, which passage set each, the route so far as `P1->P3->P7`, and the marks collected along it &mdash; where a card has to write `A*D` because the routes disagree, the console says which one you took, `ABD`. **Sidebar &rarr; Advanced &rarr; Play from here** starts anywhere, with everything unset and a note saying so. Read-only &mdash; a session never changes the story |
+| Tags | Toolbar &rarr; **Tags**, or `Cmd G`: every tag with the passages carrying it and the share of routes that run through at least one of them. Tick several and it answers the harder question &mdash; how many routes collect *all* of them somewhere along the way, in any order, across any passages &mdash; and how many collect none. Click a count to list the passages, or **Filter** to see them on the tree. A tag no passage carries offers **Remove** instead, which clears it from the story and from the filter chips; a tag still in use is refused rather than stripped off the passages carrying it |
 | Story stats | Toolbar &rarr; **Stats**, the routes pill, or `Cmd /`. Word count, every ending with the share of routes reaching it, and a draft-health list &mdash; broken links, unreachable passages, dead ends you never marked. Click any row to jump to the passage. Computed when you open it, not as you type |
 | Levels | Assigned automatically. A passage can be nudged down exactly one level; moving up is structurally impossible and the inspector says which parent pins it |
 | Story codes | A reader's route is the codes of the passages they visited, `P1->P3->P7`. Print it at the end of your story with `(joined: "->", ...(history:), (passage:)'s name)` |
@@ -105,7 +106,8 @@ Recode again with the same settings does nothing.
 
 Wheel or pinch to zoom at the cursor, drag the background to pan.
 `Cmd +` / `Cmd -` zoom, `Cmd 0` zooms to fit, `Cmd 1` resets to 100%.
-`Cmd F` focuses search, `Cmd J` opens the story notes, `Cmd Z` / `Cmd Shift Z`
+`Cmd F` focuses search, `Cmd G` opens the tag analyzer, `Cmd J` opens the story
+notes, `Cmd Z` / `Cmd Shift Z`
 undo and redo, `N` adds a
 passage, `Delete` removes everything selected. Formatting keys are handled by
 the editor itself rather than the global map, so they only fire where a
@@ -136,11 +138,12 @@ canonical JSON; **Import** reads it back.
 | `xcoord` | lay each component out, then pack them left to right |
 | `tidy` | bottom-up rigid-subtree placement: parents land on the midpoint of their outermost children — exactly so for a tree, best effort once a passage has two parents |
 | `routing` | C1-smooth cubics, straight-run collapse, arrowheads clipped to card boundaries |
-| `paths` | distinct path counts as BigInt (they grow exponentially), forwards from a passage and backwards to one; also the one definition of an edge a route can take |
+| `paths` | distinct path counts as BigInt (they grow exponentially), forwards from a passage, backwards to one, and forwards while avoiding a set of passages; also the one definition of an edge a route can take |
 | `stats` | word count, the routes reaching each ending, and the draft-health lint |
 | `recode` | a numbering read off the drawing, so codes can be renamed to match the tree |
 | `gates` | what conditional links prove: which choice a passage is locked behind, and which branches are dead |
 | `slugs` | the running slug per passage &mdash; the marks along the route here, with `*` where the routes disagree |
+| `tags` | how much of the story a tag covers, counted in routes rather than passages &mdash; and which routes collect several at once |
 | `macros` *(in `lib/harlowe/`)* | reads `(set:)` and `(if:)` as text, so a guarded link can narrow a trail |
 | `run` *(in `lib/harlowe/`)* | the reader's evaluator: a passage's prose, choices and variables, as typed nodes &mdash; a sandbox that feeds nothing above |
 

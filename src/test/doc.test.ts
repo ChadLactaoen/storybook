@@ -4,8 +4,10 @@ import {
   addTag,
   createNode,
   deleteNode,
+  deleteTag,
   deleteNodes,
   recodeAll,
+  removeTag,
   renameNode,
   resolveLinks,
   setBody,
@@ -414,6 +416,29 @@ describe('tags', () => {
     doc = setTagColor(doc, 'exposition', 'purple')
     expect(doc.tagColors).toEqual([{ name: 'exposition', color: 'purple' }])
     expect(doc.nodes.every((n) => n.tags.includes('exposition'))).toBe(true)
+  })
+
+  it('removes a tag nothing carries', () => {
+    let doc = docFrom({ One: [], Two: [] })
+    doc = addTag(doc, doc.nodes[0]!.id, 'exposition')
+    doc = removeTag(doc, doc.nodes[0]!.id, 'exposition')
+    // Un-tagging a passage leaves the tag registered — that is the row the
+    // analyzer calls unused, and this is what clears it.
+    expect(doc.tagColors.map((t) => t.name)).toEqual(['exposition'])
+    expect(deleteTag(doc, 'exposition').tagColors).toEqual([])
+  })
+
+  it('refuses to remove a tag a passage still carries, rather than stripping it', () => {
+    let doc = docFrom({ One: [], Two: [] })
+    doc = addTag(doc, doc.nodes[0]!.id, 'exposition')
+    // Reference-identity, not just equality: `commit` compares by reference, so
+    // a refusal has to push no undo entry for a press that did nothing.
+    expect(deleteTag(doc, 'exposition')).toBe(doc)
+  })
+
+  it('does nothing for a tag the story never had', () => {
+    const doc = docFrom({ One: [] })
+    expect(deleteTag(doc, 'ghost')).toBe(doc)
   })
 })
 

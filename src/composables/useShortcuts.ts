@@ -18,6 +18,9 @@ export interface ShortcutHandlers {
   openStats: () => void
   /** True while the stats sheet itself is what is up. */
   statsOpen: () => boolean
+  openTags: () => void
+  /** True while the tag sheet itself is what is up. */
+  tagsOpen: () => boolean
   togglePlay: () => void
   /** True while the reader itself is what is up. */
   playOpen: () => boolean
@@ -126,6 +129,18 @@ export function useShortcuts(handlers: ShortcutHandlers) {
           if (handlers.dialogOpen() && !handlers.statsOpen()) return
           e.preventDefault()
           handlers.openStats()
+          return
+        // Tags, next to stats because it answers the neighbouring question.
+        // `g` rather than `t`: Chrome keeps Cmd T for a new tab and will not
+        // yield it, so the binding would simply not arrive. Same self-exempt
+        // guard as `/` — the sheet has to close with the key that opened it,
+        // and must not stack over the expanded editor, which listens for the
+        // same Escape.
+        case 'g':
+          if (nativeEditing) return
+          if (handlers.dialogOpen() && !handlers.tagsOpen()) return
+          e.preventDefault()
+          handlers.openTags()
           return
         // Takes browser Print, deliberately. This app already claims Cmd
         // +/-/0 from page zoom on the grounds that a canvas app wants its own

@@ -100,7 +100,7 @@ function onDrop(e: DragEvent) {
 .veil {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 101;
   display: grid;
   place-items: center;
   padding: 24px;

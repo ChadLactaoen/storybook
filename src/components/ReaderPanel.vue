@@ -232,13 +232,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 <style scoped>
 /* Ladder: body 92, sheet 94, help 95, settings 96, recode 97, stats 98,
-   reader 99, startup 100. The reader is a focus mode and covers anything the
+   tags 99, reader 100, startup 101. The reader is a focus mode and covers anything the
    author left open, but never the startup dialog — there is no story to read
    without one. */
 .veil {
   position: fixed;
   inset: 0;
-  z-index: 99;
+  z-index: 100;
   display: grid;
   place-items: center;
   padding: 24px;

@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import AppToolbar from './components/AppToolbar.vue'
 import StoryStatsPanel from './components/StoryStatsPanel.vue'
+import TagAnalyzerPanel from './components/TagAnalyzerPanel.vue'
 import ReaderPanel from './components/ReaderPanel.vue'
 import MiniMap from './components/MiniMap.vue'
 import NodeInspector from './components/NodeInspector.vue'
@@ -43,6 +44,7 @@ const helpOpen = ref(false)
 const settingsOpen = ref(false)
 const recodeOpen = ref(false)
 const statsOpen = ref(false)
+const tagsOpen = ref(false)
 
 /**
  * A full-screen modal owns the keyboard while it is up.
@@ -53,7 +55,7 @@ const statsOpen = ref(false)
  */
 const modalOpen = computed(
   () =>
-    // The startup dialog counts. It sits above everything at z-index 100, so a
+    // The startup dialog counts. It sits above everything at z-index 101, so a
     // key that opened a panel under it would put one out of sight — and the
     // reader in particular would then reveal a stale notice over the story the
     // author goes on to create.
@@ -62,6 +64,7 @@ const modalOpen = computed(
     settingsOpen.value ||
     recodeOpen.value ||
     statsOpen.value ||
+    tagsOpen.value ||
     play.playOpen.value,
 )
 
@@ -233,6 +236,8 @@ useShortcuts({
   openHelp: () => (helpOpen.value = true),
   openStats: () => (statsOpen.value = !statsOpen.value),
   statsOpen: () => statsOpen.value,
+  openTags: () => (tagsOpen.value = !tagsOpen.value),
+  tagsOpen: () => tagsOpen.value,
   dialogOpen: () => modalOpen.value || (inspector.value?.isExpanded() ?? false),
   modalOpen: () => modalOpen.value,
   togglePlay,
@@ -278,6 +283,7 @@ function dismissNotices() {
       @toggle-notes="toggleNotes"
       @open-help="openHelp"
       @open-stats="statsOpen = true"
+      @open-tags="tagsOpen = true"
       @open-reader="openReader()"
       @open-settings="settingsOpen = true"
       @open-recode="recodeOpen = true"
@@ -373,6 +379,7 @@ function dismissNotices() {
 
     <RecodePanel v-if="recodeOpen" @close="recodeOpen = false" />
     <StoryStatsPanel v-if="statsOpen" @close="statsOpen = false" @open="openPassage" />
+    <TagAnalyzerPanel v-if="tagsOpen" @close="tagsOpen = false" @open="openPassage" />
     <ReaderPanel v-if="play.playOpen.value" @close="play.playClose()" />
 
     <CharacterSheet
