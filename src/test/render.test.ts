@@ -2169,6 +2169,40 @@ describe('the reader', () => {
     expect(problems).toEqual([])
   })
 
+  it('shows the marks collected so far, and only when there are any', async () => {
+    mount()
+    store.newStory('Render Check')
+    const start = store.state.doc.nodes[0]!.id
+    writeBody(start, '[[Onward|Two]]')
+    await nextTick()
+
+    const openConsole = async () => {
+      const play = [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
+        (b) => b.textContent!.trim() === 'Play',
+      )!
+      play.click()
+      await nextTick()
+      host.querySelector<HTMLButtonElement>('.disclose')!.click()
+      await nextTick()
+    }
+
+    await openConsole()
+    expect(host.querySelector('.console')!.textContent).not.toContain('Collected')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    store.slugSet(start, 'A')
+    store.slugSet(store.state.doc.nodes.find((n) => n.code === 'Two')!.id, 'B')
+    await nextTick()
+
+    await openConsole()
+    host.querySelector<HTMLButtonElement>('.choices .choice')!.click()
+    await nextTick()
+    expect(host.querySelector('.console')!.textContent).toContain('Collected')
+    expect(host.querySelector('.console')!.textContent).toContain('AB')
+    expect(problems).toEqual([])
+  })
+
   it('does not list a choice twice when its link sits under the prose', async () => {
     // The commonest Twine shape of all: links written directly under the prose,
     // with no blank line. `toBlocks` merges those into one block, so filtering

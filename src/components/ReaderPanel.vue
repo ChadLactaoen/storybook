@@ -10,6 +10,7 @@ import {
   playNotice,
   playRestart,
   playRoute,
+  playSlug,
   playStep,
   playVars,
 } from '../stores/play'
@@ -200,6 +201,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           <p class="row">
             <span class="k">Route</span>
             <code class="v">{{ playRoute || '—' }}</code>
+          </p>
+          <!-- Only when the story uses marks at all: a permanently empty row
+               would be noise in every story that does not. -->
+          <p v-if="playSlug" class="row">
+            <span class="k">Collected</span>
+            <code class="v">{{ playSlug }}</code>
           </p>
           <p v-if="playVars.length === 0" class="row">
             <span class="k">Variables</span>

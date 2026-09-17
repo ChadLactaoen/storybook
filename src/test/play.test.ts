@@ -153,6 +153,73 @@ describe('variables along a route', () => {
   })
 })
 
+describe('the marks collected along the way', () => {
+  it('runs the marks together in the order they were collected', () => {
+    load(docFrom({ One: ['Two'], Two: ['Three'], Three: [] }, { slugs: { One: 'A', Two: 'B', Three: 'D' } }))
+    play.playStart()
+    expect(play.playSlug.value).toBe('A')
+    play.playChoose(0)
+    expect(play.playSlug.value).toBe('AB')
+    play.playChoose(0)
+    expect(play.playSlug.value).toBe('ABD')
+  })
+
+  it('skips a passage that carries no mark', () => {
+    load(docFrom({ One: ['Two'], Two: ['Three'], Three: [] }, { slugs: { One: 'A', Three: 'D' } }))
+    play.playStart()
+    play.playChoose(0)
+    play.playChoose(0)
+    expect(play.playSlug.value).toBe('AD')
+  })
+
+  it('answers with a literal where the card has to write a star', () => {
+    // `runningSlugs` describes every route at once, so a fork makes it say
+    // `A*D`. A session has walked one route, so it can say which way.
+    const doc = docFrom(
+      { One: ['Two', 'Three'], Two: ['Four'], Three: ['Four'], Four: [] },
+      { slugs: { One: 'A', Two: 'B', Three: 'C', Four: 'D' } },
+    )
+    load(doc)
+    const four = store.state.doc.nodes.find((n) => n.title === 'Four')!
+    expect(store.runningSlugs.value.get(four.id)).toBe('A*D')
+
+    play.playStart()
+    play.playChoose(0)
+    play.playChoose(0)
+    expect(play.playSlug.value).toBe('ABD')
+
+    play.playStart()
+    play.playChoose(1)
+    play.playChoose(0)
+    expect(play.playSlug.value).toBe('ACD')
+  })
+
+  it('collects a mark twice when the route goes round a loop', () => {
+    // The case `loopTaint` has to star when it is answering for every route at
+    // once: a reader really does re-collect the mark, and the stack holds it.
+    load(docFrom({ One: ['Two'], Two: ['One'] }, { slugs: { One: 'A', Two: 'B' } }))
+    play.playStart()
+    play.playChoose(0)
+    play.playChoose(0)
+    expect(play.playRoute.value).toBe('P1->P2->P1')
+    expect(play.playSlug.value).toBe('ABA')
+  })
+
+  it('keeps the parentheses inside a mark', () => {
+    load(docFrom({ One: ['Two'], Two: [] }, { slugs: { One: 'A(a)', Two: 'D' } }))
+    play.playStart()
+    play.playChoose(0)
+    expect(play.playSlug.value).toBe('A(a)D')
+  })
+
+  it('is empty when no passage on the route carries a mark', () => {
+    load(docFrom({ One: ['Two'], Two: [] }))
+    play.playStart()
+    play.playChoose(0)
+    expect(play.playSlug.value).toBe('')
+  })
+})
+
 describe('where a reading stops', () => {
   it('offers no choices out of an authored ending', () => {
     // The reader agreeing with `countPaths`, which treats an ending as a leaf

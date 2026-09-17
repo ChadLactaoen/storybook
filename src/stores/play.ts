@@ -130,6 +130,31 @@ export const playRoute = computed(() =>
     .join('->'),
 )
 
+/**
+ * The marks this reader has actually collected, run together.
+ *
+ * Deliberately **not** `runningSlugs`, which answers a different question. That
+ * one describes every route to a passage at once, so it writes `*` wherever the
+ * routes disagree and its answer is a *pattern* — `A*D` says "A, then something,
+ * then D". A session has walked exactly one route, so nothing can disagree and
+ * the answer here is a literal: it is what the card's `*` stands for, made
+ * concrete on the way the reader actually went.
+ *
+ * Plain concatenation is the whole computation, and that is not an oversight.
+ * `normalizeSlug` strips `*` from what an author types, so a mark can never
+ * contain one and a run of them can never be read as a marker. There is nothing
+ * to unify, no groups to reconcile, and no loop to star: the stack holds a
+ * passage once per visit, so a mark collected twice round a loop appears twice —
+ * which is exactly the case `loopTaint` exists to warn about when the graph is
+ * answering for every route at once.
+ *
+ * Display, not identity, like every running slug: a route's identity is still
+ * its sequence of codes, which is what `playRoute` spells.
+ */
+export const playSlug = computed(() =>
+  state.stack.map((step) => nodeById(step.nodeId)?.slug ?? '').join(''),
+)
+
 /** Every variable the reader now holds, with the passage that last set it. */
 export const playVars = computed<{ name: string; value: string | null; setBy: string }[]>(() => {
   const view = playStep.value
