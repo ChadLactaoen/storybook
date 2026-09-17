@@ -11,7 +11,7 @@ import CharacterPicker from './CharacterPicker.vue'
 import HarloweEditor from './HarloweEditor.vue'
 import TagPicker from './TagPicker.vue'
 
-const emit = defineEmits<{ close: []; cheatSheet: []; open: [id: string] }>()
+const emit = defineEmits<{ close: []; cheatSheet: []; open: [id: string]; play: [id: string] }>()
 
 const node = store.selected
 const geom = store.selectedLayout
@@ -636,6 +636,18 @@ const upBlockedBy = computed(() => store.blockingParent.value)
       </template>
 
       <template v-else>
+        <section>
+          <span class="label">Read</span>
+          <button class="btn" title="Open the reader on this passage" @click="emit('play', node.id)">
+            Play from here
+          </button>
+          <p class="hint">
+            Starts with every variable unset, because nothing before this passage has run. A
+            condition that depends on an earlier <code>(set:)</code> will not fire, and the
+            reader says so while the session is open.
+          </p>
+        </section>
+
         <section>
           <span class="label">Level</span>
           <div class="level">

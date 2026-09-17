@@ -18,6 +18,9 @@ export interface ShortcutHandlers {
   openStats: () => void
   /** True while the stats sheet itself is what is up. */
   statsOpen: () => boolean
+  togglePlay: () => void
+  /** True while the reader itself is what is up. */
+  playOpen: () => boolean
   /**
    * True while any dialog that owns Escape is up — `modalOpen` plus the
    * expanded body editor, which is not a modal for the purposes below because
@@ -73,6 +76,7 @@ export function useShortcuts(handlers: ShortcutHandlers) {
           handlers.resetZoom()
           return
         case 'f':
+          if (handlers.modalOpen()) return
           e.preventDefault()
           handlers.focusSearch()
           return
@@ -80,13 +84,19 @@ export function useShortcuts(handlers: ShortcutHandlers) {
         // reached with the cursor already in a text field, and the expanded
         // editor focuses its own textarea, so a key that stood down while
         // typing could open it but never close it again.
+        // ...but they do stand down under a full-screen modal, which is a
+        // different question from typing. `modalOpen`, not `dialogOpen`: the
+        // expanded editor is not a modal here, or Cmd E could not close it.
+        // Without this, Cmd E mounts the body editor *under* an open veil,
+        // focuses its invisible textarea, and every keystroke after that edits
+        // the passage — through a session that is supposed to be read-only.
         case 'e':
-          if (nativeEditing) return
+          if (nativeEditing || handlers.modalOpen()) return
           e.preventDefault()
           handlers.toggleBodyEditor()
           return
         case 'k':
-          if (nativeEditing) return
+          if (nativeEditing || handlers.modalOpen()) return
           e.preventDefault()
           handlers.toggleCheatSheet()
           return
@@ -94,7 +104,7 @@ export function useShortcuts(handlers: ShortcutHandlers) {
         // textarea that focuses itself on open, so a key that stood down while
         // typing could open it and then never close it again.
         case 'j':
-          if (nativeEditing) return
+          if (nativeEditing || handlers.modalOpen()) return
           e.preventDefault()
           handlers.toggleNotes()
           return
@@ -116,6 +126,22 @@ export function useShortcuts(handlers: ShortcutHandlers) {
           if (handlers.dialogOpen() && !handlers.statsOpen()) return
           e.preventDefault()
           handlers.openStats()
+          return
+        // Takes browser Print, deliberately. This app already claims Cmd
+        // +/-/0 from page zoom on the grounds that a canvas app wants its own
+        // zoom; a story-graph editor wants its own Play more than it wants
+        // Print. An unmodified `p` would be worse — it would stand down while
+        // typing, and the author is nearly always in the body textarea, so it
+        // would simply appear broken.
+        case 'p':
+          if (nativeEditing) return
+          // Same rule as `/` above, and for the same reason: a key that opens a
+          // modal has to respect one already up, or the reader stacks over the
+          // expanded editor and one Escape closes them both. The reader is
+          // exempt from its own guard, or the key could not close it again.
+          if (handlers.dialogOpen() && !handlers.playOpen()) return
+          e.preventDefault()
+          handlers.togglePlay()
           return
         case 'z':
           if (typing) return

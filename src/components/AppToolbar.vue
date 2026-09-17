@@ -17,6 +17,7 @@ const emit = defineEmits<{
   toggleNotes: []
   openHelp: []
   openStats: []
+  openReader: []
   openSettings: []
   openRecode: []
 }>()
@@ -170,6 +171,21 @@ async function onFile(e: Event) {
     </div>
 
     <div class="group">
+      <!-- Primary, and here rather than keyboard-only: an undiscoverable
+           affordance for the headline feature is no affordance. Disabled with
+           its reason when there is no first passage to start from. -->
+      <button
+        class="btn btn-primary"
+        :disabled="store.state.doc.startNodeId === null"
+        :title="
+          store.state.doc.startNodeId === null
+            ? 'Mark a passage as the start before reading'
+            : 'Read the story from the start (Cmd P)'
+        "
+        @click="emit('openReader')"
+      >
+        Play
+      </button>
       <button
         class="btn"
         title="Story stats — routes, endings, word count, draft health (Cmd /)"

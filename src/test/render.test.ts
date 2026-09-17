@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import type { App as VueApp } from 'vue'
 import App from '../App.vue'
+import { resetPlay } from '../stores/play'
 import { resetPrefs, setPref } from '../stores/prefs'
 import * as store from '../stores/story'
 
@@ -44,6 +45,11 @@ beforeEach(() => {
   // Preferences are a module singleton too: without this, a toggle flipped by
   // one test silently changes what the next one creates.
   resetPrefs()
+  // And so is the play session. Leave one open and its full-screen veil is
+  // mounted over every test after it in this file, which asserts on
+  // `host.textContent` and fails on any Vue warning — so the failures land a
+  // long way from the cause.
+  resetPlay()
 })
 
 afterEach(() => {
@@ -2068,6 +2074,182 @@ describe('the advanced tab', () => {
 
     expect(host.querySelector('.inspector #passage-code')).not.toBeNull()
     expect(host.querySelector('.inspector .editor')).toBeNull()
+    expect(problems).toEqual([])
+  })
+})
+
+describe('the reader', () => {
+  /** Mount a two-passage story and open the reader from the toolbar. */
+  async function openReader(): Promise<void> {
+    mount()
+    store.newStory('Render Check')
+    writeBody(store.state.doc.nodes[0]!.id, 'Prose here.\n\n[[Onward|Two]]')
+    await nextTick()
+
+    const play = [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
+      (b) => b.textContent!.trim() === 'Play',
+    )!
+    play.click()
+    await nextTick()
+  }
+
+  it('opens from the toolbar onto the story’s first passage', async () => {
+    await openReader()
+
+    const sheet = host.querySelector('[aria-label="Read the story"]')
+    expect(sheet).not.toBeNull()
+    expect(sheet!.textContent).toContain('Prose here.')
+    expect(sheet!.textContent).toContain('Onward')
+    // The page number at the foot, and the route in the header.
+    expect(sheet!.querySelector('.folio')!.textContent!.trim()).toBe('P1')
+    expect(problems).toEqual([])
+  })
+
+  it('puts a veil over the canvas', async () => {
+    await openReader()
+    expect(host.querySelector('.veil')).not.toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('takes a choice and goes back again', async () => {
+    await openReader()
+
+    const choice = host.querySelector<HTMLButtonElement>('.choices .choice')!
+    choice.click()
+    await nextTick()
+    // `Two` is the code, not the title: `resolveLinks` mints the passage a bare
+    // `[[Onward|Two]]` names under exactly the code the link used.
+    expect(host.querySelector('.folio')!.textContent!.trim()).toBe('Two')
+
+    const back = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+      b.textContent!.includes('Back'),
+    )!
+    back.click()
+    await nextTick()
+    expect(host.querySelector('.folio')!.textContent!.trim()).toBe('P1')
+    expect(problems).toEqual([])
+  })
+
+  it('shows the route and the variables in the console', async () => {
+    mount()
+    store.newStory('Render Check')
+    writeBody(store.state.doc.nodes[0]!.id, '(set: $lantern to "lit")\n[[Onward|Two]]')
+    await nextTick()
+    const play = [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
+      (b) => b.textContent!.trim() === 'Play',
+    )!
+    play.click()
+    await nextTick()
+
+    host.querySelector<HTMLButtonElement>('.disclose')!.click()
+    await nextTick()
+
+    const console_ = host.querySelector('.console')!
+    expect(console_.textContent).toContain('$lantern')
+    expect(console_.textContent).toContain('lit')
+    expect(console_.textContent).toContain('P1')
+    expect(problems).toEqual([])
+  })
+
+  it('leaves the canvas keys alone while it is up', async () => {
+    // The concrete `modalOpen` regression. The reader has no text field for the
+    // shortcut layer's `isTyping` guard to catch, so without joining
+    // `modalOpen` an `n` would create a passage and Delete would remove one,
+    // behind the veil and out of sight.
+    await openReader()
+    const before = store.state.doc.nodes.length
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))
+    await nextTick()
+    expect(store.state.doc.nodes).toHaveLength(before)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+    await nextTick()
+    expect(store.state.doc.nodes).toHaveLength(before)
+    expect(problems).toEqual([])
+  })
+
+  it('shows the marks collected so far, and only when there are any', async () => {
+    mount()
+    store.newStory('Render Check')
+    const start = store.state.doc.nodes[0]!.id
+    writeBody(start, '[[Onward|Two]]')
+    await nextTick()
+
+    const openConsole = async () => {
+      const play = [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
+        (b) => b.textContent!.trim() === 'Play',
+      )!
+      play.click()
+      await nextTick()
+      host.querySelector<HTMLButtonElement>('.disclose')!.click()
+      await nextTick()
+    }
+
+    await openConsole()
+    expect(host.querySelector('.console')!.textContent).not.toContain('Collected')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    store.slugSet(start, 'A')
+    store.slugSet(store.state.doc.nodes.find((n) => n.code === 'Two')!.id, 'B')
+    await nextTick()
+
+    await openConsole()
+    host.querySelector<HTMLButtonElement>('.choices .choice')!.click()
+    await nextTick()
+    expect(host.querySelector('.console')!.textContent).toContain('Collected')
+    expect(host.querySelector('.console')!.textContent).toContain('AB')
+    expect(problems).toEqual([])
+  })
+
+  it('does not list a choice twice when its link sits under the prose', async () => {
+    // The commonest Twine shape of all: links written directly under the prose,
+    // with no blank line. `toBlocks` merges those into one block, so filtering
+    // whole blocks missed it and every choice appeared both in the prose and in
+    // the rows below.
+    mount()
+    store.newStory('Render Check')
+    writeBody(store.state.doc.nodes[0]!.id, 'You see a door.\n[[Open it|Two]]\n[[Leave|Three]]')
+    await nextTick()
+    const play = [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
+      (b) => b.textContent!.trim() === 'Play',
+    )!
+    play.click()
+    await nextTick()
+
+    const prose = host.querySelector('.prose')!
+    expect(prose.textContent!.trim()).toBe('You see a door.')
+    expect(prose.querySelector('.inline-link')).toBeNull()
+    expect(host.querySelectorAll('.choices .choice')).toHaveLength(2)
+    expect(problems).toEqual([])
+  })
+
+  it('will not open the body editor underneath itself', async () => {
+    // `Cmd E` mounted `BodyDialog` at z-index 92, out of sight under the veil,
+    // and focused its textarea — so every key after that edited the passage
+    // through a session that is meant to be read-only.
+    await openReader()
+    store.select(store.state.doc.nodes[0]!.id)
+    await nextTick()
+    const body = store.state.doc.nodes[0]!.body
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'e', metaKey: true, bubbles: true }),
+    )
+    await nextTick()
+
+    expect(host.querySelector('[aria-label="Edit passage body"]')).toBeNull()
+    expect(store.state.doc.nodes[0]!.body).toBe(body)
+    expect(problems).toEqual([])
+  })
+
+  it('closes on Escape', async () => {
+    await openReader()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+
+    expect(host.querySelector('[aria-label="Read the story"]')).toBeNull()
     expect(problems).toEqual([])
   })
 })
