@@ -293,10 +293,11 @@ describe('what does not run', () => {
   })
 
   it('executes nothing inside an unterminated macro opener', () => {
-    // `parseMacros` drops the outer macro, so nothing is indexed at its `(`.
+    // `parseMacros` drops the outer macro, so nothing is indexed at its `(`
+    // and the walk would otherwise stroll into its arguments and run them.
     const result = render('(unknown: (set: $v to "x")')
     expect(vars(result)).toEqual([])
-    expect(result.unsupported).toEqual(['unterminated macro'])
+    expect(result.unsupported).toEqual(['set', 'unknown'])
   })
 
   it('keeps a bracketed aside that follows a set', () => {
@@ -315,7 +316,9 @@ describe('links and choices', () => {
 
   it('leaves a gap in choices for a hidden link, and keeps the rest aligned', () => {
     const body = '(if: $no is "y")[ [[A|P1]] ](else:)[ [[B|P2]] ]'
-    expect(render(body).choices).toEqual([{ ordinal: 1, label: 'B', target: 'P2' }])
+    expect(render(body).choices).toEqual([
+      { ordinal: 1, label: 'B', target: 'P2', uncertain: false },
+    ])
   })
 
   it('reads all four Twine link forms', () => {
@@ -395,9 +398,100 @@ describe('unsupported macros and asks', () => {
     expect(vars(result)).toEqual(['$name=?'])
   })
 
-  it('reports a bound input as an ask', () => {
+  it('reports a bound input as an ask, without inventing a prompt', () => {
+    // `(input-box:)`'s first string is its size pattern and `(dropdown:)`'s is
+    // its first option, so a first-string heuristic would show the reader a
+    // layout spec where a question belongs.
     const result = render('(input-box: bind $name, "=XX=", 3, "Who are you?")')
-    expect(result.asks).toEqual([{ variable: '$name', message: '=XX=', default: null }])
+    expect(result.asks).toEqual([{ variable: '$name', message: '', default: null }])
+  })
+})
+
+describe('regressions', () => {
+  it('needs the styler closer inside the span, not anywhere in the body', () => {
+    // An unrelated `//x//` further down would otherwise let the `//` of a URL
+    // open an emphasis that swallows everything between the two.
+    const result = render('[see https://a.com] then //x//')
+    expect(text(result)).toBe('p:see https://a.com then x')
+    const inlines = result.blocks[0]!.inlines
+    expect(inlines.filter((n) => n.kind === 'text' && n.text.includes('https'))).toHaveLength(1)
+    expect(inlines.every((n) => n.italic === (n.kind === 'text' && n.text === 'x'))).toBe(true)
+  })
+
+  it('does not let a styler opened in a hook outlive it', () => {
+    // Formatting survives a link or a macro on purpose; it must not survive the
+    // hook that opened it, or the author's real markers go unread.
+    expect(text(render("[start ''here] plain ''end''"))).toBe("p:start ''here plain end")
+    const inlines = render("[start ''here] plain ''end''").blocks[0]!.inlines
+    expect(inlines.at(-1)).toMatchObject({ text: 'end', bold: true })
+    expect(inlines[0]).toMatchObject({ bold: false })
+  })
+
+  it('keeps reading past an unterminated opener, so links are not stranded', () => {
+    // One typo'd paren used to make the passage a dead end in the reader while
+    // the map still drew edges out of it.
+    const result = render('a [[One|P1]] (bad: oops\n[[Two|P2]]')
+    expect(result.choices.map((c) => c.target)).toEqual(['P1', 'P2'])
+    expect(result.choices[1]).toMatchObject({ uncertain: true })
+  })
+
+  it('runs nothing after an unterminated opener', () => {
+    // Reading on is only safe because execution is frozen for the remainder.
+    const result = render('(note: unclosed\n(set: $v to "x")$v')
+    expect(vars(result)).toEqual([])
+    expect(text(result)).toBe('p:{note} unclosed\n{set}<$v=unset>')
+  })
+
+  it('keeps a back-tagged branch in its chain', () => {
+    // `attachedEnd` stops where this does, so `chainsOf` sees one chain. A
+    // drift there showed both halves of an either-or at once.
+    expect(text(render('(set: $v to "a")(if: $v is "a")[A]<t|(else:)[B]'))).toBe('p:A')
+  })
+
+  it('does not darken a variable an unknown macro merely reads', () => {
+    // Fail-open licenses pushing a *condition* to unreadable. It does not
+    // license replacing a value in the prose, or reporting a write that never
+    // happened in the debug console.
+    const result = render('(set: $name to "Mira")(text-colour: $name)[hi] $name')
+    expect(text(result)).toBe('p:{text-colour}hi <$name=Mira>')
+    expect(result.assigned).toEqual([{ variable: '$name', value: 'Mira' }])
+  })
+
+  it('keeps the spacing a verbatim span exists to keep', () => {
+    // One space at each end, which is what lets a backtick sit against the
+    // fence — not a full trim.
+    expect(text(render('`  keep  spacing  `'))).toBe('p: keep  spacing ')
+  })
+
+  it('does not read the word bind out of an author string', () => {
+    const result = render('(link: "bind $rope to the post")')
+    expect(result.asks).toEqual([])
+    expect(vars(result)).toEqual([])
+  })
+
+  it('settles a chain on a true condition even with no hook to render', () => {
+    // One of the few paths where this could state something false rather than
+    // merely show too much: the else has provably not been chosen.
+    expect(text(render('(set: $v to "x")(if: $v is "x")(else:)[B]'))).toBe('')
+  })
+
+  it('does not read block markup back out of a printed value', () => {
+    // Harlowe re-parses the output of `(display:)`, not of `(print:)`.
+    expect(text(render('(print: "> not a quote")'))).toBe('p:> not a quote')
+  })
+
+  it('marks a choice that only an unreadable region offered', () => {
+    // The caller acts on `choices`, so the marker has to reach it there too.
+    const result = render('(hidden:)[ [[A|P1]] ] then [[B|P2]]')
+    expect(result.choices.map((c) => `${c.target}${c.uncertain ? '?' : ''}`)).toEqual([
+      'P1?',
+      'P2',
+    ])
+  })
+
+  it('lists a dropped macro under its own name', () => {
+    // `unsupported` is documented as macro names; a two-word phrase is not one.
+    expect(render('(note: unclosed').unsupported).toEqual(['note'])
   })
 })
 
@@ -421,6 +515,7 @@ describe('safety and shape', () => {
         uncertain: false,
       },
     ])
+    expect(result.blocks[0]!.inlines.every((n) => n.kind !== 'text')).toBe(true)
   })
 
   it('returns empty everything for an empty body', () => {

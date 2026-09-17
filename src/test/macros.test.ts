@@ -264,6 +264,11 @@ describe('finding what a macro attaches to', () => {
     expect(after('(if: $v is "x") prose')).toBe(' prose')
   })
 
+  it('crosses a hook name tag on either side', () => {
+    expect(after('(if: $v is "x")|t>[A]\ntail')).toBe('\ntail')
+    expect(after('(if: $v is "x")[A]<t|\ntail')).toBe('\ntail')
+  })
+
   it('stops at the macro when the hook never closes', () => {
     // Leaves the `[` in what the caller reads next, which breaks a chain rather
     // than joining one on the strength of text nobody could parse.
@@ -360,6 +365,14 @@ describe('reading macro chains', () => {
 
   it('is not fooled by a bracket inside a string', () => {
     expect(chains('(if: $v is "a]b")[x](else:)[y]')).toEqual(['0.0 if', '0.1 else'])
+  })
+
+  it('keeps a chain across a hook name tag on either side', () => {
+    // `(if: …)[…]<name|` is idiomatic — the tag is what a later `(replace:)`
+    // aims at. Stopping at the `]` would leave `<t|` between the branches, and
+    // the reader would show both halves of an either-or at once.
+    expect(chains('(if: $v is "a")[x]<t|(else:)[y]')).toEqual(['0.0 if', '0.1 else'])
+    expect(chains('(if: $v is "a")|t>[x](else:)[y]')).toEqual(['0.0 if', '0.1 else'])
   })
 
   it('keys every slot by the macro start, in source order', () => {

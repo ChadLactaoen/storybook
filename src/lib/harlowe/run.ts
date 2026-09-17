@@ -42,6 +42,8 @@ import type { ChainSlot, RawMacro } from './macros'
 import {
   chainsOf,
   closeHook,
+  HOOK_TAG_BACK,
+  HOOK_TAG_FRONT,
   parseMacros,
   skipSpace,
   skipString,
@@ -68,7 +70,18 @@ interface Marked {
 }
 
 export type Inline =
-  | ({ kind: 'text'; text: string } & Marked)
+  | ({
+      kind: 'text'
+      text: string
+      /**
+       * True when this text is a *value* — the output of `(print:)` — rather
+       * than prose the author wrote. Block markup is not re-read out of it:
+       * `(print: "> hi")` prints a greater-than sign, it does not open a quote,
+       * because Harlowe re-parses the output of `(display:)` and not of
+       * `(print:)`.
+       */
+      inert: boolean
+    } & Marked)
   | ({ kind: 'link'; ordinal: number; label: string; target: string } & Marked)
   | ({ kind: 'variable'; name: string; value: string | null; state: VarState } & Marked)
   | ({
@@ -93,6 +106,14 @@ export interface RunChoice {
   ordinal: number
   label: string
   target: string
+  /**
+   * The link sits in a region this evaluator could not establish, so Harlowe
+   * might not offer it at all. The caller acts on `choices`, so the marker has
+   * to reach it here too — a link out of a `(hidden:)` hook handed over as a
+   * definite choice is the fail-open asymmetry losing its marker exactly where
+   * it matters.
+   */
+  uncertain: boolean
 }
 
 /** A reader-input macro, reported rather than answered. */
@@ -134,12 +155,38 @@ export interface RunResult {
 const OPAQUE_WRITERS = new Set(['move', 'unpack'])
 
 /** Sticky copy of `MACRO_OPEN`, for the one macro `parseMacros` drops. */
-const OPENER = /\(\s*[A-Za-z_][A-Za-z0-9_-]*\s*:/y
+const OPENER = /\(\s*([A-Za-z_][A-Za-z0-9_-]*)\s*:/y
 /** Sticky copy of the shared variable pattern, so `lastIndex` is ours alone. */
 const SIGIL = new RegExp(VARIABLE_RE.source, 'y')
-/** `|name>` before a hook, and `<name|` after one (Harlowe's `hookTagFront`). */
-const HOOK_TAG_FRONT = /^\|[\w-]*>/
-const HOOK_TAG_BACK = /^<[\w-]*\|/
+/** Past a hook tag at `i`, or `i` if there is none. Shared with `attachedEnd`. */
+function skipHookTag(src: string, i: number, tag: RegExp): number {
+  tag.lastIndex = i
+  return tag.exec(src) !== null ? tag.lastIndex : i
+}
+
+/**
+ * The same text with every string literal blanked out, positions preserved.
+ *
+ * `macros.ts` states the rule this exists for: a `)` or `[` inside a quoted
+ * string must never be counted as structure. Neither must a *word* —
+ * `(link: "bind $rope to the post")` is prose, not a variable binding.
+ */
+function outsideStrings(text: string): string {
+  let out = ''
+  let i = 0
+  while (i < text.length) {
+    const c = text[i]!
+    if (c === '"' || c === "'") {
+      const end = skipString(text, i)
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    out += c
+    i++
+  }
+  return out
+}
 /** `$v to "x"` / `$v into "x"` — anchored, the way `macros.ts`'s ASSIGN is. */
 const SET_PART = /^([$_][A-Za-z_][A-Za-z0-9_-]*)\s+(?:to|into)\s+([\s\S]+)$/
 /** `"x" into $v` — reversed operands, anchored on the tail so a string may hold `into`. */
@@ -172,6 +219,11 @@ interface Ctx {
   italic: boolean
   /** Greater than zero inside a region whose outcome could not be established. */
   speculative: number
+  /**
+   * Greater than zero where the source is malformed, so what follows is read
+   * for its prose but nothing in it is allowed to run.
+   */
+  frozen: number
   /** Pending run of plain text, flushed when anything else is emitted. */
   buf: string
 }
@@ -206,6 +258,7 @@ export function renderPassage(body: string, vars: Vars = new Map()): RunResult {
     bold: false,
     italic: false,
     speculative: 0,
+    frozen: 0,
     buf: '',
   }
 
@@ -234,8 +287,14 @@ function marks(ctx: Ctx): Marked {
 
 function flush(ctx: Ctx): void {
   if (ctx.buf.length === 0) return
-  ctx.out.push({ kind: 'text', text: ctx.buf, ...marks(ctx) })
+  ctx.out.push({ kind: 'text', text: ctx.buf, inert: false, ...marks(ctx) })
   ctx.buf = ''
+}
+
+/** Emit a value rather than prose, so block markup is not read back out of it. */
+function pushValue(ctx: Ctx, text: string): void {
+  flush(ctx)
+  ctx.out.push({ kind: 'text', text, inert: true, ...marks(ctx) })
 }
 
 /**
@@ -248,11 +307,31 @@ function flush(ctx: Ctx): void {
  * the one thing the flag exists to prevent.
  */
 function speculate(ctx: Ctx, from: number, to: number): void {
-  flush(ctx)
   ctx.speculative++
+  evalRegion(ctx, from, to)
+  ctx.speculative--
+}
+
+/**
+ * Walk a nested region — a hook's interior — with formatting of its own.
+ *
+ * `bold` and `italic` are context flags on the walk, which is what lets them
+ * survive a link or a macro. They must not survive the *hook* that opened them:
+ * `[start ''here] plain` would otherwise bold everything after the hook as well,
+ * leaving the author's real `''…''` unread and a stray marker in the prose.
+ *
+ * The flushes are load-bearing either way: `marks` is read when the buffer is
+ * flushed, not when text is appended, so text gathered inside the region would
+ * otherwise be emitted with whatever state applied after it ended.
+ */
+function evalRegion(ctx: Ctx, from: number, to: number): void {
+  flush(ctx)
+  const bold = ctx.bold
+  const italic = ctx.italic
   evalSpan(ctx, from, to)
   flush(ctx)
-  ctx.speculative--
+  ctx.bold = bold
+  ctx.italic = italic
 }
 
 function chip(ctx: Ctx, name: string, source: string): void {
@@ -273,8 +352,9 @@ function emitVariable(ctx: Ctx, name: string): void {
 function emitLink(ctx: Ctx, link: ParsedLink): void {
   flush(ctx)
   const label = link.label ?? link.target
+  const uncertain = ctx.speculative > 0
   ctx.out.push({ kind: 'link', ordinal: link.ordinal, label, target: link.target, ...marks(ctx) })
-  ctx.choices.push({ ordinal: link.ordinal, label, target: link.target })
+  ctx.choices.push({ ordinal: link.ordinal, label, target: link.target, uncertain })
 }
 
 // ---------------------------------------------------------------- the walk
@@ -324,8 +404,19 @@ function evalSpan(ctx: Ctx, from: number, to: number): void {
     // rides on the inline — and keeps the cursor out of the arguments.
     if (c === '(') {
       OPENER.lastIndex = i
-      if (OPENER.exec(src) !== null) {
-        chip(ctx, 'unterminated macro', src.slice(i, to))
+      const opener = OPENER.exec(src)
+      if (opener !== null) {
+        // `parseMacros` drops a macro whose paren never closes, so nothing is
+        // indexed at its `(` and the walk would stroll into its arguments and
+        // execute what it found. Chipping the rest of the span would keep the
+        // cursor out but strand every link after it — one typo'd paren and the
+        // reader has no way forward, on a passage the map still draws edges
+        // from. So: report the opener, then read on with execution frozen.
+        // Prose kept, links kept, and nothing inside can run.
+        chip(ctx, opener[1]!.toLowerCase(), opener[0])
+        ctx.frozen++
+        speculate(ctx, i + opener[0].length, to)
+        ctx.frozen--
         return
       }
     }
@@ -359,7 +450,7 @@ function evalSpan(ctx: Ctx, from: number, to: number): void {
 
     // A hook standing on its own, named or not. Harlowe renders the contents
     // and drops the brackets, which costs prose like `[aside]` its brackets.
-    if (c === '[' || (c === '|' && HOOK_TAG_FRONT.test(src.slice(i, to)))) {
+    if (c === '[' || (c === '|' && skipHookTag(src, i, HOOK_TAG_FRONT) > i)) {
       const next = runBareHook(ctx, i, to)
       if (next !== null) {
         i = next
@@ -374,7 +465,12 @@ function evalSpan(ctx: Ctx, from: number, to: number): void {
       // Harlowe's `stylerSyntax` is `''([^]*?)''`: it needs *both* terminators,
       // so a lone `//` is literal text. Toggling on the opener alone would let
       // the `//` of `https://example.com` italicise the rest of the passage.
-      if (on || src.indexOf(marker, i + 2) !== -1) {
+      // The closer has to be inside this span, not merely somewhere in the
+      // body: an unrelated `//x//` further down the passage would otherwise let
+      // the `//` of `https://…` open an emphasis that swallows everything
+      // between them.
+      const close = src.indexOf(marker, i + 2)
+      if (on || (close !== -1 && close + 2 <= to)) {
         flush(ctx)
         if (c === "'") ctx.bold = !ctx.bold
         else ctx.italic = !ctx.italic
@@ -411,24 +507,23 @@ function runVerbatim(ctx: Ctx, at: number, to: number): number | null {
   const fence = src.slice(at, open)
   const close = src.indexOf(fence, open)
   if (close === -1 || close + fence.length > to) return null
-  flush(ctx)
-  ctx.buf = src.slice(open, close).trim()
-  flush(ctx)
+  // One space at each end, not `trim()`: Harlowe's grammar allows a single
+  // space so a literal backtick can sit against the fence, and preserving the
+  // rest is the whole point of verbatim.
+  pushValue(ctx, src.slice(open, close).replace(/^ /, '').replace(/ $/, ''))
   return close + fence.length
 }
 
 /** Past a hook standing on its own, having rendered its interior. */
 function runBareHook(ctx: Ctx, at: number, to: number): number | null {
   const src = ctx.body
-  const front = HOOK_TAG_FRONT.exec(src.slice(at, to))
-  const open = at + (front?.[0].length ?? 0)
+  const open = skipHookTag(src, at, HOOK_TAG_FRONT)
   // `[[` is a link, and `runVerbatim`'s caller has already had its turn.
   if (src[open] !== '[' || src[open + 1] === '[') return null
   const close = closeHook(src, open)
   if (close === -1 || close > to) return null
-  evalSpan(ctx, open + 1, close - 1)
-  const back = HOOK_TAG_BACK.exec(src.slice(close, to))
-  return close + (back?.[0].length ?? 0)
+  evalRegion(ctx, open + 1, close - 1)
+  return skipHookTag(src, close, HOOK_TAG_BACK)
 }
 
 // ---------------------------------------------------------------- macros
@@ -452,9 +547,7 @@ interface Attached {
  * unterminated hook is a condition nobody can act on.
  */
 function attachmentOf(src: string, macroEnd: number, limit: number): Attached | null {
-  let at = skipSpace(src, macroEnd)
-  const front = HOOK_TAG_FRONT.exec(src.slice(at, limit))
-  if (front !== null) at += front[0].length
+  const at = skipHookTag(src, skipSpace(src, macroEnd), HOOK_TAG_FRONT)
   if (at >= limit || src[at] !== '[') return null
 
   if (src[at + 1] === '[') {
@@ -468,8 +561,10 @@ function attachmentOf(src: string, macroEnd: number, limit: number): Attached | 
 
   const close = closeHook(src, at)
   if (close !== -1 && close <= limit) {
-    const back = HOOK_TAG_BACK.exec(src.slice(close, limit))
-    return { start: at + 1, end: close - 1, after: close + (back?.[0].length ?? 0), certain: true }
+    // The back tag belongs to the hook, and `attachedEnd` agrees — a drift
+    // there would have `chainsOf` read `[A]<t|(else:)[B]` as two chains and
+    // show both halves of an either-or at once.
+    return { start: at + 1, end: close - 1, after: skipHookTag(src, close, HOOK_TAG_BACK), certain: true }
   }
   // Unterminated. Take the rest of the span as the body and call it uncertain:
   // the alternative is letting the cursor walk in as plain text, which would
@@ -478,6 +573,12 @@ function attachmentOf(src: string, macroEnd: number, limit: number): Attached | 
 }
 
 function runMacro(ctx: Ctx, macro: RawMacro, to: number): number {
+  // Inside malformed source: say what is here, change nothing.
+  if (ctx.frozen > 0) {
+    chip(ctx, macro.name, source(ctx, macro))
+    return macro.end
+  }
+
   const slot = ctx.chains.get(macro.start)
   if (slot !== undefined) return runBranch(ctx, macro, slot, to)
 
@@ -505,12 +606,17 @@ function runMacro(ctx: Ctx, macro: RawMacro, to: number): number {
 }
 
 function runUnknown(ctx: Ctx, macro: RawMacro, to: number): number {
-  // Every variable it names goes dark. This macro may *write* one —
-  // `(input-box: bind $name, …)` does — and a variable left merely absent
-  // compares false, which would hide a hook and eat the prose in it.
-  // Over-marking only pushes a condition to unreadable, and unreadable renders.
+  // A variable in a *writer* position goes dark. `(input-box: bind $name, …)`
+  // really does write one, and a variable left merely absent compares false,
+  // which would hide a hook and eat the prose in it.
+  //
+  // Only a writer position, though. Darkening everything the macro names took
+  // `(text-colour: $name)` — which merely reads it — as a reason to replace a
+  // value the passage provably set, and pushed a write into `assigned` that
+  // never happened. The fail-open argument licenses pushing a *condition* to
+  // unreadable; it does not license overwriting a known value in the prose, or
+  // reporting a write in the debug console that Harlowe would not perform.
   readBind(ctx, macro)
-  darkenAll(ctx, macro.args)
   chip(ctx, macro.name, source(ctx, macro))
 
   const body = attachmentOf(ctx.body, macro.end, to)
@@ -530,7 +636,7 @@ function runPrint(ctx: Ctx, macro: RawMacro): void {
   }
   const literal = stringValue(text)
   if (literal !== null) {
-    ctx.buf += literal
+    pushValue(ctx, literal)
     return
   }
   chip(ctx, macro.name, source(ctx, macro))
@@ -566,7 +672,13 @@ function runBranch(ctx: Ctx, macro: RawMacro, slot: ChainSlot, to: number): numb
   }
 
   if (body === null) {
+    // `(if: $v is "x")(else:)[B]` — no hook to render either way, but a readable
+    // true condition still settles the chain. Without this the `(else:)` runs,
+    // and its prose is shown unmarked as though Harlowe had chosen it: one of
+    // the few paths where this could state something false rather than merely
+    // show too much.
     if (cond === null) chip(ctx, macro.name, source(ctx, macro))
+    else state.satisfied = true
     return macro.end
   }
 
@@ -586,7 +698,7 @@ function runBranch(ctx: Ctx, macro: RawMacro, slot: ChainSlot, to: number): numb
     chip(ctx, macro.name, source(ctx, macro))
     speculate(ctx, body.start, body.end)
   } else {
-    evalSpan(ctx, body.start, body.end)
+    evalRegion(ctx, body.start, body.end)
   }
   state.satisfied = true
   return body.after
@@ -609,7 +721,10 @@ function darken(ctx: Ctx, variable: string): void {
 }
 
 function darkenAll(ctx: Ctx, text: string): void {
-  for (const name of text.match(new RegExp(VARIABLE_RE.source, 'g')) ?? []) darken(ctx, name)
+  // `match` with a `/g` regex resets `lastIndex` before it runs, which is what
+  // lets the shared `VARIABLE_RE` be used directly rather than rebuilt — the
+  // idiom `parseAssignments` uses, and one fewer copy of what a name is.
+  for (const name of text.match(VARIABLE_RE) ?? []) darken(ctx, name)
 }
 
 /**
@@ -631,8 +746,7 @@ function runAssign(ctx: Ctx, macro: RawMacro): void {
       // Unreadable shape. Mark the first variable named, the way
       // `parseAssignments` does — marking every one would take a readable
       // right-hand side dark for nothing.
-      SIGIL.lastIndex = 0
-      const dest = text.match(new RegExp(VARIABLE_RE.source))?.[0]
+      const dest = text.match(VARIABLE_RE)?.[0]
       if (dest !== undefined) darken(ctx, dest)
       continue
     }
@@ -663,13 +777,23 @@ function readPrompt(ctx: Ctx, variable: string, valueText: string): void {
   })
 }
 
-/** `(input-box: bind $v, …)` — the other way a passage asks the reader for input. */
+/**
+ * `(input-box: bind $v, …)` — the other way a passage asks the reader for input.
+ *
+ * The bind is read out of the arguments with their string literals blanked, so
+ * the word `bind` inside an author's prose cannot invent a prompt for a variable
+ * nothing binds.
+ *
+ * No message is guessed. The first string argument of `(input-box:)` is its
+ * size pattern (`"=XX="`) and of `(dropdown:)` its first option, so taking one
+ * would show the reader a layout spec where a question belongs. The variable's
+ * own name is the honest label, and naming it is the caller's job.
+ */
 function readBind(ctx: Ctx, macro: RawMacro): void {
-  const bound = BIND.exec(macro.args)
+  const bound = BIND.exec(outsideStrings(macro.args))
   if (bound === null) return
-  const args = splitArgs(macro.args)
-  const message = args.map((a) => stringValue(a.trim())).find((v) => v !== null)
-  ctx.asks.push({ variable: bound[1]!, message: message ?? '', default: null })
+  darken(ctx, bound[1]!)
+  ctx.asks.push({ variable: bound[1]!, message: '', default: null })
 }
 
 // ---------------------------------------------------------------- conditions
@@ -860,7 +984,10 @@ function toBlocks(stream: readonly Inline[]): Block[] {
       continue
     }
     const head = line[0]
-    const quoted = head !== undefined && head.kind === 'text' && head.text.startsWith('>')
+    // `inert` text is the output of `(print:)`, not something the author wrote
+    // on a line, so a `>` in it is a greater-than sign and not a quote marker.
+    const quoted =
+      head !== undefined && head.kind === 'text' && !head.inert && head.text.startsWith('>')
     const kind: Block['kind'] = quoted ? 'quote' : 'para'
     const content = quoted
       ? [{ ...head, text: head.text.replace(/^>\s?/, '') }, ...line.slice(1)]
@@ -870,7 +997,14 @@ function toBlocks(stream: readonly Inline[]): Block[] {
       open = { kind, inlines: [] }
       blocks.push(open)
     } else {
-      open.inlines.push({ kind: 'text', text: '\n', bold: false, italic: false, uncertain: false })
+      open.inlines.push({
+        kind: 'text',
+        text: '\n',
+        inert: false,
+        bold: false,
+        italic: false,
+        uncertain: false,
+      })
     }
     open.inlines.push(...content.filter((n) => n.kind !== 'text' || n.text.length > 0))
   }

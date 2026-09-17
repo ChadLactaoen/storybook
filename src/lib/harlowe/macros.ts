@@ -215,6 +215,23 @@ export function closeHook(src: string, open: number): number {
   return -1
 }
 
+/**
+ * A hook's name tag, in Harlowe's two spellings: `|name>[…]` and `[…]<name|`.
+ *
+ * Sticky, so a scan can test at a position without slicing the rest of the body
+ * out to do it. Both belong to the hook, not to what follows: a `(else:)` after
+ * `[A]<t|` is still adjacent to its `(if:)`, and `(if: …)[…]<name|` is idiomatic
+ * — the tag is what a later `(replace:)` aims at.
+ */
+export const HOOK_TAG_FRONT = /\|[\w-]*>/y
+export const HOOK_TAG_BACK = /<[\w-]*\|/y
+
+/** Past a hook tag at `i`, or `i` if there is none. */
+function skipHookTag(src: string, i: number, tag: RegExp): number {
+  tag.lastIndex = i
+  return tag.exec(src) !== null ? tag.lastIndex : i
+}
+
 /** First index at or after `i` that is not whitespace. */
 export function skipSpace(src: string, i: number): number {
   let j = i
@@ -241,9 +258,14 @@ export function skipSpace(src: string, i: number): number {
  * An unterminated hook returns `macroEnd`, leaving its own `[` in whatever the
  * caller reads next. For `chainsOf` that breaks the chain, which is the safe
  * direction — an unreadable branch stands alone rather than silently joining.
+ *
+ * A hook's name tags are part of the hook, on both sides. Stopping at the `]` of
+ * `(if: $v is "a")[A]<t|(else:)[B]` would leave `<t|` sitting between the two
+ * branches, so `chainsOf` would read them as separate chains and a reader would
+ * show both halves of an either-or at once.
  */
 export function attachedEnd(src: string, macroEnd: number): number {
-  const at = skipSpace(src, macroEnd)
+  const at = skipHookTag(src, skipSpace(src, macroEnd), HOOK_TAG_FRONT)
   if (src[at] === '[' && src[at + 1] === '[') {
     // No hook in the source at all: both brackets belong to the link.
     const close = src.indexOf(']]', at + 2)
@@ -251,7 +273,7 @@ export function attachedEnd(src: string, macroEnd: number): number {
   }
   if (src[at] === '[') {
     const close = closeHook(src, at)
-    return close === -1 ? macroEnd : close
+    return close === -1 ? macroEnd : skipHookTag(src, close, HOOK_TAG_BACK)
   }
   return macroEnd
 }
