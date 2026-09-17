@@ -51,6 +51,12 @@
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
+  /* The reader, and nothing else. A book page set in the UI sans reads as a
+     settings panel rather than as prose, and the whole point of reading a draft
+     back is to meet it the way a reader would. Lives here because every design
+     token does; it is the only token this epic adds. */
+  --serif: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+
   --radius: 8px;
   --toolbar-h: 48px;
   --sidebar-w: 360px;

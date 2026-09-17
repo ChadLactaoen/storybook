@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import type { App as VueApp } from 'vue'
 import App from '../App.vue'
+import { resetPlay } from '../stores/play'
 import { resetPrefs, setPref } from '../stores/prefs'
 import * as store from '../stores/story'
 
@@ -44,6 +45,11 @@ beforeEach(() => {
   // Preferences are a module singleton too: without this, a toggle flipped by
   // one test silently changes what the next one creates.
   resetPrefs()
+  // And so is the play session. Leave one open and its full-screen veil is
+  // mounted over every test after it in this file, which asserts on
+  // `host.textContent` and fails on any Vue warning — so the failures land a
+  // long way from the cause.
+  resetPlay()
 })
 
 afterEach(() => {
@@ -2068,6 +2074,107 @@ describe('the advanced tab', () => {
 
     expect(host.querySelector('.inspector #passage-code')).not.toBeNull()
     expect(host.querySelector('.inspector .editor')).toBeNull()
+    expect(problems).toEqual([])
+  })
+})
+
+describe('the reader', () => {
+  /** Mount a two-passage story and open the reader from the toolbar. */
+  async function openReader(): Promise<void> {
+    mount()
+    store.newStory('Render Check')
+    writeBody(store.state.doc.nodes[0]!.id, 'Prose here.\n\n[[Onward|Two]]')
+    await nextTick()
+
+    const play = [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
+      (b) => b.textContent!.trim() === 'Play',
+    )!
+    play.click()
+    await nextTick()
+  }
+
+  it('opens from the toolbar onto the story’s first passage', async () => {
+    await openReader()
+
+    const sheet = host.querySelector('[aria-label="Read the story"]')
+    expect(sheet).not.toBeNull()
+    expect(sheet!.textContent).toContain('Prose here.')
+    expect(sheet!.textContent).toContain('Onward')
+    // The page number at the foot, and the route in the header.
+    expect(sheet!.querySelector('.folio')!.textContent!.trim()).toBe('P1')
+    expect(problems).toEqual([])
+  })
+
+  it('puts a veil over the canvas', async () => {
+    await openReader()
+    expect(host.querySelector('.veil')).not.toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('takes a choice and goes back again', async () => {
+    await openReader()
+
+    const choice = host.querySelector<HTMLButtonElement>('.choices .choice')!
+    choice.click()
+    await nextTick()
+    // `Two` is the code, not the title: `resolveLinks` mints the passage a bare
+    // `[[Onward|Two]]` names under exactly the code the link used.
+    expect(host.querySelector('.folio')!.textContent!.trim()).toBe('Two')
+
+    const back = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+      b.textContent!.includes('Back'),
+    )!
+    back.click()
+    await nextTick()
+    expect(host.querySelector('.folio')!.textContent!.trim()).toBe('P1')
+    expect(problems).toEqual([])
+  })
+
+  it('shows the route and the variables in the console', async () => {
+    mount()
+    store.newStory('Render Check')
+    writeBody(store.state.doc.nodes[0]!.id, '(set: $lantern to "lit")\n[[Onward|Two]]')
+    await nextTick()
+    const play = [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
+      (b) => b.textContent!.trim() === 'Play',
+    )!
+    play.click()
+    await nextTick()
+
+    host.querySelector<HTMLButtonElement>('.disclose')!.click()
+    await nextTick()
+
+    const console_ = host.querySelector('.console')!
+    expect(console_.textContent).toContain('$lantern')
+    expect(console_.textContent).toContain('lit')
+    expect(console_.textContent).toContain('P1')
+    expect(problems).toEqual([])
+  })
+
+  it('leaves the canvas keys alone while it is up', async () => {
+    // The concrete `modalOpen` regression. The reader has no text field for the
+    // shortcut layer's `isTyping` guard to catch, so without joining
+    // `modalOpen` an `n` would create a passage and Delete would remove one,
+    // behind the veil and out of sight.
+    await openReader()
+    const before = store.state.doc.nodes.length
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))
+    await nextTick()
+    expect(store.state.doc.nodes).toHaveLength(before)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+    await nextTick()
+    expect(store.state.doc.nodes).toHaveLength(before)
+    expect(problems).toEqual([])
+  })
+
+  it('closes on Escape', async () => {
+    await openReader()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+
+    expect(host.querySelector('[aria-label="Read the story"]')).toBeNull()
     expect(problems).toEqual([])
   })
 })

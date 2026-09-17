@@ -18,6 +18,9 @@ export interface ShortcutHandlers {
   openStats: () => void
   /** True while the stats sheet itself is what is up. */
   statsOpen: () => boolean
+  togglePlay: () => void
+  /** True while the reader itself is what is up. */
+  playOpen: () => boolean
   /**
    * True while any dialog that owns Escape is up — `modalOpen` plus the
    * expanded body editor, which is not a modal for the purposes below because
@@ -116,6 +119,22 @@ export function useShortcuts(handlers: ShortcutHandlers) {
           if (handlers.dialogOpen() && !handlers.statsOpen()) return
           e.preventDefault()
           handlers.openStats()
+          return
+        // Takes browser Print, deliberately. This app already claims Cmd
+        // +/-/0 from page zoom on the grounds that a canvas app wants its own
+        // zoom; a story-graph editor wants its own Play more than it wants
+        // Print. An unmodified `p` would be worse — it would stand down while
+        // typing, and the author is nearly always in the body textarea, so it
+        // would simply appear broken.
+        case 'p':
+          if (nativeEditing) return
+          // Same rule as `/` above, and for the same reason: a key that opens a
+          // modal has to respect one already up, or the reader stacks over the
+          // expanded editor and one Escape closes them both. The reader is
+          // exempt from its own guard, or the key could not close it again.
+          if (handlers.dialogOpen() && !handlers.playOpen()) return
+          e.preventDefault()
+          handlers.togglePlay()
           return
         case 'z':
           if (typing) return

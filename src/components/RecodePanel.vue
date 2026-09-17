@@ -190,7 +190,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 <style scoped>
 /* One above Editor settings: the two never open together, but this is the one
    the author acted on last. Ladder: body 92, sheet 94, help 95, settings 96,
-   recode 97, stats 98, startup 100. */
+   recode 97, stats 98, reader 99, startup 100. */
 .veil {
   position: fixed;
   inset: 0;

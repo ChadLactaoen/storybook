@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import AppToolbar from './components/AppToolbar.vue'
 import StoryStatsPanel from './components/StoryStatsPanel.vue'
+import ReaderPanel from './components/ReaderPanel.vue'
 import MiniMap from './components/MiniMap.vue'
 import NodeInspector from './components/NodeInspector.vue'
 import SearchFilterBar from './components/SearchFilterBar.vue'
@@ -17,6 +18,7 @@ import StoryNotes from './components/StoryNotes.vue'
 import { useShortcuts } from './composables/useShortcuts'
 import { useViewport } from './composables/useViewport'
 import { isPhantomId } from './lib/graph/constants'
+import * as play from './stores/play'
 import { prefs } from './stores/prefs'
 import * as store from './stores/story'
 import type { NodeState } from './types/story'
@@ -50,8 +52,28 @@ const statsOpen = ref(false)
  * still delete one, behind the veil and out of sight.
  */
 const modalOpen = computed(
-  () => helpOpen.value || settingsOpen.value || recodeOpen.value || statsOpen.value,
+  () =>
+    helpOpen.value ||
+    settingsOpen.value ||
+    recodeOpen.value ||
+    statsOpen.value ||
+    play.playOpen.value,
 )
+
+/**
+ * Open the reader on the story's first passage, or on one the author picked.
+ *
+ * Starting a session and showing the panel are the same action: the panel reads
+ * `play.playStep`, so opening it without a stack would render an empty book.
+ */
+function openReader(nodeId?: string) {
+  play.playStart(nodeId)
+}
+
+function togglePlay() {
+  if (play.playOpen.value) play.playClose()
+  else openReader()
+}
 
 function toggleIndex() {
   leftPanel.value = leftPanel.value === 'index' ? null : 'index'
@@ -201,6 +223,8 @@ useShortcuts({
   statsOpen: () => statsOpen.value,
   dialogOpen: () => modalOpen.value || (inspector.value?.isExpanded() ?? false),
   modalOpen: () => modalOpen.value,
+  togglePlay,
+  playOpen: () => play.playOpen.value,
 })
 
 onMounted(() => {
@@ -242,6 +266,7 @@ function dismissNotices() {
       @toggle-notes="toggleNotes"
       @open-help="openHelp"
       @open-stats="statsOpen = true"
+      @open-reader="openReader()"
       @open-settings="settingsOpen = true"
       @open-recode="recodeOpen = true"
     />
@@ -324,6 +349,7 @@ function dismissNotices() {
         @close="inspectorOpen = false"
         @cheat-sheet="leftPanel = 'cheat'"
         @open="openPassage"
+        @play="openReader"
       />
     </main>
 
@@ -335,6 +361,7 @@ function dismissNotices() {
 
     <RecodePanel v-if="recodeOpen" @close="recodeOpen = false" />
     <StoryStatsPanel v-if="statsOpen" @close="statsOpen = false" @open="openPassage" />
+    <ReaderPanel v-if="play.playOpen.value" @close="play.playClose()" />
 
     <CharacterSheet
       v-if="store.state.openCharacter"
