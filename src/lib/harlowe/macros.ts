@@ -142,8 +142,13 @@ export function stringValue(text: string): string | null {
  *
  * The idiom is `highlight.ts`'s, and every scanner below routes through it:
  * a `)` or `[` inside a quoted string must never be counted as structure.
+ *
+ * "Below" stopped being the whole story when the reader arrived. `run.ts`'s
+ * condition parser needs a literal's *extent* before it can hand the text to
+ * `stringValue`, and a second walk over `\` escapes is exactly the divergence
+ * the rest of these exports exist to prevent.
  */
-function skipString(src: string, i: number): number {
+export function skipString(src: string, i: number): number {
   const quote = src[i]!
   let j = i + 1
   while (j < src.length && src[j] !== quote) {

@@ -69,8 +69,14 @@ choice a passage is locked behind, or that no route reaches it at all.
 | Codes on cards | Turn on under **Settings** to show each passage's code above its card |
 
 Harlowe macros, hooks and variables are syntax-highlighted, and `(set:)` and `(if:)` are
-*read* for what they say about which routes exist. Nothing is ever **executed** — this is
-a map of the story, not a player for it.
+*read* for what they say about which routes exist. **The map never executes anything** — it
+is a map of the story, not a player for it.
+
+The reader is where a story is played, and it is a sandbox off to one side. `run.ts`
+evaluates a passage's macros to show what a reader would see, and none of that ever reaches
+the graph, the layout, the gates or the stats — it imports nothing from them and exports
+nothing to them. Nothing is `eval`'d either: the evaluator reads a narrow slice of Harlowe
+and renders everything it cannot read, marked, rather than guessing at it.
 
 ## Interaction
 
@@ -135,6 +141,7 @@ canonical JSON; **Import** reads it back.
 | `gates` | what conditional links prove: which choice a passage is locked behind, and which branches are dead |
 | `slugs` | the running slug per passage &mdash; the marks along the route here, with `*` where the routes disagree |
 | `macros` *(in `lib/harlowe/`)* | reads `(set:)` and `(if:)` as text, so a guarded link can narrow a trail |
+| `run` *(in `lib/harlowe/`)* | the reader's evaluator: a passage's prose, choices and variables, as typed nodes &mdash; a sandbox that feeds nothing above |
 
 `layoutStory(doc)` is the only entry point the UI touches: pure, synchronous and
 clone-friendly, so it can move into a Web Worker without a redesign. `paths` and `gates`

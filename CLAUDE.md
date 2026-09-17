@@ -93,7 +93,18 @@ What is *not* rebutted is the growth. A running slug still gets longer with dept
 leading characters are still the part you skip — which is why the card shows the tail and
 the inspector shows the whole thing, rather than pretending the problem is gone.
 
-**4. A macro may be read, never executed.** `deriveGraph` sees only `[[...]]`, so a
+**4. A macro may be read, never executed — everywhere the map is concerned.**
+`run.ts` is the one exception and it is not a hole in the rule, it is the rule's other
+half: the reader is a sandbox whose results reach nothing. It imports nothing from
+`gates.ts` or `paths.ts` and exports nothing to either, and it `eval`s nothing — it reads a
+narrow slice of Harlowe and *renders* what it cannot read rather than guessing. The
+direction inverts there, deliberately: `gates.ts` fails closed because a wrong gate states
+something false about the story, while `run.ts` fails open because a hidden hook deletes
+prose the author wrote. Wire the reader's broader evaluator into gate inference and
+`(if: $v is not "x")` — which it reads and `gates.ts` refuses — starts producing gates,
+which is the exact soundness break the rest of this invariant is about.
+
+`deriveGraph` sees only `[[...]]`, so a
 link gated by `(if: $v is "x")` looks unconditional and the graph over-reports what is
 reachable. `macros.ts`
 closes that by pattern-matching source text — the same kind of read `links.ts` does — to
@@ -130,7 +141,7 @@ dangling on purpose, so it must be captured when the editor takes focus, not re-
 | `src/types/story.ts` | The document model, its canonical comparators (`compareStr`, `compareNodes`, `compareByName`) and `emptyCharacter` / `emptyDoc` constructors |
 | `src/lib/doc/` | `mutations.ts` (all document edits), `serialize.ts` (canonical JSON + repairing parse), `storage.ts` (localStorage), `file.ts` (import/export) |
 | `src/lib/graph/` | Deterministic Sugiyama pipeline; `layoutStory` in `layout.ts` is the only entry point the UI touches. `paths.ts`, `gates.ts` and `stats.ts` are analyses over the derived graph, called by the store and the panels rather than by `layoutStory` |
-| `src/lib/harlowe/` | `links.ts` (parse/retarget), `highlight.ts` (macros are highlighted, never executed), `macros.ts` (macros are *read* — spans and names — still never executed) |
+| `src/lib/harlowe/` | `links.ts` (parse/retarget), `highlight.ts` (macros are highlighted, never executed), `macros.ts` (macros are *read* — spans and names — still never executed), `run.ts` (the reader's evaluator: the one place a macro is acted on, in a sandbox that feeds nothing above it) |
 | `src/stores/story.ts` | Module-level singleton store: a `reactive` state object plus exported functions and computeds. Not Pinia |
 | `src/components/`, `src/composables/` | Presentation; viewport pan/zoom and global shortcuts |
 
@@ -321,7 +332,9 @@ paths), `scene` (settings, cast), `profile` (character sheet traits and relation
 `stats` (endings, word counts, the lint, and the line between an authored link and a
 route edge) and `compat` (save files that predate a field),
 `recode` (numbering read off the layout, in both modes),
-`macros` (reading `(set:)` and `(if:)` out of a body),
+`macros` (reading `(set:)` and `(if:)` out of a body, and the spans and chains an
+evaluator needs), `run` (the reader's evaluator — what renders, what is hidden, and what
+must never run),
 `workflow` (end-to-end walkthroughs), `regressions`, and `render` (mounts the real
 component tree in jsdom and fails on any Vue warning — the only check that catches
 template-only mistakes, which `vue-tsc` cannot see).
