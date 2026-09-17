@@ -953,15 +953,13 @@ function readLiteral(cur: Cursor): string | null {
 // ---------------------------------------------------------------- blocks
 
 /**
- * Cut blocks from the *rendered* stream, never from the source.
+ * Split a rendered stream on its newlines.
  *
- * A hidden hook can delete the text a line started with, so what the reader
- * sees as a paragraph is a property of the output. Quoting is decided per line
- * and then like lines are grouped, the way `format.ts` writes it — classifying
- * a whole group would leave a literal `>` in the prose the moment one line of
- * it was unquoted.
+ * Exported because a block is a run of lines, and a caller that wants to ask
+ * something of a single *line* — the reader asks whether one holds nothing but
+ * links — would otherwise re-implement this and drift from it.
  */
-function toBlocks(stream: readonly Inline[]): Block[] {
+export function linesOf(stream: readonly Inline[]): Inline[][] {
   const lines: Inline[][] = [[]]
   for (const inline of stream) {
     if (inline.kind !== 'text') {
@@ -975,6 +973,20 @@ function toBlocks(stream: readonly Inline[]): Block[] {
       if (part.length > 0) lines[lines.length - 1]!.push({ ...inline, text: part })
     }
   }
+  return lines
+}
+
+/**
+ * Cut blocks from the *rendered* stream, never from the source.
+ *
+ * A hidden hook can delete the text a line started with, so what the reader
+ * sees as a paragraph is a property of the output. Quoting is decided per line
+ * and then like lines are grouped, the way `format.ts` writes it — classifying
+ * a whole group would leave a literal `>` in the prose the moment one line of
+ * it was unquoted.
+ */
+function toBlocks(stream: readonly Inline[]): Block[] {
+  const lines = linesOf(stream)
 
   const blocks: Block[] = []
   let open: Block | null = null

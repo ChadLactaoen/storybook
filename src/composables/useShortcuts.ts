@@ -76,6 +76,7 @@ export function useShortcuts(handlers: ShortcutHandlers) {
           handlers.resetZoom()
           return
         case 'f':
+          if (handlers.modalOpen()) return
           e.preventDefault()
           handlers.focusSearch()
           return
@@ -83,13 +84,19 @@ export function useShortcuts(handlers: ShortcutHandlers) {
         // reached with the cursor already in a text field, and the expanded
         // editor focuses its own textarea, so a key that stood down while
         // typing could open it but never close it again.
+        // ...but they do stand down under a full-screen modal, which is a
+        // different question from typing. `modalOpen`, not `dialogOpen`: the
+        // expanded editor is not a modal here, or Cmd E could not close it.
+        // Without this, Cmd E mounts the body editor *under* an open veil,
+        // focuses its invisible textarea, and every keystroke after that edits
+        // the passage — through a session that is supposed to be read-only.
         case 'e':
-          if (nativeEditing) return
+          if (nativeEditing || handlers.modalOpen()) return
           e.preventDefault()
           handlers.toggleBodyEditor()
           return
         case 'k':
-          if (nativeEditing) return
+          if (nativeEditing || handlers.modalOpen()) return
           e.preventDefault()
           handlers.toggleCheatSheet()
           return
@@ -97,7 +104,7 @@ export function useShortcuts(handlers: ShortcutHandlers) {
         // textarea that focuses itself on open, so a key that stood down while
         // typing could open it and then never close it again.
         case 'j':
-          if (nativeEditing) return
+          if (nativeEditing || handlers.modalOpen()) return
           e.preventDefault()
           handlers.toggleNotes()
           return

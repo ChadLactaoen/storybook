@@ -249,6 +249,64 @@ describe('the session and the document', () => {
     expect(written).toEqual([])
   })
 
+  it('ends the session when a passage further back is removed', () => {
+    // Cmd Z is deliberately still routed to the canvas under the veil, so an
+    // undo can take a passage out from under the middle of the stack. Checking
+    // only the top left Back landing on a node that was gone: a blank sheet
+    // with no notice and no way out but Escape.
+    // `Three` is reachable from `One` as well, so deleting `Two` is allowed —
+    // `removePassage` refuses a delete that would orphan what it leads to.
+    load(docFrom({ One: ['Two', 'Three'], Two: ['Three'], Three: [] }))
+    play.playStart()
+    play.playChoose(0)
+    play.playChoose(0)
+    expect(play.playRoute.value).toBe('P1->P2->P3')
+
+    const two = store.state.doc.nodes.find((n) => n.title === 'Two')!
+    expect(store.removePassage(two.id)).toBeNull()
+    expect(play.playStep.value).toBeNull()
+    expect(play.playNotice.value).toMatch(/removed/)
+  })
+
+  it('ends the session when a different story is loaded', () => {
+    // Node ids restart at 1 in every story, so the watcher above cannot see
+    // this: the ids are all still there, naming different passages.
+    load(docFrom({ One: ['Two'], Two: [] }))
+    play.playStart()
+    play.playChoose(0)
+    load(docFrom({ Elsewhere: [] }))
+    expect(play.playOpen.value).toBe(false)
+    expect(play.playStep.value).toBeNull()
+  })
+
+  it('comes back to the reading rather than restarting it', () => {
+    // Glancing at the canvas mid-read is what the panel is for; losing ten
+    // choices to a peek would make the toggle something to avoid.
+    load(docFrom({ One: ['Two'], Two: ['Three'], Three: [] }))
+    play.playStart()
+    play.playChoose(0)
+    play.playClose()
+    expect(play.playReopen()).toBe(true)
+    expect(play.playOpen.value).toBe(true)
+    expect(at()).toBe('Two')
+    expect(play.playRoute.value).toBe('P1->P2')
+  })
+
+  it('has nothing to come back to before a session starts', () => {
+    load(docFrom({ One: [] }))
+    expect(play.playReopen()).toBe(false)
+    expect(play.playOpen.value).toBe(false)
+  })
+
+  it('blames the right thing when the passage asked for is gone', () => {
+    // Not "mark one as the start": this story has a perfectly good start, and
+    // that advice would fix nothing.
+    load(docFrom({ One: ['Two'], Two: [] }))
+    play.playStart('nope')
+    expect(play.playStep.value).toBeNull()
+    expect(play.playNotice.value).toMatch(/no longer exists/)
+  })
+
   it('clears everything on reset', () => {
     load(docFrom({ One: ['Two'], Two: [] }))
     play.playStart()

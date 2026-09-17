@@ -23,7 +23,8 @@ import { computed, reactive, watch } from 'vue'
 import type { RunChoice, RunResult, Vars } from '../lib/harlowe/run'
 import { renderPassage } from '../lib/harlowe/run'
 import type { NodeId, StoryNode } from '../types/story'
-import { doc } from './story'
+import { compareStr } from '../types/story'
+import { doc, generation } from './story'
 
 /** One passage on the stack, with what the reader carried into it. */
 interface Step {
@@ -39,8 +40,6 @@ interface Step {
   varsBefore: Vars
   /** Which passage set each variable, by code, as of entering. */
   setterBefore: ReadonlyMap<string, string>
-  /** The choice taken to leave, or null while this is the top of the stack. */
-  ordinal: number | null
 }
 
 interface PlayState {
@@ -78,12 +77,19 @@ export interface PlayView {
   unwritten: boolean
 }
 
-function nodeById(id: NodeId): StoryNode | null {
-  return doc.value.nodes.find((n) => n.id === id) ?? null
-}
+/**
+ * Two indexes over the document, rebuilt only when it changes.
+ *
+ * `playRoute` asks for a node per step and `playStep` asks for one per choice,
+ * so a linear scan each time is O(depth x nodes) on every invalidation.
+ */
+const index = computed(() => ({
+  byId: new Map(doc.value.nodes.map((n) => [n.id, n])),
+  byCode: new Map(doc.value.nodes.map((n) => [n.code, n])),
+}))
 
-function byCode(): Map<string, StoryNode> {
-  return new Map(doc.value.nodes.map((n) => [n.code, n]))
+function nodeById(id: NodeId): StoryNode | null {
+  return index.value.byId.get(id) ?? null
 }
 
 export const playOpen = computed(() => state.open)
@@ -99,7 +105,7 @@ export const playStep = computed<PlayView | null>(() => {
   if (!node) return null
 
   const result = renderPassage(node.body, top.varsBefore)
-  const codes = byCode()
+  const codes = index.value.byCode
   const choices: PlayChoice[] = result.choices.map((choice) => {
     const target = codes.get(choice.target) ?? null
     return {
@@ -137,11 +143,14 @@ export const playVars = computed<{ name: string; value: string | null; setBy: st
       value,
       setBy: wrote.has(name) ? here : (top.setterBefore.get(name) ?? here),
     }))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    // `compareStr`, not an inline comparator: CLAUDE.md makes codepoint order a
+    // load-bearing rule with one home, and every copy is a place a future edit
+    // can reach for `localeCompare` without tripping it.
+    .sort((a, b) => compareStr(a.name, b.name))
 })
 
 function push(nodeId: NodeId, varsBefore: Vars, setterBefore: ReadonlyMap<string, string>): void {
-  state.stack.push({ nodeId, varsBefore: new Map(varsBefore), setterBefore, ordinal: null })
+  state.stack.push({ nodeId, varsBefore: new Map(varsBefore), setterBefore })
 }
 
 /**
@@ -159,8 +168,14 @@ export function playStart(nodeId?: NodeId): void {
   state.midStory = start !== null && start !== doc.value.startNodeId
   state.open = true
 
-  if (start === null || nodeById(start) === null) {
+  if (start === null) {
     state.notice = 'This story has no first passage yet. Mark one as the start to read it.'
+    return
+  }
+  if (nodeById(start) === null) {
+    // A different failure with different advice: the story has a start, the
+    // passage asked for is simply gone.
+    state.notice = 'That passage no longer exists, so there is nothing to read.'
     return
   }
   push(start, new Map(), new Map())
@@ -178,7 +193,6 @@ export function playChoose(ordinal: number): void {
   const setter = new Map(top.setterBefore)
   for (const written of view.result.assigned) setter.set(written.variable, here)
 
-  top.ordinal = ordinal
   push(choice.node.id, view.result.vars, setter)
 }
 
@@ -186,16 +200,28 @@ export function playChoose(ordinal: number): void {
 export function playBack(): void {
   if (state.stack.length < 2) return
   state.stack.pop()
-  const top = state.stack[state.stack.length - 1]
-  if (top) top.ordinal = null
 }
 
 /** Back to the first passage of this session, keeping the session open. */
 export function playRestart(): void {
   const first = state.stack[0]
-  if (!first) return
-  state.stack = [{ ...first, varsBefore: new Map(), ordinal: null }]
+  if (!first || nodeById(first.nodeId) === null) return
+  state.stack = [{ ...first, varsBefore: new Map(), setterBefore: new Map() }]
   state.notice = null
+}
+
+/**
+ * Show the session again without restarting it.
+ *
+ * Closing keeps the stack, because glancing at the canvas mid-read is the
+ * workflow this whole panel is for — checking the drawing against the reading.
+ * Losing ten choices to a peek would make the toggle something to avoid. The
+ * toolbar's Play is the one that starts over, and says so.
+ */
+export function playReopen(): boolean {
+  if (state.stack.length === 0) return false
+  state.open = true
+  return true
 }
 
 export function playClose(): void {
@@ -230,11 +256,14 @@ export function resetPlay(): void {
 watch(
   doc,
   () => {
-    if (!state.open || state.stack.length === 0) return
-    const top = state.stack[state.stack.length - 1]!
-    if (nodeById(top.nodeId) !== null) return
+    if (state.stack.length === 0) return
+    // Every step, not only the one on top. Cmd Z is deliberately still routed to
+    // the canvas under the veil, so an undo can remove a passage further back;
+    // checking only the top leaves Back to land on a node that is gone, which
+    // renders as a blank sheet with no notice and no way out but Escape.
+    if (state.stack.every((step) => nodeById(step.nodeId) !== null)) return
     state.stack = []
-    state.notice = 'The passage being read was removed, so the session ended.'
+    state.notice = 'A passage on this route was removed, so the session ended.'
   },
   // Synchronously, for the reason `setDoc` recomputes layout synchronously: a
   // watcher that flushes a tick late leaves the panel describing the previous
@@ -242,4 +271,11 @@ watch(
   { flush: 'sync' },
 )
 
-export { state }
+/**
+ * A different document entirely — new, loaded, imported, discarded.
+ *
+ * Node ids restart at 1 in every story, so a session held across a swap would
+ * carry on against ids that now name different passages. The document watcher
+ * above cannot see that: the ids are all still there.
+ */
+watch(generation, () => resetPlay(), { flush: 'sync' })

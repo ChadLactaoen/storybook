@@ -2169,6 +2169,47 @@ describe('the reader', () => {
     expect(problems).toEqual([])
   })
 
+  it('does not list a choice twice when its link sits under the prose', async () => {
+    // The commonest Twine shape of all: links written directly under the prose,
+    // with no blank line. `toBlocks` merges those into one block, so filtering
+    // whole blocks missed it and every choice appeared both in the prose and in
+    // the rows below.
+    mount()
+    store.newStory('Render Check')
+    writeBody(store.state.doc.nodes[0]!.id, 'You see a door.\n[[Open it|Two]]\n[[Leave|Three]]')
+    await nextTick()
+    const play = [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
+      (b) => b.textContent!.trim() === 'Play',
+    )!
+    play.click()
+    await nextTick()
+
+    const prose = host.querySelector('.prose')!
+    expect(prose.textContent!.trim()).toBe('You see a door.')
+    expect(prose.querySelector('.inline-link')).toBeNull()
+    expect(host.querySelectorAll('.choices .choice')).toHaveLength(2)
+    expect(problems).toEqual([])
+  })
+
+  it('will not open the body editor underneath itself', async () => {
+    // `Cmd E` mounted `BodyDialog` at z-index 92, out of sight under the veil,
+    // and focused its textarea — so every key after that edited the passage
+    // through a session that is meant to be read-only.
+    await openReader()
+    store.select(store.state.doc.nodes[0]!.id)
+    await nextTick()
+    const body = store.state.doc.nodes[0]!.body
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'e', metaKey: true, bubbles: true }),
+    )
+    await nextTick()
+
+    expect(host.querySelector('[aria-label="Edit passage body"]')).toBeNull()
+    expect(store.state.doc.nodes[0]!.body).toBe(body)
+    expect(problems).toEqual([])
+  })
+
   it('closes on Escape', async () => {
     await openReader()
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))

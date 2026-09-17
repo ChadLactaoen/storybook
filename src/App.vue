@@ -53,6 +53,11 @@ const statsOpen = ref(false)
  */
 const modalOpen = computed(
   () =>
+    // The startup dialog counts. It sits above everything at z-index 100, so a
+    // key that opened a panel under it would put one out of sight — and the
+    // reader in particular would then reveal a stale notice over the story the
+    // author goes on to create.
+    !store.state.started ||
     helpOpen.value ||
     settingsOpen.value ||
     recodeOpen.value ||
@@ -70,9 +75,16 @@ function openReader(nodeId?: string) {
   play.playStart(nodeId)
 }
 
+/**
+ * Close, or come back to where the reading was.
+ *
+ * Glancing at the canvas mid-read is what this panel is for — checking the
+ * drawing against the reading — so the toggle resumes rather than restarts.
+ * The toolbar's Play is the one that starts over, and its tooltip says so.
+ */
 function togglePlay() {
   if (play.playOpen.value) play.playClose()
-  else openReader()
+  else if (!play.playReopen()) openReader()
 }
 
 function toggleIndex() {

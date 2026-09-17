@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { Inline } from '../lib/harlowe/run'
+import type { Block, Inline } from '../lib/harlowe/run'
+import { linesOf } from '../lib/harlowe/run'
 import {
   canPlayBack,
   playBack,
@@ -25,21 +26,42 @@ const heading = computed(() => {
   return node.title.trim().length > 0 ? node.title : node.code
 })
 
+/** A line holding nothing but links is a choice list, not prose. */
+function isChoiceLine(line: readonly Inline[]): boolean {
+  return (
+    line.length > 0 &&
+    line.every(
+      (inline) => inline.kind === 'link' || (inline.kind === 'text' && inline.text.trim() === ''),
+    )
+  )
+}
+
 /**
- * The prose, without the blocks that are nothing but links.
+ * The prose, without the lines that are nothing but links.
  *
  * An author writing `[[Go down to the pier]]` on its own line means it as a
- * choice, and the rows below are already that list — rendering the block too
- * showed every choice twice. A link *inside* a sentence still renders where it
- * was written, because there it is prose as well as a choice.
+ * choice, and the rows below are already that list — rendering it here too shows
+ * every choice twice. A link *inside* a sentence still renders where it was
+ * written, because there it is prose as well as a choice.
+ *
+ * Per *line*, not per block: `toBlocks` merges consecutive non-blank lines, so
+ * the commonest Twine shape of all — links written directly under the prose,
+ * with no blank line between — is one block, and filtering blocks missed it
+ * entirely.
  */
-const prose = computed(() =>
-  (view.value?.result.blocks ?? []).filter(
-    (block) =>
-      !block.inlines.every(
-        (inline) => inline.kind === 'link' || (inline.kind === 'text' && inline.text.trim() === ''),
-      ),
-  ),
+const prose = computed<Block[]>(() =>
+  (view.value?.result.blocks ?? []).flatMap((block) => {
+    const kept = linesOf(block.inlines).filter((line) => !isChoiceLine(line))
+    if (kept.every((line) => line.length === 0)) return []
+    const inlines: Inline[] = []
+    for (const line of kept) {
+      if (inlines.length > 0) {
+        inlines.push({ kind: 'text', text: '\n', bold: false, italic: false, uncertain: false, inert: false })
+      }
+      inlines.push(...line)
+    }
+    return [{ kind: block.kind, inlines }]
+  }),
 )
 
 /** Text for a `title` attribute: what the evaluator could not read, in full. */
@@ -125,11 +147,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
           <p v-if="view.result.asks.length > 0" class="note">
             This passage asks the reader for
-            <template v-for="(ask, a) in view.result.asks" :key="a">
-              <code>{{ ask.variable }}</code
-              ><span v-if="a < view.result.asks.length - 1">, </span>
-            </template>
-            . Nothing is typed in here, so it stays unset.
+            <template v-for="(ask, a) in view.result.asks" :key="a"
+              ><code>{{ ask.variable }}</code
+              ><span v-if="a < view.result.asks.length - 1">, </span></template
+            >. Nothing is typed in here, so it stays unset.
           </p>
 
           <ul v-if="view.choices.length > 0" class="choices">

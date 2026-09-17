@@ -92,6 +92,8 @@ const redoStack: StoryDoc[] = []
  */
 const layout = shallowRef<LayoutResult>(markRaw(layoutStory(state.doc)))
 const layoutVersion = shallowRef(0)
+/** Bumps when a whole document is installed: new, load, import, discard. */
+const generation = shallowRef(0)
 
 /**
  * Memoize on the inputs layout actually depends on. Editing a tag or a state is
@@ -217,6 +219,11 @@ function resetViewState(): void {
   state.openCharacter = null
   state.warnings = []
   clearFilters()
+  // A different document, not an edit to this one. Node ids are `String(nextId)`
+  // from 1 up, so they collide across stories: anything holding a reference to
+  // one — a play session, say — cannot tell a swap from an edit by id alone, and
+  // would carry on reading a story that is no longer open.
+  generation.value++
 }
 
 /**
@@ -1220,5 +1227,5 @@ export const storyJson = computed(() => serializeDoc(state.doc))
 export const canUndo = computed(() => undoStack.length > 0)
 export const canRedo = computed(() => redoStack.length > 0)
 
-export { state, layout, layoutVersion }
+export { state, layout, layoutVersion, generation }
 export type { SavedMeta }
