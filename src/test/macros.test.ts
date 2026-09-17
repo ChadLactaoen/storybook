@@ -2,10 +2,17 @@ import { describe, expect, it } from 'vitest'
 import { deriveGraph } from '../lib/graph/derive'
 import { parseLinks } from '../lib/harlowe/links'
 import {
+  attachedEnd,
+  chainsOf,
+  closeHook,
   guardsByOrdinal,
   parseAssignments,
   parseGuardSpans,
+  parseMacros,
   readStoryMacros,
+  splitArgs,
+  stringValue,
+  VARIABLE_RE,
 } from '../lib/harlowe/macros'
 import { docFrom } from './helpers'
 
@@ -178,6 +185,219 @@ describe('reading assignments', () => {
       '(set:$idolChosen to "Sakura")',
     ].join('\n')
     expect(read(body)).toEqual({ literal: ['idolChosen=Sakura'], opaque: [] })
+  })
+})
+
+describe('reading macro spans', () => {
+  const spans = (body: string) => parseMacros(body).map((m) => `${m.name}@${m.start}-${m.end}`)
+
+  it('locates one macro end to end', () => {
+    expect(parseMacros('(set: $v to "x")')).toEqual([
+      { name: 'set', args: ' $v to "x"', start: 0, argsStart: 5, end: 16 },
+    ])
+  })
+
+  it('keeps args, argsStart and end agreeing', () => {
+    // The positions exist so a caller can walk these as statements. A field
+    // that can drift from `args` would be worse than not having it.
+    for (const body of [
+      '(set: $v to "x")',
+      'prose (if: $v is "x")[A] more',
+      '(  else :  )',
+      '(set: $v to "a)b")',
+    ]) {
+      for (const m of parseMacros(body)) {
+        expect(m.args).toBe(body.slice(m.argsStart, m.end - 1))
+        expect(body[m.start]).toBe('(')
+        expect(body[m.end - 1]).toBe(')')
+      }
+    }
+  })
+
+  it('yields a macro nested in another argument list, told apart by start', () => {
+    // Deliberate: `(if: (not: $x))` must yield both. It is also the trap — an
+    // evaluator treating every entry as a statement would run the operand.
+    const body = '(if: (not: $x))[A]'
+    expect(spans(body)).toEqual(['if@0-15', 'not@5-14'])
+    const [outer, inner] = parseMacros(body)
+    expect(inner!.start).toBeLessThan(outer!.end)
+  })
+
+  it('reads a macro with no arguments at all', () => {
+    expect(parseMacros('(else:)')[0]).toMatchObject({ name: 'else', args: '' })
+  })
+
+  it('reads a hyphenated name', () => {
+    expect(parseMacros('(else-if: $v is "x")')[0]).toMatchObject({ name: 'else-if' })
+  })
+
+  it('is not fooled by a paren inside a string', () => {
+    expect(spans('(set: $v to "a)b")')).toEqual(['set@0-18'])
+  })
+
+  it('drops a macro whose parens never close', () => {
+    // `chainsOf` assumes every entry is well formed, so this is worth pinning.
+    expect(parseMacros('(if: $v is "x"')).toEqual([])
+  })
+})
+
+describe('finding what a macro attaches to', () => {
+  /** What is left of the body once the first macro and its hook are crossed. */
+  const after = (body: string) => body.slice(attachedEnd(body, parseMacros(body)[0]!.end))
+
+  it('crosses a hook', () => {
+    expect(after('(if: $v is "x")[A]\ntail')).toBe('\ntail')
+  })
+
+  it('crosses a bare link written instead of a hook', () => {
+    // The reason this helper exists: `closeHook` jumps `[[`..`]]` wholesale, so
+    // on a link standing where a hook would be it runs off the end and fails.
+    expect(after('(if: $v is "x")[[A|P2]]\ntail')).toBe('\ntail')
+    expect(closeHook('[[A|P2]]', 0)).toBe(-1)
+  })
+
+  it('crosses whitespace and newlines between the macro and its hook', () => {
+    expect(after('(if: $v is "x")\n\n  [A]tail')).toBe('tail')
+  })
+
+  it('stops at the macro when nothing attaches', () => {
+    expect(after('(if: $v is "x") prose')).toBe(' prose')
+  })
+
+  it('stops at the macro when the hook never closes', () => {
+    // Leaves the `[` in what the caller reads next, which breaks a chain rather
+    // than joining one on the strength of text nobody could parse.
+    expect(after('(if: $v is "x")[A')).toBe('[A')
+  })
+})
+
+describe('reading macro chains', () => {
+  /** Each branching macro as `chain.position kind`, in source order. */
+  function chains(body: string): string[] {
+    const macros = parseMacros(body)
+    const slots = chainsOf(body, macros)
+    return macros.flatMap((m) => {
+      const slot = slots.get(m.start)
+      return slot ? [`${slot.chainId}.${slot.position} ${slot.kind}`] : []
+    })
+  }
+
+  it('reads if, else-if and else as one chain', () => {
+    const body = '(if: $a is "p")[x](else-if: $a is "q")[y](else:)[z]'
+    expect(chains(body)).toEqual(['0.0 if', '0.1 else-if', '0.2 else'])
+  })
+
+  it('reads unless and else as one chain', () => {
+    // `(unless:)` is unread as a *guard* — it means the opposite of what it
+    // looks like — but it opens a chain exactly as `(if:)` does.
+    expect(chains('(unless: $a is "p")[x]\n(else:)[z]')).toEqual(['0.0 unless', '0.1 else'])
+  })
+
+  it('reads two adjacent ifs as two chains, not one', () => {
+    // Each carries its own test, so they are independent however tightly
+    // packed. Chaining them would make the second hide when the first ran.
+    expect(chains('(if: $a is "p")[x](if: $b is "q")[y]')).toEqual(['0.0 if', '1.0 if'])
+  })
+
+  it('opens a new chain for an unless following an if', () => {
+    expect(chains('(if: $a is "p")[x](unless: $b is "q")[y]')).toEqual(['0.0 if', '1.0 unless'])
+  })
+
+  it('breaks a chain on prose between the branches', () => {
+    expect(chains('(if: $a is "p")[x] words (else:)[z]')).toEqual(['0.0 if', '1.0 else'])
+  })
+
+  it('breaks a chain on a macro between the branches', () => {
+    const body = '(if: $a is "p")[x](set: $b to "q")(else:)[z]'
+    expect(chains(body)).toEqual(['0.0 if', '1.0 else'])
+  })
+
+  it('keeps the branches adjacent across a bare link', () => {
+    const body = '(if: $a is "p")[[A|P2]]\n(else:)[[B|P3]]'
+    expect(chains(body)).toEqual(['0.0 if', '0.1 else'])
+  })
+
+  it('treats a macro in the arguments as neither a branch nor a break', () => {
+    // Without the operand filter the `(else:)` measures itself against
+    // `(not:)`, which opens nothing, and every chain with a computed condition
+    // silently breaks.
+    const body = '(if: (not: $x))[a]\n(else:)[b]'
+    expect(chains(body)).toEqual(['0.0 if', '0.1 else'])
+    expect(chainsOf(body).size).toBe(2)
+    expect(chainsOf(body).get(5)).toBeUndefined()
+  })
+
+  it('ignores the phantom macro a string literal can produce', () => {
+    // `MACRO_OPEN` scans the whole body, quotes included.
+    const body = '(set: $v to "(if: x)")\n(if: $a is "p")[x](else:)[y]'
+    expect(chains(body)).toEqual(['0.0 if', '0.1 else'])
+  })
+
+  it('gives a chain inside a hook its own id', () => {
+    const body = '(if: $a is "p")[ (if: $b is "q")[X] (else:)[Y] ]'
+    expect(chains(body)).toEqual(['0.0 if', '1.0 if', '1.1 else'])
+  })
+
+  it('lets a trailing else find its opener past a nested chain', () => {
+    // The case a single "previous branch" variable gets wrong: the inner
+    // `(else:)` belongs to the inner `(if:)`, and the outer one to the outer.
+    const body = '(if: $a is "p")[ (if: $b is "q")[X] (else:)[Y] ]\n(else:)[Z]'
+    expect(chains(body)).toEqual(['0.0 if', '1.0 if', '1.1 else', '0.1 else'])
+  })
+
+  it('gives an orphan else a chain of its own at position 0', () => {
+    expect(chains('words (else:)[y]')).toEqual(['0.0 else'])
+  })
+
+  it('ends a chain at else, so a later else-if starts a new one', () => {
+    const body = '(if: $a is "p")[x](else:)[y](else-if: $a is "q")[z]'
+    expect(chains(body)).toEqual(['0.0 if', '0.1 else', '1.0 else-if'])
+  })
+
+  it('lets newlines sit between a macro, its hook and the next branch', () => {
+    expect(chains('(if: $a is "p")\n\n[x]\n\n(else:)[y]')).toEqual(['0.0 if', '0.1 else'])
+  })
+
+  it('is not fooled by a bracket inside a string', () => {
+    expect(chains('(if: $v is "a]b")[x](else:)[y]')).toEqual(['0.0 if', '0.1 else'])
+  })
+
+  it('keys every slot by the macro start, in source order', () => {
+    // Iteration order is load-bearing across this repo, and the key is what
+    // the evaluator looks a macro up by while walking spans.
+    const body = '(if: $a is "p")[x](else:)[y]'
+    const starts = parseMacros(body).map((m) => m.start)
+    expect([...chainsOf(body).keys()]).toEqual(starts)
+  })
+})
+
+describe('the primitives the evaluator shares', () => {
+  it('reads a hook containing a link, and refuses a bare one', () => {
+    // The one genuinely hard case in the module, and the reason there must
+    // never be a second copy of `closeHook`.
+    expect(closeHook('[ [[A|P1]] ]tail', 0)).toBe(12)
+    expect(closeHook('[[A|P1]]', 0)).toBe(-1)
+  })
+
+  it('splits arguments at depth zero only', () => {
+    expect(splitArgs('$a to "x", $b to (max: 1, 2)')).toEqual([
+      '$a to "x"',
+      ' $b to (max: 1, 2)',
+    ])
+  })
+
+  it('reads one literal, escapes honoured, and refuses two', () => {
+    expect(stringValue('"a\\"b"')).toBe('a"b')
+    expect(stringValue('"a" "b"')).toBeNull()
+  })
+
+  it('survives a poisoned lastIndex under match', () => {
+    // `VARIABLE_RE` carries `g`, so exporting it exposes `lastIndex` to every
+    // consumer. `parseAssignments` reads it through `match`, which resets that
+    // first — the property that keeps the gate path immune.
+    VARIABLE_RE.lastIndex = 99
+    expect('$a and $b'.match(VARIABLE_RE)).toEqual(['$a', '$b'])
+    expect(VARIABLE_RE.lastIndex).toBe(0)
   })
 })
 
