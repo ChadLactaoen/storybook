@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted } from 'vue'
+import { chordLabel, COMMANDS } from '../lib/ui/commands'
+import { MOD_LABEL as MOD } from '../lib/ui/platform'
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -8,31 +10,22 @@ const emit = defineEmits<{ close: [] }>()
  * sense, the link syntax, and the shortcuts that are otherwise invisible.
  */
 
-const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
-const MOD = IS_MAC ? 'Cmd' : 'Ctrl'
-
-const SHORTCUTS: { keys: string; what: string }[] = [
-  { keys: `${MOD} +`, what: 'Zoom in' },
-  { keys: `${MOD} -`, what: 'Zoom out' },
-  { keys: `${MOD} 0`, what: 'Zoom to fit the whole story' },
-  { keys: `${MOD} 1`, what: 'Reset zoom to 100%' },
-  { keys: `${MOD} F`, what: 'Jump to search' },
-  { keys: `${MOD} E`, what: 'Expand the selected passage’s body editor' },
-  { keys: `${MOD} K`, what: 'Character cheat sheet for the selected passage' },
-  { keys: `${MOD} J`, what: 'Story notes, a scratchpad for the whole story' },
-  { keys: `${MOD} /`, what: 'Story stats — routes, endings, word count, draft health' },
-  { keys: `${MOD} P`, what: 'Read the story back, a choice at a time' },
-  { keys: `${MOD} B`, what: 'Bold the selected prose' },
-  { keys: `${MOD} I`, what: 'Italicise the selected prose' },
-  { keys: `${MOD} ⇧ .`, what: 'Quote the selected lines' },
-  { keys: `${MOD} ⇧ K`, what: 'Link the selected prose to a passage' },
-  { keys: `${MOD} Z`, what: 'Undo' },
-  { keys: `${MOD} ⇧ Z`, what: 'Redo' },
-  { keys: 'N', what: 'New passage, linked from the selected one' },
-  { keys: `${MOD} click`, what: 'Select a passage and everything it leads to' },
-  { keys: '⇧ click', what: 'Add or remove one passage from the selection' },
-  { keys: 'Delete', what: 'Delete every selected passage' },
-]
+/**
+ * The shortcut rows come from the command table, which is the point of it.
+ *
+ * This list used to be hand-written here, and it had drifted: ⌘G, ⌘Y, `?` and
+ * Backspace were all missing, because nothing tied it to the keys the app
+ * actually listens for. Rendering it from `COMMANDS` means a shortcut is
+ * described once, and `commands.test.ts` asserts every row arrives somewhere.
+ *
+ * All three scopes are listed, not just the ones a menu holds: the editor's
+ * markup keys and the two click modifiers are exactly the sort of thing a
+ * tooltip cannot carry, which is what this panel is for.
+ */
+const SHORTCUTS = COMMANDS.filter((c) => c.chord).map((c) => ({
+  keys: chordLabel(c.chord!),
+  what: c.hint ?? c.label,
+}))
 
 const LINKS: { syntax: string; what: string }[] = [
   { syntax: '[[Go north|3A]]', what: 'Show “Go north”, go to the passage coded 3A' },
@@ -188,7 +181,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
               regard each other, beside the body editor.
             </li>
             <li>
-              <strong>Notes</strong> &mdash; <kbd>{{ MOD }} J</kbd>, or the toolbar button &mdash;
+              <strong>Notes</strong> &mdash; <kbd>{{ MOD }} J</kbd>, or <strong>Story</strong> &rarr;
+              <strong>Story notes</strong> &mdash;
               is a scratchpad for the story as a whole. It sits under whichever panel is
               already open, and it is saved and exported with the story.
             </li>

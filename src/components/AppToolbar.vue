@@ -3,25 +3,47 @@ import { computed, ref } from 'vue'
 import { readFileText } from '../lib/doc/file'
 import { formatCount } from '../lib/graph/paths'
 import * as store from '../stores/story'
+import AppMenuBar from './AppMenuBar.vue'
+import { commandTip, type CommandBinding } from '../lib/ui/commands'
 
-const props = defineProps<{ zoom: number }>()
+const props = defineProps<{ zoom: number; bindings: Record<string, CommandBinding> }>()
 
+/**
+ * What stays a button rather than a menu row.
+ *
+ * The bar held twenty-six controls and grew one with every feature; the long
+ * tail now lives in `AppMenuBar`. What is left is what a canvas tool is worth
+ * keeping one click away — the zoom stepper, undo and redo, and Play — plus the
+ * readouts, which are not commands at all.
+ */
 const emit = defineEmits<{
   zoomIn: []
   zoomOut: []
   zoomToFit: []
   resetZoom: []
-  toggleLevels: []
-  toggleMinimap: []
-  toggleIndex: []
-  toggleNotes: []
-  openHelp: []
   openStats: []
-  openTags: []
   openReader: []
   openSettings: []
-  openRecode: []
+  menuOpen: [boolean]
 }>()
+
+/**
+ * A button's tooltip, read off the command table.
+ *
+ * These strings used to be hand-written per button, which is how they came to
+ * say the literal "Cmd" to Windows and Linux. `chordLabel` asks the platform.
+ */
+const tip = commandTip
+
+const undoTitle = computed(() => tip('edit.undo'))
+const redoTitle = computed(() => tip('edit.redo'))
+/**
+ * Not `tip('story.play')`. This button calls `playStart`, which begins the
+ * story again from the top, while ⌘P resumes where the reading was — so
+ * borrowing the command's sentence would promise the chord's behaviour and
+ * quietly lose a reader's place. `App.togglePlay` documents the split.
+ */
+const playTitle = 'Read the story from the start'
 
 const editingTitle = ref(false)
 const titleDraft = ref('')
@@ -75,6 +97,13 @@ const pathsLabel = computed(
 
 const fileInput = ref<HTMLInputElement | null>(null)
 
+/** The Import command lives in the File menu; the input it needs is here. */
+function pickFile() {
+  fileInput.value?.click()
+}
+
+defineExpose({ pickFile })
+
 async function onFile(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
@@ -107,34 +136,7 @@ async function onFile(e: Event) {
       <span class="saved">{{ savedLabel }}</span>
     </div>
 
-    <div class="group">
-      <button class="btn" title="Every character and setting, with passage counts" @click="emit('toggleIndex')">
-        Cast &amp; Settings
-      </button>
-      <button
-        class="btn"
-        title="A scratchpad for the story as a whole (Cmd J)"
-        @click="emit('toggleNotes')"
-      >
-        Notes
-      </button>
-      <button class="btn" title="Add a passage with no links to it yet" @click="store.addPassage()">
-        + Passage
-      </button>
-      <button
-        class="btn"
-        title="Renumber every passage's code from the tree"
-        @click="emit('openRecode')"
-      >
-        Recode
-      </button>
-      <button class="btn btn-icon" title="Undo (Cmd Z)" :disabled="!store.canUndo.value" @click="store.undo()">
-        &#8630;
-      </button>
-      <button class="btn btn-icon" title="Redo (Cmd Shift Z)" :disabled="!store.canRedo.value" @click="store.redo()">
-        &#8631;
-      </button>
-    </div>
+    <AppMenuBar :bindings="props.bindings" @open-change="emit('menuOpen', $event)" />
 
     <div class="spacer" />
 
@@ -142,7 +144,7 @@ async function onFile(e: Event) {
       <span class="pill">{{ plural(store.state.doc.nodes.length, 'passage') }}</span>
       <button
         class="pill paths"
-        title="Story stats — routes, endings, word count, draft health"
+        :title="tip('story.stats')"
         @click="emit('openStats')"
       >
         {{ pathsLabel }}
@@ -162,17 +164,36 @@ async function onFile(e: Event) {
       </span>
     </div>
 
-    <div class="group">
-      <button class="btn btn-icon" title="Zoom out (Cmd -)" @click="emit('zoomOut')">&minus;</button>
-      <button class="btn zoom" title="Reset to 100% (Cmd 1)" @click="emit('resetZoom')">
+    <div class="group zoom-group">
+      <button class="btn btn-icon" :title="tip('view.zoomOut')" @click="emit('zoomOut')">
+        &minus;
+      </button>
+      <button class="btn zoom" :title="tip('view.zoomReset')" @click="emit('resetZoom')">
         {{ zoomLabel }}
       </button>
-      <button class="btn btn-icon" title="Zoom in (Cmd +)" @click="emit('zoomIn')">+</button>
-      <button class="btn" title="Zoom to fit (Cmd 0)" @click="emit('zoomToFit')">Fit</button>
+      <button class="btn btn-icon" :title="tip('view.zoomIn')" @click="emit('zoomIn')">+</button>
+      <button class="btn" :title="tip('view.zoomFit')" @click="emit('zoomToFit')">Fit</button>
     </div>
 
     <div class="group">
-      <!-- Primary, and here rather than keyboard-only: an undiscoverable
+      <button
+        class="btn btn-icon"
+        :title="undoTitle"
+        :disabled="!store.canUndo.value"
+        @click="store.undo()"
+      >
+        &#8630;
+      </button>
+      <button
+        class="btn btn-icon"
+        :title="redoTitle"
+        :disabled="!store.canRedo.value"
+        @click="store.redo()"
+      >
+        &#8631;
+      </button>
+
+      <!-- Primary, and here rather than in a menu: an undiscoverable
            affordance for the headline feature is no affordance. Disabled with
            its reason when there is no first passage to start from. -->
       <button
@@ -181,38 +202,13 @@ async function onFile(e: Event) {
         :title="
           store.state.doc.startNodeId === null
             ? 'Mark a passage as the start before reading'
-            : 'Read the story from the start (Cmd P)'
+            : playTitle
         "
         @click="emit('openReader')"
       >
         Play
       </button>
-      <button
-        class="btn"
-        title="Story stats — routes, endings, word count, draft health (Cmd /)"
-        @click="emit('openStats')"
-      >
-        Stats
-      </button>
-      <button
-        class="btn"
-        title="Tags — how many routes run through each tag, and which routes collect several (Cmd G)"
-        @click="emit('openTags')"
-      >
-        Tags
-      </button>
-      <button class="btn" title="Show or hide the level guide lines" @click="emit('toggleLevels')">
-        Levels
-      </button>
-      <button class="btn" title="Show or hide the minimap" @click="emit('toggleMinimap')">
-        Map
-      </button>
-      <button class="btn" title="Download the story as JSON" @click="store.saveToFile()">Export</button>
-      <button class="btn" title="Open a story JSON file" @click="fileInput?.click()">Import</button>
-      <button class="btn btn-icon help" title="How Storybook works (?)" @click="emit('openHelp')">
-        ?
-      </button>
-      <button class="btn btn-icon gear" title="Settings" @click="emit('openSettings')">
+      <button class="btn btn-icon gear" title="Editor settings" @click="emit('openSettings')">
         &#9881;
       </button>
       <input ref="fileInput" type="file" accept="application/json,.json" hidden @change="onFile" />
@@ -230,7 +226,8 @@ async function onFile(e: Event) {
   padding: 0 12px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
-  overflow-x: auto;
+  /* No `overflow-x: auto` here: it used to hide the fact that twenty-six
+     controls did not fit, and it would clip the menu panels hanging below. */
 }
 
 .group {
@@ -242,6 +239,7 @@ async function onFile(e: Event) {
 
 .title-group {
   gap: 9px;
+  min-width: 0;
 }
 
 .spacer {
@@ -279,11 +277,6 @@ async function onFile(e: Event) {
   font-size: 11px;
   color: var(--text-faint);
   white-space: nowrap;
-}
-
-.help {
-  font-weight: 700;
-  color: var(--accent);
 }
 
 /* The button box is fixed by .btn/.btn-icon at 28px square, so the glyph can be
@@ -353,5 +346,41 @@ async function onFile(e: Event) {
   color: var(--state);
   background: color-mix(in srgb, var(--state) 13%, transparent);
   border: 1px solid color-mix(in srgb, var(--state) 28%, transparent);
+}
+/* The bar no longer scrolls, so it has to fit — and the menu panels need
+   `overflow: visible` to hang below it, which means anything that does not fit
+   would spill off-screen and be unreachable rather than scrolled to.
+   The readouts are what give way: they are duplicated in Story → Stats, while
+   every control here has no other home at this width. */
+@media (max-width: 1200px) {
+  .tally {
+    display: none;
+  }
+}
+
+@media (max-width: 1000px) {
+  .saved {
+    display: none;
+  }
+
+  .story-title {
+    max-width: 120px;
+  }
+}
+
+/* Below this the readouts go entirely: Play is the headline affordance and
+   must never be the thing that falls off the edge. */
+@media (max-width: 960px) {
+  .group.stats {
+    display: none;
+  }
+}
+
+/* Last to go, because it is the one group every item of which is also a
+   shortcut, a trackpad pinch, and a row in the View menu. */
+@media (max-width: 780px) {
+  .zoom-group {
+    display: none;
+  }
 }
 </style>

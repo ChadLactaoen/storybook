@@ -1,4 +1,4 @@
-import { computed, markRaw, reactive, shallowRef, watch } from 'vue'
+import { computed, markRaw, reactive, ref, shallowRef, watch } from 'vue'
 import { exportDoc, importDoc } from '../lib/doc/file'
 import * as M from '../lib/doc/mutations'
 import { serializeDoc } from '../lib/doc/serialize'
@@ -84,6 +84,24 @@ const state = reactive<State>({
 
 const undoStack: StoryDoc[] = []
 const redoStack: StoryDoc[] = []
+
+/**
+ * How deep each stack is, kept reactive so the buttons that read it re-render.
+ *
+ * The stacks themselves are plain arrays — they hold whole documents, and
+ * deep-proxying every historical copy would cost more than the history is
+ * worth. A computed over a plain array has no dependency to invalidate on, so
+ * `canUndo` evaluated once and cached that answer forever: Undo and Redo were
+ * dimmed from mount and never lit again. These two mirror the lengths, and
+ * `syncHistory` is called wherever either stack is touched.
+ */
+const undoDepth = ref(0)
+const redoDepth = ref(0)
+
+function syncHistory(): void {
+  undoDepth.value = undoStack.length
+  redoDepth.value = redoStack.length
+}
 
 /**
  * Layout lives in a shallowRef and is marked raw. Deep-proxying the thousands
@@ -175,6 +193,7 @@ function commit(next: StoryDoc, precomputed?: LayoutResult): void {
   undoStack.push(state.doc)
   if (undoStack.length > HISTORY_LIMIT) undoStack.shift()
   redoStack.length = 0
+  syncHistory()
   setDoc(next, precomputed)
 }
 
@@ -182,6 +201,7 @@ export function undo(): void {
   const prev = undoStack.pop()
   if (!prev) return
   redoStack.push(state.doc)
+  syncHistory()
   setDoc(prev)
   dropDanglingSheet()
   pruneSelection()
@@ -191,6 +211,7 @@ export function redo(): void {
   const next = redoStack.pop()
   if (!next) return
   undoStack.push(state.doc)
+  syncHistory()
   setDoc(next)
   dropDanglingSheet()
   pruneSelection()
@@ -216,6 +237,7 @@ function dropDanglingSheet(): void {
 function resetViewState(): void {
   undoStack.length = 0
   redoStack.length = 0
+  syncHistory()
   state.openCharacter = null
   state.warnings = []
   clearFilters()
@@ -1240,8 +1262,8 @@ export function toggleFilter(
 }
 
 export const storyJson = computed(() => serializeDoc(state.doc))
-export const canUndo = computed(() => undoStack.length > 0)
-export const canRedo = computed(() => redoStack.length > 0)
+export const canUndo = computed(() => undoDepth.value > 0)
+export const canRedo = computed(() => redoDepth.value > 0)
 
 export { state, layout, layoutVersion, generation }
 export type { SavedMeta }
