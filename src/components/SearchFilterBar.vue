@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { chordLabel } from '../lib/ui/commands'
 import * as store from '../stores/story'
 import type { NodeState } from '../types/story'
 import { NODE_STATES } from '../types/story'
@@ -31,6 +32,8 @@ const sceneChips = computed(() => [
 ])
 
 defineExpose({ focus: () => input.value?.focus() })
+/** The one string still spelling "Cmd" at everyone, platform or not. */
+const searchTip = `Search titles, notes, codes and prose…  (${chordLabel({ mod: true, key: 'f' })})`
 </script>
 
 <template>
@@ -40,7 +43,7 @@ defineExpose({ focus: () => input.value?.focus() })
       v-model="store.state.search"
       class="field search"
       type="search"
-      placeholder="Search titles, notes, codes and prose…  (Cmd F)"
+      :placeholder="searchTip"
       @keydown.esc="clear"
     />
 

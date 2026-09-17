@@ -18,8 +18,10 @@ run it before considering a change done — `tsconfig.app.json` enables
 `noUnusedLocals`, `noUnusedParameters`, `erasableSyntaxOnly` and
 `noFallthroughCasesInSwitch`, none of which Vite surfaces during `dev`.
 
-Vitest runs in `node` by default; `src/test/render.test.ts` is the one file routed to
-`jsdom` (see `environmentMatchGlobs` in `vitest.config.ts`).
+Vitest runs in `node` by default. `src/test/render.test.ts` is routed to `jsdom` by
+`environmentMatchGlobs` in `vitest.config.ts`; `commands.test.ts` and `regressions.test.ts`
+ask for it themselves with a `// @vitest-environment jsdom` line, which is the lighter way
+to add one.
 
 ## Architecture
 
@@ -142,6 +144,7 @@ dangling on purpose, so it must be captured when the editor takes focus, not re-
 | `src/lib/doc/` | `mutations.ts` (all document edits), `serialize.ts` (canonical JSON + repairing parse), `storage.ts` (localStorage), `file.ts` (import/export) |
 | `src/lib/graph/` | Deterministic Sugiyama pipeline; `layoutStory` in `layout.ts` is the only entry point the UI touches. `paths.ts`, `gates.ts` and `stats.ts` are analyses over the derived graph, called by the store and the panels rather than by `layoutStory` |
 | `src/lib/harlowe/` | `links.ts` (parse/retarget), `highlight.ts` (macros are highlighted, never executed), `macros.ts` (macros are *read* — spans and names — still never executed), `run.ts` (the reader's evaluator: the one place a macro is acted on, in a sandbox that feeds nothing above it) |
+| `src/lib/ui/` | `commands.ts` (the one description of every command — label, group, chord, hint) and `platform.ts` (the one answer to what this keyboard's modifier is called). Pure data: no Vue import, so it tests in `node` |
 | `src/stores/story.ts` | Module-level singleton store: a `reactive` state object plus exported functions and computeds. Not Pinia |
 | `src/components/`, `src/composables/` | Presentation; viewport pan/zoom and global shortcuts |
 
@@ -287,6 +290,51 @@ cannot see is a reader looping back: dropping back edges only ever *removes* a
 collection, so "all of these" is a lower bound and "none of these" is an **upper** one —
 the panel names the model rather than letting the number speak for itself.
 
+**A command is described once, and `useShortcuts` only dispatches.** `commands.ts` holds
+every command's label, group, chord and hint; the menu bar, the help panel and the
+toolbar's tooltips all render from it. They used to hold four separate copies, and the
+copies had drifted — the help sheet was missing `Cmd G`, `Cmd Y`, `?` and Backspace, and
+every tooltip said the literal "Cmd" to Windows and Linux. The table is *description*, not
+dispatch: `useShortcuts` still owns which key does what and under which guard, because
+those guards are per-command and subtle (`nativeEditing`, and the self-exempt checks that
+let a sheet close with the key that opened it), and a table that stated them would be a
+second implementation of the thing it describes. What holds the two together is
+`commands.test.ts`, which presses every chord the table documents and asserts exactly one
+handler fires — the check whose absence let the drift happen. Adding a chord to the table
+without teaching `useShortcuts` about it now fails.
+
+**A chord is matched case-folded, because a shifted letter is not spelled the same
+everywhere.** macOS suppresses the shift-casing while Cmd is held and sends `z` for ⌘⇧Z,
+while Ctrl Shift Z on Windows and Linux arrives as `Z`. An unfolded `case 'z'` therefore
+reads redo on one platform and nothing at all on the others — which is why
+`commands.test.ts` presses every shifted chord the *strict* way, upper-cased, rather than
+the way the host it runs on happens to spell it.
+
+**An open menu is not a modal, and must not join `modalOpen`.** A menu puts focus on a
+`<button>`, so neither `isTyping` nor `modalOpen` catches it, and without a guard `n` would
+add a passage and Delete would delete the selection behind the open panel — so `menuOpen`
+stands the *unmodified* keys down. It stops there: a menu is not a veil, and `Cmd Z` and
+the zoom keys still belong to the canvas under it. `AppMenuBar` handles Escape, the arrows
+and Enter on `document` rather than on `window`, because `useShortcuts` means nothing by
+any of them; every other key closes the menu and travels on, which is what keeps `Cmd P`
+from opening the reader underneath a panel that is still up — every other key *except* a
+lone `Shift`, `Meta`, `Control` or `Alt`, since every chord begins with one of those
+arriving on its own and closing there would dismiss the menu before the second key was
+pressed. It listens on `document`, and focuses the title on open, because Safari and
+Firefox do not focus a `<button>` when it is clicked: bound to the bar, Escape would never
+arrive, and the menu could only be dismissed by clicking away while `menuOpen` went on
+swallowing the canvas keys.
+
+**The toolbar has to fit, because it can no longer scroll.** `overflow-x: auto` used to
+hide the fact that twenty-six controls did not, and it would clip the menu panels hanging
+below the bar. With `overflow: visible` anything that does not fit spills off-screen and is
+unreachable rather than scrolled to, so the media queries at the foot of `AppToolbar.vue`
+give way in a deliberate order — the tally, then the saved label, then the readouts
+entirely, then the zoom stepper, which goes last because every item in it is also a
+shortcut, a trackpad pinch and a row in the View menu. Play is never the thing that falls
+off the edge. Those queries sit at the end of the stylesheet on purpose: they match the
+same single class as the rules they override, so earlier ones would simply lose.
+
 **A modified key that opens something must check what is already open.** `useShortcuts`
 runs its `mod` branch before the `modalOpen` stand-down on purpose: Cmd Z and the zoom keys
 still belong to the canvas under a veil. `Cmd /` is the exception in that branch, because
@@ -351,6 +399,8 @@ tag, a state, a note, the story's scratchpad) does not re-scan every body in the
 rename cascade, tags, save file), `layering` / `layout` (levels, geometry, determinism,
 paths), `scene` (settings, cast), `profile` (character sheet traits and relations),
 `gates` (inference from conditional links, and its fail-closed conditions),
+`commands` (the command table, and that every chord it documents is one somebody listens
+for),
 `tags` (routes through a tag, and the combinations of several, against a brute-force
 walk of every route),
 `stats` (endings, word counts, the lint, and the line between an authored link and a

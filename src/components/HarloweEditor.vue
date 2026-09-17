@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { Selection } from '../lib/harlowe/format'
+import { commandTip } from '../lib/ui/commands'
 import { BOLD, ITALIC, insertLink, toggleBlockquote, toggleWrap } from '../lib/harlowe/format'
 import { highlightHtml } from '../lib/harlowe/highlight'
 import LinkPicker from './LinkPicker.vue'
@@ -30,8 +31,12 @@ const highlight = ref<HTMLPreElement | null>(null)
 
 const html = computed(() => highlightHtml(props.modelValue))
 
-const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
-const MOD = IS_MAC ? '⌘' : 'Ctrl '
+/**
+ * The formatting buttons name their own chord, read off the command table so
+ * they agree with the help panel. They used to be built from a local `MOD`
+ * whose non-Mac branch carried a trailing space to make `${MOD}B` read right.
+ */
+const tip = commandTip
 
 /**
  * The classic overlay trick: a transparent textarea sits exactly on top of a
@@ -170,16 +175,16 @@ defineExpose({ focus: () => textarea.value?.focus() })
 <template>
   <div ref="shell" class="shell">
     <div v-if="toolbar" class="tools">
-      <button class="tool" type="button" :title="`Bold (${MOD}B)`" @click="wrap(BOLD)">
+      <button class="tool" type="button" :title="tip('editor.bold')" @click="wrap(BOLD)">
         <b>B</b>
       </button>
-      <button class="tool" type="button" :title="`Italic (${MOD}I)`" @click="wrap(ITALIC)">
+      <button class="tool" type="button" :title="tip('editor.italic')" @click="wrap(ITALIC)">
         <i>I</i>
       </button>
-      <button class="tool" type="button" :title="`Quote (${MOD}⇧.)`" @click="quote">
+      <button class="tool" type="button" :title="tip('editor.quote')" @click="quote">
         &ldquo;&rdquo;
       </button>
-      <button class="tool" type="button" :title="`Link (${MOD}⇧K)`" @click="openLink">
+      <button class="tool" type="button" :title="tip('editor.link')" @click="openLink">
         [[&thinsp;]]
       </button>
     </div>

@@ -1,4 +1,5 @@
 import { onBeforeUnmount, onMounted } from 'vue'
+import { IS_MAC } from '../lib/ui/platform'
 
 export interface ShortcutHandlers {
   zoomIn: () => void
@@ -14,6 +15,7 @@ export interface ShortcutHandlers {
   toggleBodyEditor: () => void
   toggleCheatSheet: () => void
   toggleNotes: () => void
+  toggleIndex: () => void
   openHelp: () => void
   openStats: () => void
   /** True while the stats sheet itself is what is up. */
@@ -32,9 +34,13 @@ export interface ShortcutHandlers {
   dialogOpen: () => boolean
   /** True while a full-screen modal is up; the unmodified keys stand down. */
   modalOpen: () => boolean
+  /**
+   * True while a menu in the bar is open. Not part of `modalOpen`: a menu is
+   * not a veil, and Cmd Z and the zoom keys still belong to the canvas under
+   * it. It matters only to the unmodified keys below.
+   */
+  menuOpen: () => boolean
 }
-
-const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 
 function isTyping(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null
@@ -59,7 +65,12 @@ export function useShortcuts(handlers: ShortcutHandlers) {
     const nativeEditing = typing && IS_MAC && !e.metaKey
 
     if (mod) {
-      switch (e.key) {
+      // Folded, because a shifted letter is not reported the same way
+      // everywhere: macOS suppresses the shift-casing while Cmd is held and
+      // sends `z`, while Ctrl Shift Z on Windows and Linux arrives as `Z`. An
+      // unfolded `case 'z'` therefore reads redo on one platform and nothing at
+      // all on the others. `HarloweEditor` already folds for the same reason.
+      switch (e.key.length === 1 ? e.key.toLowerCase() : e.key) {
         case '=':
         case '+':
           e.preventDefault()
@@ -110,6 +121,23 @@ export function useShortcuts(handlers: ShortcutHandlers) {
           if (nativeEditing || handlers.modalOpen()) return
           e.preventDefault()
           handlers.toggleNotes()
+          return
+        // Cast & Settings, beside the notes key: both occupy the left gutter,
+        // and `leftPanel` already makes this one and the cheat sheet exclusive.
+        //
+        // `;` because every mnemonic letter is spoken for — the editor owns B
+        // and I, K is the per-passage cheat sheet, and Chrome will not yield T
+        // or W. It is unclaimed by any browser, so nothing has to be wrestled
+        // away from one. Same carve-out as the panels above, and it is needed
+        // here for the same reason: the panel has rename fields that focus
+        // themselves, so a key that stood down while typing could open it and
+        // then never close it again.
+        case ';':
+        // Shifted on the layouts that report it that way, as with `=`/`+`.
+        case ':':
+          if (nativeEditing || handlers.modalOpen()) return
+          e.preventDefault()
+          handlers.toggleIndex()
           return
         // Not a letter: the editor owns Mod B / I / Shift . / Shift K for
         // markup, and a global binding on one of those would fire alongside it.
@@ -178,7 +206,12 @@ export function useShortcuts(handlers: ShortcutHandlers) {
     // A modal owns the keyboard while it is up, and handles Escape itself. Only
     // the bare keys below stand down — Cmd Z and the zoom keys still belong to
     // the canvas underneath.
-    if (handlers.modalOpen()) return
+    //
+    // An open menu stands them down too, and has to: it puts focus on a
+    // `<button>`, so `isTyping` is false and `modalOpen` is false, and without
+    // this `n` would add a passage and Delete would delete the selection behind
+    // the open panel.
+    if (handlers.modalOpen() || handlers.menuOpen()) return
 
     if (e.key === '?') {
       e.preventDefault()
@@ -193,7 +226,7 @@ export function useShortcuts(handlers: ShortcutHandlers) {
     }
     // Deliberately not Tab: hijacking it globally would break keyboard
     // traversal of the toolbar and inspector.
-    if (e.key === 'n') {
+    if (e.key === 'n' || e.key === 'N') {
       e.preventDefault()
       handlers.addPassage()
     }

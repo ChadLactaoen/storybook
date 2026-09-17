@@ -17,6 +17,7 @@ import HelpPanel from './components/HelpPanel.vue'
 import StoryIndexPanel from './components/StoryIndexPanel.vue'
 import StoryNotes from './components/StoryNotes.vue'
 import { useShortcuts } from './composables/useShortcuts'
+import type { CommandBinding } from './lib/ui/commands'
 import { useViewport } from './composables/useViewport'
 import { isPhantomId } from './lib/graph/constants'
 import * as play from './stores/play'
@@ -220,6 +221,59 @@ function toggleCheatSheet() {
   leftPanel.value = leftPanel.value === 'cheat' ? null : 'cheat'
 }
 
+/**
+ * A menu is open. Deliberately not part of `modalOpen` — it is not a veil, and
+ * the canvas keys go on working under it — but the unmodified keys stand down,
+ * or `n` would add a passage behind the open panel.
+ */
+const menuOpen = ref(false)
+
+/** Held only so the Import command can reach the toolbar's hidden file input. */
+const toolbar = ref<InstanceType<typeof AppToolbar> | null>(null)
+
+/**
+ * What each command in the bar actually does.
+ *
+ * `commands.ts` describes them; this binds them, and it lives here because
+ * every flag it reads — the panel refs above, the viewport, the store — is
+ * already in this component. Menu items toggle rather than open, matching what
+ * the keyboard has always done: the toolbar's buttons used to only ever set a
+ * flag true, so the button could open a sheet but never close it.
+ */
+const commandBindings = computed<Record<string, CommandBinding>>(() => ({
+  'file.import': { run: () => toolbar.value?.pickFile() },
+  'file.export': { run: store.saveToFile },
+
+  'edit.undo': { run: store.undo, enabled: store.canUndo.value },
+  'edit.redo': { run: store.redo, enabled: store.canRedo.value },
+  'edit.passageAdd': { run: () => store.addPassage(store.state.selectedId ?? undefined) },
+  'edit.passageAddFree': { run: () => store.addPassage() },
+  'edit.passageDelete': {
+    run: deleteSelected,
+    enabled: store.state.selectedIds.length > 0 || store.state.selectedId !== null,
+  },
+  'edit.recode': { run: () => (recodeOpen.value = true) },
+
+  'view.zoomIn': { run: vp.zoomIn },
+  'view.zoomOut': { run: vp.zoomOut },
+  'view.zoomReset': { run: vp.resetZoom },
+  'view.zoomFit': { run: fit },
+  'view.levels': { run: () => (showLevels.value = !showLevels.value), checked: showLevels.value },
+  'view.minimap': {
+    run: () => (showMinimap.value = !showMinimap.value),
+    checked: showMinimap.value,
+  },
+
+  'story.play': { run: togglePlay, enabled: store.state.doc.startNodeId !== null },
+  'story.stats': { run: () => (statsOpen.value = !statsOpen.value) },
+  'story.tags': { run: () => (tagsOpen.value = !tagsOpen.value) },
+  'story.index': { run: toggleIndex, checked: leftPanel.value === 'index' },
+  'story.notes': { run: toggleNotes, checked: notesOpen.value },
+
+  'help.about': { run: openHelp },
+  'help.settings': { run: () => (settingsOpen.value = true) },
+}))
+
 useShortcuts({
   zoomIn: vp.zoomIn,
   zoomOut: vp.zoomOut,
@@ -233,6 +287,7 @@ useShortcuts({
   toggleBodyEditor: () => void toggleBodyEditor(),
   toggleCheatSheet,
   toggleNotes,
+  toggleIndex,
   openHelp: () => (helpOpen.value = true),
   openStats: () => (statsOpen.value = !statsOpen.value),
   statsOpen: () => statsOpen.value,
@@ -242,6 +297,7 @@ useShortcuts({
   modalOpen: () => modalOpen.value,
   togglePlay,
   playOpen: () => play.playOpen.value,
+  menuOpen: () => menuOpen.value,
 })
 
 onMounted(() => {
@@ -272,21 +328,17 @@ function dismissNotices() {
        `veilInset` for which panels earn it and why the index never does. -->
   <div v-else class="app" :style="{ '--veil-inset': veilInset }">
     <AppToolbar
+      ref="toolbar"
       :zoom="vp.view.k"
+      :bindings="commandBindings"
       @zoom-in="vp.zoomIn"
       @zoom-out="vp.zoomOut"
       @zoom-to-fit="fit"
       @reset-zoom="vp.resetZoom"
-      @toggle-levels="showLevels = !showLevels"
-      @toggle-minimap="showMinimap = !showMinimap"
-      @toggle-index="toggleIndex"
-      @toggle-notes="toggleNotes"
-      @open-help="openHelp"
-      @open-stats="statsOpen = true"
-      @open-tags="tagsOpen = true"
+      @open-stats="statsOpen = !statsOpen"
       @open-reader="openReader()"
       @open-settings="settingsOpen = true"
-      @open-recode="recodeOpen = true"
+      @menu-open="menuOpen = $event"
     />
 
     <SearchFilterBar ref="searchBar" />

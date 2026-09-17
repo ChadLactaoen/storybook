@@ -294,3 +294,38 @@ describe('CharacterPicker error reporting', () => {
     expect(host.querySelector<HTMLInputElement>('.entry .field')!.value).toBe('Mira')
   })
 })
+
+describe('the undo and redo buttons', () => {
+  /**
+   * `canUndo` was a computed over a plain array, so it had nothing reactive to
+   * invalidate on: whatever it answered the first time it was read, it went on
+   * answering forever. Both buttons were dimmed from mount and never lit, in
+   * every build that had them.
+   */
+  it('light as soon as there is something to undo', () => {
+    store.newStory('History Check')
+    expect(store.canUndo.value).toBe(false)
+    expect(store.canRedo.value).toBe(false)
+
+    store.addPassage()
+    expect(store.canUndo.value).toBe(true)
+    expect(store.canRedo.value).toBe(false)
+
+    store.undo()
+    expect(store.canRedo.value).toBe(true)
+
+    store.redo()
+    expect(store.canRedo.value).toBe(false)
+    expect(store.canUndo.value).toBe(true)
+  })
+
+  it('go dark again when a new story replaces the history', () => {
+    store.newStory('History Check')
+    store.addPassage()
+    expect(store.canUndo.value).toBe(true)
+
+    store.newStory('Another Story')
+    expect(store.canUndo.value).toBe(false)
+    expect(store.canRedo.value).toBe(false)
+  })
+})

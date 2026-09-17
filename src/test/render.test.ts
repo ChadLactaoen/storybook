@@ -6,6 +6,7 @@ import App from '../App.vue'
 import { resetPlay } from '../stores/play'
 import { resetPrefs, setPref } from '../stores/prefs'
 import * as store from '../stores/story'
+import { COMMANDS, GROUP_LABELS } from '../lib/ui/commands'
 
 /**
  * Mounts the real component tree against a DOM.
@@ -18,6 +19,32 @@ import * as store from '../stores/story'
 let app: VueApp | null = null
 let host: HTMLElement
 let problems: string[] = []
+
+/**
+ * Runs a command from the menu bar.
+ *
+ * The toolbar used to be a flat row of twenty-six buttons; the long tail now
+ * lives behind File / Edit / View / Story / Help, so reaching one means opening
+ * its menu first. The group comes from the command table, so a command that
+ * moves menus does not move these tests.
+ */
+async function runCommand(label: string) {
+  const spec = COMMANDS.find((c) => c.label === label)
+  if (!spec?.group) throw new Error(`No menu command labelled "${label}"`)
+  const group = GROUP_LABELS[spec.group]
+  const title = [...host.querySelectorAll<HTMLButtonElement>('.menubar .title')].find(
+    (b) => b.textContent!.trim() === group,
+  )
+  if (!title) throw new Error(`No menu titled "${group}"`)
+  title.click()
+  await nextTick()
+  const item = [...host.querySelectorAll<HTMLButtonElement>('.menu-item')].find(
+    (b) => b.querySelector('.menu-label')!.textContent!.trim() === label,
+  )
+  if (!item) throw new Error(`No item "${label}" in the ${group} menu`)
+  item.click()
+  await nextTick()
+}
 
 beforeEach(() => {
   problems = []
@@ -210,12 +237,8 @@ describe('the app renders', () => {
     store.castAdd(start, 'Mira')
     await nextTick()
 
-    // The panel is opened from the toolbar.
-    const indexButton = [...host.querySelectorAll('button')].find(
-      (b) => b.textContent?.trim() === 'Cast & Settings',
-    )!
-    indexButton.click()
-    await nextTick()
+    // The panel is opened from the Story menu.
+    await runCommand('Cast & Settings')
 
     const panel = host.querySelector('.index')!
     const rows = [...panel.querySelectorAll('.row')].map((r) => r.textContent!.replace(/\s+/g, ' '))
@@ -230,11 +253,7 @@ describe('the app renders', () => {
     store.newStory('Render Check')
     store.characterCreate('Mira')
     store.characterCreate('Bandit')
-    const indexButton = [...host.querySelectorAll('button')].find(
-      (b) => b.textContent?.trim() === 'Cast & Settings',
-    )!
-    indexButton.click()
-    await nextTick()
+    await runCommand('Cast & Settings')
 
     const down = host.querySelector<HTMLButtonElement>('.index .arrow[title="Move down"]')!
     down.click()
@@ -270,11 +289,7 @@ describe('the app renders', () => {
     store.newStory('Help Check')
     await nextTick()
 
-    const helpButton = [...host.querySelectorAll('button')].find(
-      (b) => b.textContent?.trim() === '?',
-    )!
-    helpButton.click()
-    await nextTick()
+    await runCommand('How Storybook works')
 
     const panel = host.querySelector('[aria-label="How Storybook works"]')!
     expect(panel).not.toBeNull()
@@ -295,11 +310,7 @@ describe('the app renders', () => {
     store.tagAdd(first, 'opening')
     await nextTick()
 
-    const tagsButton = [...host.querySelectorAll('button')].find(
-      (b) => b.textContent?.trim() === 'Tags',
-    )!
-    tagsButton.click()
-    await nextTick()
+    await runCommand('Tags')
 
     const panel = host.querySelector('[aria-label="Tag analyzer"]')!
     expect(panel).not.toBeNull()
@@ -987,16 +998,11 @@ describe('the character cheat sheet', () => {
   it('shows only one left panel at a time', async () => {
     await openOnCast()
 
-    const indexButton = [...host.querySelectorAll('button')].find(
-      (b) => b.textContent?.trim() === 'Cast & Settings',
-    )!
-    indexButton.click()
-    await nextTick()
+    await runCommand('Cast & Settings')
     expect(host.querySelector('.cheat')).toBeNull()
     expect(host.querySelector('.index')).not.toBeNull()
 
-    indexButton.click()
-    await nextTick()
+    await runCommand('Cast & Settings')
     expect(host.querySelector('.index')).toBeNull()
     expect(host.querySelector('.cheat')).toBeNull()
     expect(problems).toEqual([])
@@ -1318,10 +1324,6 @@ describe('story notes', () => {
     await nextTick()
   }
 
-  function toolbarButton(label: string) {
-    return [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === label)!
-  }
-
   function type(text: string) {
     const pad = host.querySelector<HTMLTextAreaElement>('.notes .pad')!
     pad.value = text
@@ -1332,8 +1334,7 @@ describe('story notes', () => {
     await withStory()
     expect(host.querySelector('.left-gutter')).toBeNull()
 
-    toolbarButton('Notes').click()
-    await nextTick()
+    await runCommand('Story notes')
     expect(host.querySelector('.notes')).not.toBeNull()
 
     type('Mira never learns the truth.')
@@ -1361,17 +1362,15 @@ describe('story notes', () => {
 
   it('stacks under the index, always at the bottom, and outlives it', async () => {
     await withStory()
-    toolbarButton('Notes').click()
-    toolbarButton('Cast & Settings').click()
-    await nextTick()
+    await runCommand('Story notes')
+    await runCommand('Cast & Settings')
 
     const gutter = host.querySelector('.left-gutter')!
     expect(gutter.children).toHaveLength(2)
     expect(gutter.firstElementChild!.classList.contains('index')).toBe(true)
     expect(gutter.lastElementChild!.classList.contains('notes')).toBe(true)
 
-    toolbarButton('Cast & Settings').click()
-    await nextTick()
+    await runCommand('Cast & Settings')
     expect(host.querySelector('.index')).toBeNull()
     expect(host.querySelector('.notes')).not.toBeNull()
     expect(problems).toEqual([])
@@ -1381,8 +1380,7 @@ describe('story notes', () => {
     await withStory()
     const id = store.state.doc.nodes[0]!.id
     store.select(id)
-    toolbarButton('Notes').click()
-    await nextTick()
+    await runCommand('Story notes')
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))
     await nextTick()
     expect(host.querySelector('.cheat')).not.toBeNull()
@@ -1399,8 +1397,7 @@ describe('story notes', () => {
     await withStory()
     const id = store.state.doc.nodes[0]!.id
     store.select(id)
-    toolbarButton('Notes').click()
-    await nextTick()
+    await runCommand('Story notes')
 
     const inset = () =>
       host.querySelector<HTMLElement>('.app')!.style.getPropertyValue('--veil-inset')
@@ -1412,18 +1409,13 @@ describe('story notes', () => {
 
     // The index selects passages, and the open dialog is bound to the
     // selection — so while it is up the whole column dims, notes included.
-    toolbarButton('Cast & Settings').click()
-    await nextTick()
+    await runCommand('Cast & Settings')
     expect(inset()).toBe('0px')
     expect(problems).toEqual([])
   })
 })
 
 describe('the recode panel', () => {
-  function toolbarButton(label: string) {
-    return [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === label)!
-  }
-
   async function withBranch() {
     mount()
     store.newStory('Recode Check')
@@ -1432,8 +1424,7 @@ describe('the recode panel', () => {
     setPref('showCodes', true)
     await nextTick()
 
-    toolbarButton('Recode').click()
-    await nextTick()
+    await runCommand('Recode…')
     return host.querySelector('[aria-label="Recode passages"]')!
   }
 
@@ -1515,13 +1506,8 @@ describe('endings and the stats panel', () => {
     store.endingSet(twoId, true)
     await nextTick()
 
-    // The labelled button, not the pill: this is the discoverable way in.
-    const stats = [...host.querySelectorAll<HTMLButtonElement>('.toolbar .btn')].find(
-      (b) => b.textContent!.trim() === 'Stats',
-    )
-    expect(stats).toBeDefined()
-    stats!.click()
-    await nextTick()
+    // The menu item, not the pill: this is the discoverable way in.
+    await runCommand('Stats')
 
     const sheet = host.querySelector('[aria-label="Story statistics"]')
     expect(sheet).not.toBeNull()
@@ -2274,6 +2260,280 @@ describe('the reader', () => {
     await nextTick()
 
     expect(host.querySelector('[aria-label="Read the story"]')).toBeNull()
+    expect(problems).toEqual([])
+  })
+})
+
+describe('the menu bar', () => {
+  async function withStory() {
+    mount()
+    store.newStory('Menu Check')
+    await nextTick()
+  }
+
+  function title(group: string) {
+    return [...host.querySelectorAll<HTMLButtonElement>('.menubar .title')].find(
+      (b) => b.textContent!.trim() === group,
+    )!
+  }
+
+  function items() {
+    return [...host.querySelectorAll<HTMLButtonElement>('.menu-item')]
+  }
+
+  function labelled(label: string) {
+    return items().find((b) => b.querySelector('.menu-label')!.textContent!.trim() === label)
+  }
+
+  it('opens on click and closes on Escape, returning focus to the title', async () => {
+    await withStory()
+    expect(host.querySelector('.menu-panel')).toBeNull()
+
+    title('Story').click()
+    await nextTick()
+    expect(host.querySelector('.menu-panel')).not.toBeNull()
+    expect(title('Story').getAttribute('aria-expanded')).toBe('true')
+
+    host.querySelector('.menubar')!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    )
+    await nextTick()
+    expect(host.querySelector('.menu-panel')).toBeNull()
+    expect(document.activeElement).toBe(title('Story'))
+    expect(problems).toEqual([])
+  })
+
+  it('closes when a pointer lands outside it', async () => {
+    await withStory()
+    title('View').click()
+    await nextTick()
+    expect(host.querySelector('.menu-panel')).not.toBeNull()
+
+    document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await nextTick()
+    expect(host.querySelector('.menu-panel')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * Hovering a sibling switches to it, so by the time the click arrives that
+   * menu is already open — and a plain toggle read the click as "close the
+   * thing you are pointing at", which made a menu impossible to open by
+   * dragging across the bar and clicking.
+   */
+  it('stays open when a browsed-to title is then clicked', async () => {
+    await withStory()
+    title('Story').click()
+    await nextTick()
+
+    title('View').dispatchEvent(new MouseEvent('mouseenter'))
+    await nextTick()
+    expect(labelled('Level guides')).toBeDefined()
+
+    title('View').click()
+    await nextTick()
+    expect(host.querySelector('.menu-panel')).not.toBeNull()
+    expect(labelled('Level guides')).toBeDefined()
+
+    // A second click on the same title does close it.
+    title('View').click()
+    await nextTick()
+    expect(host.querySelector('.menu-panel')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('walks its items with the arrow keys', async () => {
+    await withStory()
+    title('View').click()
+    await nextTick()
+
+    const bar = host.querySelector('.menubar')!
+    bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+    expect(document.activeElement).toBe(items()[0])
+
+    bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+    expect(document.activeElement).toBe(items()[1])
+
+    bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    await nextTick()
+    expect(document.activeElement).toBe(items()[0])
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * The guard the open menu exists to need: focus is on a `<button>`, so
+   * neither `isTyping` nor `modalOpen` catches these.
+   */
+  it('stands the canvas keys down while it is up', async () => {
+    await withStory()
+    const before = store.state.doc.nodes.length
+
+    title('Edit').click()
+    await nextTick()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n' }))
+    await nextTick()
+    expect(store.state.doc.nodes).toHaveLength(before)
+    expect(problems).toEqual([])
+  })
+
+  it('ticks a toggle that is on, and clears it when it goes off', async () => {
+    await withStory()
+    title('View').click()
+    await nextTick()
+
+    const check = () => labelled('Level guides')!.querySelector('.menu-check')!.textContent!.trim()
+    expect(check()).toBe('✓')
+
+    labelled('Level guides')!.click()
+    await nextTick()
+    title('View').click()
+    await nextTick()
+    expect(check()).toBe('')
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * Safari and Firefox on macOS do not focus a `<button>` when it is clicked,
+   * so a menu opened with the mouse can leave focus on `<body>`. The key
+   * handler is on `document` for that reason — bound to the bar, Escape would
+   * never arrive and the menu could only be dismissed by clicking away, while
+   * `menuOpen` went on swallowing the canvas keys.
+   */
+  it('closes on Escape even when focus never entered the bar', async () => {
+    await withStory()
+    title('Story').click()
+    await nextTick()
+    expect(host.querySelector('.menu-panel')).not.toBeNull()
+
+    // Whatever the browser did with focus, the key arrives at the document.
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    expect(host.querySelector('.menu-panel')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  /** Every chord begins with one of these arriving on its own. */
+  it('survives a modifier pressed on its own', async () => {
+    await withStory()
+    title('Edit').click()
+    await nextTick()
+
+    for (const key of ['Shift', 'Meta', 'Control', 'Alt']) {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+      await nextTick()
+      expect(`${key}: ${host.querySelector('.menu-panel') !== null}`).toBe(`${key}: true`)
+    }
+    expect(problems).toEqual([])
+  })
+
+  it('ticks the panels that are open, not just the view toggles', async () => {
+    await withStory()
+    title('Story').click()
+    await nextTick()
+    const tick = (label: string) =>
+      labelled(label)!.querySelector('.menu-check')!.textContent!.trim()
+    expect(tick('Cast & Settings')).toBe('')
+
+    labelled('Cast & Settings')!.click()
+    await nextTick()
+    title('Story').click()
+    await nextTick()
+    expect(tick('Cast & Settings')).toBe('✓')
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * The toolbar's "+ Passage" made one with no links; folding it into the `n`
+   * command removed the only way to make an unlinked passage while something
+   * was selected.
+   */
+  it('still makes an unlinked passage while one is selected', async () => {
+    await withStory()
+    const id = store.state.doc.nodes[0]!.id
+    store.select(id)
+    await nextTick()
+
+    const bodyBefore = store.state.doc.nodes[0]!.body
+    const countBefore = store.state.doc.nodes.length
+
+    await runCommand('New unlinked passage')
+
+    // A passage was added, and the selected one's prose was not touched — the
+    // seed body already names a `P2` in its example, so the code alone proves
+    // nothing.
+    expect(store.state.doc.nodes).toHaveLength(countBefore + 1)
+    expect(store.state.doc.nodes[0]!.body).toBe(bodyBefore)
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * A command in the table with no binding renders as a permanently dimmed
+   * row, which is exactly the kind of thing `vue-tsc` cannot see.
+   *
+   * So the story is first put in a state where every command is genuinely
+   * available — something to undo, something to redo, a selection to delete
+   * and a start to play from — and anything still dimmed is unbound.
+   */
+  it('binds every command it offers', async () => {
+    await withStory()
+    const id = store.state.doc.nodes[0]!.id
+    store.makeStart(id)
+    store.addPassage()
+    store.addPassage()
+    store.undo()
+    store.select(id)
+    await nextTick()
+
+    for (const group of ['File', 'Edit', 'View', 'Story', 'Help']) {
+      title(group).click()
+      await nextTick()
+      expect(items().length).toBeGreaterThan(0)
+      for (const item of items()) {
+        const label = item.querySelector('.menu-label')!.textContent!.trim()
+        expect(`${label}: ${item.disabled}`).toBe(`${label}: false`)
+      }
+    }
+    expect(problems).toEqual([])
+  })
+})
+
+describe('Cast & Settings from the keyboard', () => {
+  it('opens and closes on its own chord, even from inside its rename field', async () => {
+    mount()
+    store.newStory('Index Check')
+    store.characterCreate('Mira')
+    await nextTick()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: ';', metaKey: true }))
+    await nextTick()
+    expect(host.querySelector('.index')).not.toBeNull()
+
+    // The panel's rename fields focus themselves, so a key that stood down
+    // while typing could open this and never close it again.
+    const field = host.querySelector<HTMLInputElement>('.index input')
+    const target = field ?? window
+    target.dispatchEvent(new KeyboardEvent('keydown', { key: ';', metaKey: true, bubbles: true }))
+    await nextTick()
+    expect(host.querySelector('.index')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('stands down under a modal', async () => {
+    mount()
+    store.newStory('Index Check')
+    await nextTick()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '/', metaKey: true }))
+    await nextTick()
+    expect(host.querySelector('[aria-label="Story statistics"]')).not.toBeNull()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: ';', metaKey: true }))
+    await nextTick()
+    expect(host.querySelector('.index')).toBeNull()
     expect(problems).toEqual([])
   })
 })

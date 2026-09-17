@@ -171,6 +171,73 @@ select {
   background: transparent;
 }
 
+/* The dropdown surface, shared by the menu bar and the three pickers that grew
+   their own copy of it. Tokens only, so the dark block at the foot of this file
+   covers it with no extra rules. */
+.menu-panel {
+  z-index: 20;
+  min-width: 210px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  background: var(--panel-alt);
+  outline: none;
+}
+
+.menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* The label takes the slack so the chord sits hard against the right edge,
+   which is what makes a column of them scannable. */
+.menu-label {
+  flex: 1 1 auto;
+}
+
+.menu-chord {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* Reserved whether or not this row is ticked, so labels line up down the
+   column instead of shifting when a toggle flips. */
+.menu-check {
+  flex: 0 0 auto;
+  width: 13px;
+  color: var(--accent);
+}
+
+.menu-divider {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--border);
+}
+
 .field {
   width: 100%;
   height: 30px;
