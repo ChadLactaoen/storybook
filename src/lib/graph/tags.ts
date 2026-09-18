@@ -20,6 +20,15 @@
  * necessarily the same one — fall out of inclusion–exclusion over which tags a
  * route is allowed to miss. See `combineTags`.
  *
+ * **The one sum that is legal here** is the level breakdown on each row. A
+ * passage sits on exactly one level, so levels partition the *passages* the way
+ * endings partition the routes, and `sum(levels[].passages) === passages`
+ * exactly. It answers a different question from the share beside it and the two
+ * will not reconcile: three passages on level 4 may lie on one route or on nine
+ * hundred. Its denominator is the passages on that level — not
+ * `LayoutResult.levels[].count`, which counts phantoms that could never carry a
+ * tag.
+ *
  * An analysis, not a layout stage: `layoutStory` never calls it, because a tag
  * moves nothing on the canvas. It reads the graph the layout already retains
  * and the fields `DerivedGraph` deliberately does not carry — `tags` is in the
@@ -50,6 +59,26 @@ import type { LayoutResult } from './types'
  */
 export const MAX_COMBINED_TAGS = 10
 
+/**
+ * A tag's footprint on one level. Only levels it actually reaches get one.
+ */
+export interface TagLevel {
+  level: number
+  /** Passages on this level carrying the tag. */
+  passages: number
+  /**
+   * Passages on this level at all — the denominator. Phantoms are excluded: one
+   * can never carry a tag, so counting it would understate every share on a
+   * level with a broken link. Deliberately not `LayoutResult.levels[].count`,
+   * which counts them.
+   */
+  levelPassages: number
+  /** `passages` as a share of `levelPassages`, one decimal. */
+  percent: number
+  /** Those tagged passages, in `doc.nodes` order — the order `nodeIds` is in. */
+  nodeIds: NodeId[]
+}
+
 export interface TagRow {
   tag: string
   /** Passages carrying it. The authored question: every passage, on a route or not. */
@@ -61,6 +90,18 @@ export interface TagRow {
   /** Routes passing through at least one of them. */
   routes: bigint
   percent: number
+  /**
+   * Where those passages sit, ascending, and **sparse** — a level the tag misses
+   * has no entry at all. Unambiguous because every entry names its own level,
+   * and on a deep story the dense form would be mostly zeros.
+   *
+   * A passage sits on exactly one level, so unlike the route counts beside it
+   * this one is a partition: `sum(levels[].passages) === passages`, by
+   * construction rather than by two counts agreeing. It is still a different
+   * question from `percent` above, and the two do not reconcile — three
+   * passages on level 4 may lie on one route or on nine hundred.
+   */
+  levels: TagLevel[]
 }
 
 export interface TagAnalysis {
@@ -112,6 +153,46 @@ function index(doc: StoryDoc): Map<string, NodeId[]> {
   return out
 }
 
+/**
+ * Split a tag's passages across the levels they sit on.
+ *
+ * One pass over `nodeIds`, so the buckets partition it exactly rather than by
+ * two counts agreeing, and the relative order inside a bucket is inherited from
+ * it — no new sort over ids, so no new determinism surface. The level list is
+ * sorted explicitly, which makes it canonical whatever order the `Map` filled
+ * in.
+ */
+function bucketByLevel(
+  nodeIds: readonly NodeId[],
+  nodeById: ReadonlyMap<NodeId, { level: number }>,
+  levelSize: ReadonlyMap<number, number>,
+): TagLevel[] {
+  const byLevel = new Map<number, NodeId[]>()
+  for (const id of nodeIds) {
+    const lv = nodeById.get(id)?.level
+    if (lv === undefined) continue
+    const list = byLevel.get(lv)
+    if (list) list.push(id)
+    else byLevel.set(lv, [id])
+  }
+  return [...byLevel.keys()]
+    .sort((a, b) => a - b)
+    .map((level) => {
+      const ids = byLevel.get(level)!
+      const levelPassages = levelSize.get(level) ?? 0
+      return {
+        level,
+        passages: ids.length,
+        levelPassages,
+        // `share` is the one rounding convention this panel presents — one
+        // decimal, zero on an empty total. BigInt is its signature, not a claim
+        // that these counts are large.
+        percent: share(BigInt(ids.length), BigInt(levelPassages)),
+        nodeIds: ids,
+      }
+    })
+}
+
 function endingsOf(doc: StoryDoc): Set<NodeId> {
   const out = new Set<NodeId>()
   for (const n of doc.nodes) if (n.isEnding) out.add(n.id)
@@ -127,10 +208,19 @@ function endingsOf(doc: StoryDoc): Set<NodeId> {
  * a thing the author wants to see, not a row to hide.
  */
 export function computeTagStats(doc: StoryDoc, layout: LayoutResult): TagAnalysis {
-  const { graph, backEdges } = layout
+  const { graph, backEdges, nodeById } = layout
   const startId = doc.startNodeId
   const endings = endingsOf(doc)
   const byTag = index(doc)
+
+  // How many passages sit on each level: the denominator for every level row
+  // below, counted once for the whole table. Walking `doc.nodes` rather than
+  // `layout.nodes` is what excludes phantoms — see `TagLevel.levelPassages`.
+  const levelSize = new Map<number, number>()
+  for (const n of doc.nodes) {
+    const lv = nodeById.get(n.id)?.level
+    if (lv !== undefined) levelSize.set(lv, (levelSize.get(lv) ?? 0) + 1)
+  }
 
   const totalRoutes = startId === null ? 0n : countPaths(graph, backEdges, startId, endings)
   // One shared pass for the reverse direction, as `stats.ts` does: it answers
@@ -153,6 +243,7 @@ export function computeTagStats(doc: StoryDoc, layout: LayoutResult): TagAnalysi
       offRoute: nodeIds.filter((id) => (to.get(id) ?? 0n) === 0n && id !== startId).length,
       routes,
       percent: share(routes, totalRoutes),
+      levels: bucketByLevel(nodeIds, nodeById, levelSize),
     }
   })
 

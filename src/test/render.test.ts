@@ -318,6 +318,18 @@ describe('the app renders', () => {
     // The tag is on the only passage, so every route runs through it.
     expect(text).toContain('opening')
     expect(text).toContain('100%')
+
+    // Expanding the row breaks it down by level. The one passage is on level 1
+    // and is the only thing there, so it is `1 of 1`.
+    const count = [...panel.querySelectorAll<HTMLButtonElement>('button.link')].find(
+      (b) => b.textContent?.trim() === '1',
+    )!
+    count.click()
+    await nextTick()
+    const opened = panel.textContent!.replace(/\s+/g, ' ')
+    expect(opened).toContain('Share of level')
+    expect(opened).toContain('L1')
+    expect(opened).toContain('1 of 1')
     expect(problems).toEqual([])
   })
 

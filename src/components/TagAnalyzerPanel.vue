@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as store from '../stores/story'
 import { formatCount } from '../lib/graph/paths'
 import { combineTags, computeTagStats, MAX_COMBINED_TAGS } from '../lib/graph/tags'
+import type { TagRow } from '../lib/graph/tags'
 import { nodeLabel } from '../types/story'
 
 const emit = defineEmits<{ close: []; open: [id: string] }>()
@@ -48,8 +49,33 @@ function toggle(tag: string) {
   }
 }
 
-/** Which tag's passage list is expanded. One at a time — this is a readout. */
-const expanded = ref<string | null>(null)
+/**
+ * Which list is open, and how far it is narrowed. One at a time — this is a
+ * readout. `level: null` is the whole tag; a number narrows the list below the
+ * breakdown to that level.
+ *
+ * One ref rather than two, so "one open at a time" is a fact about the value
+ * instead of a rule two refs have to be kept consistent with.
+ */
+const expanded = ref<{ tag: string; level: number | null } | null>(null)
+
+function openTag(tag: string) {
+  expanded.value = expanded.value?.tag === tag ? null : { tag, level: null }
+}
+
+/** Clicking the level that is already open widens back out to the whole tag. */
+function pickLevel(tag: string, level: number) {
+  const e = expanded.value
+  expanded.value = { tag, level: e?.tag === tag && e.level === level ? null : level }
+}
+
+/** The passages the open row is listing: the whole tag, or one level of it. */
+function entryIds(row: TagRow): readonly string[] {
+  const e = expanded.value
+  if (!e || e.tag !== row.tag) return []
+  if (e.level === null) return row.nodeIds
+  return row.levels.find((l) => l.level === e.level)?.nodeIds ?? []
+}
 
 function passagesOf(ids: readonly string[]) {
   const byId = store.layout.value.nodeById
@@ -84,7 +110,7 @@ function remove(tag: string) {
   store.tagDelete(tag)
   const i = picked.value.indexOf(tag)
   if (i !== -1) picked.value.splice(i, 1)
-  if (expanded.value === tag) expanded.value = null
+  if (expanded.value?.tag === tag) expanded.value = null
 }
 
 /** Revealing a passage is `App`'s job — selecting alone never moves the canvas. */
@@ -171,7 +197,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                     <button
                       v-if="row.passages > 0"
                       class="link"
-                      @click="expanded = expanded === row.tag ? null : row.tag"
+                      :aria-expanded="expanded?.tag === row.tag"
+                      title="Break this tag down by level"
+                      @click="openTag(row.tag)"
                     >
                       {{ row.passages }}
                     </button>
@@ -201,11 +229,55 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                     </button>
                   </td>
                 </tr>
-                <tr v-if="expanded === row.tag" class="entries-row">
+                <tr v-if="expanded?.tag === row.tag" class="entries-row">
                   <td />
                   <td colspan="6">
+                    <table class="levels">
+                      <thead>
+                        <tr>
+                          <th>Level</th>
+                          <th class="num">Passages</th>
+                          <th class="num">Share of level</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <!-- Only the levels the tag reaches. Every row names its
+                             own level, so a skipped one reads as a gap rather
+                             than as a miscount. -->
+                        <tr
+                          v-for="lv in row.levels"
+                          :key="lv.level"
+                          :class="{ on: expanded.level === lv.level }"
+                        >
+                          <td>
+                            <button
+                              class="link"
+                              :aria-pressed="expanded.level === lv.level"
+                              :title="`List the ${row.tag} passages on level ${lv.level}`"
+                              @click="pickLevel(row.tag, lv.level)"
+                            >
+                              L{{ lv.level }}
+                            </button>
+                          </td>
+                          <!-- The count beside the share, the way `routes` sits
+                               beside `percent` above: a percentage alone hides
+                               whether it came from two passages or two hundred. -->
+                          <td class="num">{{ lv.passages }} of {{ lv.levelPassages }}</td>
+                          <td class="num">{{ lv.percent }}%</td>
+                        </tr>
+                      </tbody>
+                    </table>
+
+                    <p class="entries-head">
+                      <template v-if="expanded.level === null">
+                        All {{ row.passages }} passages tagged <strong>{{ row.tag }}</strong>
+                      </template>
+                      <template v-else>
+                        <strong>{{ row.tag }}</strong> on level {{ expanded.level }}
+                      </template>
+                    </p>
                     <ul class="entries">
-                      <li v-for="p in passagesOf(row.nodeIds)" :key="p.id">
+                      <li v-for="p in passagesOf(entryIds(row))" :key="p.id">
                         <button class="link" @click="go(p.id)">{{ p.label }}</button>
                       </li>
                     </ul>
@@ -504,11 +576,48 @@ tr.entries-row td {
 .entries {
   list-style: none;
   margin: 0;
-  padding: 2px 0 6px;
+  /* Indented to the breakdown above it, so the head and its list read as one. */
+  padding: 2px 0 6px 14px;
   display: flex;
   flex-wrap: wrap;
   gap: 4px 14px;
   font-size: 12px;
+}
+
+/* A readout inside a readout: quieter than the table it sits in, and indented
+   so the two do not read as one set of columns. */
+table.levels {
+  margin: 2px 0 0 14px;
+  border-collapse: collapse;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+table.levels th {
+  text-align: left;
+  font-weight: 600;
+  padding: 0 14px 2px 0;
+}
+
+/* Out-specifies the bare `.num` the same way `table.rows th.num` has to. */
+table.levels th.num,
+table.levels td.num {
+  text-align: right;
+}
+
+table.levels td {
+  padding: 1px 14px 1px 0;
+  vertical-align: baseline;
+}
+
+table.levels tr.on td {
+  color: var(--text);
+}
+
+.entries-head {
+  margin: 6px 0 0 14px;
+  font-size: 11px;
+  color: var(--text-faint);
 }
 
 .chips {

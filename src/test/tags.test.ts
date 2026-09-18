@@ -3,7 +3,7 @@ import { layoutStory } from '../lib/graph/layout'
 import { countPaths, countPathsAvoiding, NO_ENDINGS } from '../lib/graph/paths'
 import { combineTags, computeTagStats, MAX_COMBINED_TAGS } from '../lib/graph/tags'
 import type { StoryDoc } from '../types/story'
-import { docFrom } from './helpers'
+import { docFrom, shuffled } from './helpers'
 
 function tagStats(doc: StoryDoc) {
   return computeTagStats(doc, layoutStory(doc))
@@ -313,5 +313,97 @@ describe('degenerate stories', () => {
     const s = tagStats(doc)
     expect(s.totalRoutes).toBe(2n)
     expect(s.brokenRoutes).toBe(1n)
+  })
+})
+
+/**
+ * The level breakdown on each row.
+ *
+ * No oracle here, unlike the route counts above: these are direct counts over
+ * the passages, so a test that counts them directly is checking the answer, not
+ * re-deriving the same clever trick. What the assertions have to pin instead is
+ * the shape — that the buckets partition the row, that a missed level leaves no
+ * entry, and that the denominator is passages rather than cards.
+ */
+describe('levels', () => {
+  /** A -> B -> C -> D, so the levels are 1, 2, 3, 4. */
+  const CHAIN = { A: ['B'], B: ['C'], C: ['D'], D: [] }
+
+  const shape = (doc: StoryDoc, tag: string) =>
+    rowOf(doc, tag).levels.map((l) => [l.level, l.passages, l.levelPassages, l.percent])
+
+  it('splits a tag across the levels its passages sit on', () => {
+    const doc = docFrom(DIAMOND, { tags: { B: ['x'], C: ['x'], D: ['x'] } })
+    // Diamond levels: A 1, B and C 2, D 3.
+    expect(shape(doc, 'x')).toEqual([
+      [2, 2, 2, 100],
+      [3, 1, 1, 100],
+    ])
+  })
+
+  it('partitions the row: the buckets hold every passage exactly once', () => {
+    const doc = docFrom(DIAMOND, { tags: { A: ['x'], B: ['x'], D: ['x', 'y'] } })
+    for (const row of tagStats(doc).rows) {
+      const sum = row.levels.reduce((n, l) => n + l.passages, 0)
+      expect(sum).toBe(row.passages)
+      expect(row.levels.flatMap((l) => l.nodeIds).sort()).toEqual([...row.nodeIds].sort())
+    }
+  })
+
+  it('leaves no entry for a level the tag misses', () => {
+    const doc = docFrom(CHAIN, { tags: { A: ['t'], C: ['t'] } })
+    // Level 2 is occupied — by B, which is not tagged — so the gap is the
+    // tag's, not the story's, and it shows up as an absent row rather than a zero.
+    expect(shape(doc, 't')).toEqual([
+      [1, 1, 1, 100],
+      [3, 1, 1, 100],
+    ])
+  })
+
+  it('measures a share against the other passages on that level', () => {
+    const doc = docFrom(DIAMOND, { tags: { B: ['x'] } })
+    expect(rowOf(doc, 'x').levels).toEqual([
+      { level: 2, passages: 1, levelPassages: 2, percent: 50, nodeIds: [idOf(doc, 'B')] },
+    ])
+  })
+
+  it('keeps phantoms out of the denominator', () => {
+    const doc = docFrom({ A: ['B', 'Ghost'], B: [] }, { tags: { B: ['t'] } })
+    // `Ghost` has a card and a level beside B, but it is not a passage and could
+    // never carry a tag — counting it would read B's tag as half of its level.
+    const lv = layoutStory(doc)
+    expect(lv.nodeById.get(idOf(doc, 'B'))!.level).toBe(2)
+    expect(lv.levels[1]!.count).toBe(2)
+    expect(shape(doc, 't')).toEqual([[2, 1, 1, 100]])
+  })
+
+  it('follows a passage nudged down a level, denominator and all', () => {
+    // A fan, so the three children share a level and nothing follows one down.
+    const FAN = { A: ['B', 'C', 'D'], B: [], C: [], D: [] }
+    const flat = docFrom(FAN, { tags: { B: ['x'], C: ['x'] } })
+    expect(shape(flat, 'x')).toEqual([[2, 2, 3, 66.7]])
+
+    // `levelOffset` is the one positional field in the document, so it is the
+    // one edit that can move a row here without the prose changing.
+    const nudged = docFrom(FAN, { tags: { B: ['x'], C: ['x'] }, offsets: { B: 1 } })
+    expect(shape(nudged, 'x')).toEqual([
+      [2, 1, 2, 50],
+      [3, 1, 1, 100],
+    ])
+  })
+
+  it('gives an unused tag no levels at all', () => {
+    const doc = docFrom(DIAMOND, { tags: { B: ['x'] } })
+    doc.tagColors = [...doc.tagColors, { name: 'ghosttag', color: 'none' }]
+    expect(rowOf(doc, 'ghosttag')).toMatchObject({ passages: 0, levels: [] })
+  })
+
+  it('reads the same however the node array is ordered', () => {
+    const doc = docFrom(DIAMOND, { tags: { A: ['x'], B: ['x'], C: ['y'], D: ['x', 'y'] } })
+    const canonical = tagStats(doc).rows.map((r) => [r.tag, shape(doc, r.tag)])
+    for (const seed of [1, 7, 99]) {
+      const mixed = { ...doc, nodes: shuffled(doc.nodes, seed) }
+      expect(tagStats(mixed).rows.map((r) => [r.tag, shape(mixed, r.tag)])).toEqual(canonical)
+    }
   })
 })
