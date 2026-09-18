@@ -290,6 +290,20 @@ cannot see is a reader looping back: dropping back edges only ever *removes* a
 collection, so "all of these" is a lower bound and "none of these" is an **upper** one —
 the panel names the model rather than letting the number speak for itself.
 
+The per-level breakdown on each row is the one sum that *is* legal here, for the reason the
+route counts are not: a passage sits on exactly one level, so levels partition the
+*passages* the way endings partition the routes, and `sum(levels[].passages) === passages`
+by construction — one pass over `nodeIds` splitting it, never two counts agreeing. It
+remains a different question from the share beside it and the two do not reconcile: three
+passages on level 4 may lie on one route or on nine hundred. Its denominator is the
+passages on that level, counted off `doc.nodes`, **not** `LayoutResult.levels[].count` —
+that one includes phantoms, and a phantom can never carry a tag, so a level with a broken
+link would report every share on it as smaller than it is. The list is sparse because every
+entry names its own level: a missed level is an absent row, which on a deep story is the
+difference between a breakdown and a column of zeros. This is also the first thing in
+`tags.ts` to read `nodeById` — read, never written, still outside `layoutStory`, and still
+needing no memo, since the panel is the only caller and only exists while it is open.
+
 **A command is described once, and `useShortcuts` only dispatches.** `commands.ts` holds
 every command's label, group, chord and hint; the menu bar, the help panel and the
 toolbar's tooltips all render from it. They used to hold four separate copies, and the
