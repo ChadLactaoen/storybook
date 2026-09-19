@@ -2,7 +2,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from 'vue'
 import type { App as VueApp } from 'vue'
-import { chordLabel, COMMANDS, commandsIn, GROUPS, type Chord } from '../lib/ui/commands'
+import {
+  chordLabel,
+  COMMANDS,
+  commandById,
+  commandsIn,
+  GROUPS,
+  type Chord,
+} from '../lib/ui/commands'
+import { NODE_STATES } from '../types/story'
 import { useShortcuts, type ShortcutHandlers } from '../composables/useShortcuts'
 
 /**
@@ -37,6 +45,7 @@ function spyHandlers() {
     addPassage: act('addPassage'),
     deletePassage: act('deletePassage'),
     toggleEnding: act('toggleEnding'),
+    setState: act('setState'),
     focusSearch: act('focusSearch'),
     toggleBodyEditor: act('toggleBodyEditor'),
     toggleCheatSheet: act('toggleCheatSheet'),
@@ -117,6 +126,17 @@ describe('the command table', () => {
 
 describe('every chord the table documents', () => {
   const documented = COMMANDS.filter((c) => c.scope === 'global' && c.chord)
+
+  it('gives each state a digit at its own position in NODE_STATES', () => {
+    // `useShortcuts` reads the digit as an index into `NODE_STATES` rather than
+    // naming the states a second time, so this pairing is what makes the table
+    // and the dispatch agree. Reorder the states without moving the digits and
+    // `2` would quietly set the wrong one — the confident-lie failure, not the
+    // missing-key one.
+    NODE_STATES.forEach((state, i) => {
+      expect(commandById(`edit.state${state}`)?.chord).toEqual({ key: String(i + 1) })
+    })
+  })
 
   it.each(documented.map((c) => [c.id, c.chord!] as const))(
     'arrives somewhere: %s',

@@ -1410,6 +1410,68 @@ describe('selecting more than one passage', () => {
     expect(problems).toEqual([])
   })
 
+  it('sets the state of the whole selection from the digit keys', async () => {
+    await branchingStory()
+    await click('Two', { metaKey: true })
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '3' }))
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.state)).toEqual(['TODO', 'Done', 'Done'])
+    expect(host.querySelectorAll('.card.state-Done')).toHaveLength(2)
+
+    // The segment the key stands in for has to follow it.
+    const on = [...host.querySelectorAll<HTMLElement>('.inspector .batch .seg.on')]
+    expect(on.map((el) => el.textContent!.trim())).toEqual(['Done'])
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '2' }))
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.state)).toEqual(['TODO', 'Draft', 'Draft'])
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '1' }))
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.state)).toEqual(['TODO', 'TODO', 'TODO'])
+    expect(problems).toEqual([])
+  })
+
+  it('sets a single passage with the same digits', async () => {
+    await branchingStory()
+    await click('Two')
+    expect(store.state.selectedIds).toHaveLength(1)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '3' }))
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.state)).toEqual(['TODO', 'Done', 'TODO'])
+    expect(problems).toEqual([])
+  })
+
+  it('ignores a digit no state sits at', async () => {
+    await branchingStory()
+    await click('Two', { metaKey: true })
+
+    // `NODE_STATES` has three entries, so 4 and 0 index past and before it. A
+    // bare `Number(key)` without the bounds the lookup gives would read 0 as a
+    // state and set the first one.
+    for (const key of ['0', '4', '9']) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key }))
+    }
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.state)).toEqual(['TODO', 'TODO', 'TODO'])
+    expect(problems).toEqual([])
+  })
+
+  it('leaves the digits alone while the author is typing a body', async () => {
+    await branchingStory()
+    await click('Two')
+
+    const area = host.querySelector<HTMLTextAreaElement>('.inspector textarea.input')!
+    area.dispatchEvent(new KeyboardEvent('keydown', { key: '3', bubbles: true }))
+    await nextTick()
+
+    // Writing "3 doors" in a passage must not mark it Done.
+    expect(store.state.doc.nodes.map((n) => n.state)).toEqual(['TODO', 'TODO', 'TODO'])
+    expect(problems).toEqual([])
+  })
+
   it('stands the key down behind the character sheet', async () => {
     await branchingStory()
     store.characterCreate('Mira')
@@ -1423,9 +1485,11 @@ describe('selecting more than one passage', () => {
     // canvas underneath and edit a selection nobody can see.
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e' }))
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n' }))
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '3' }))
     await nextTick()
 
     expect(store.state.doc.nodes.map((n) => n.isEnding)).toEqual([false, false, false])
+    expect(store.state.doc.nodes.map((n) => n.state)).toEqual(['TODO', 'TODO', 'TODO'])
     expect(store.state.doc.nodes).toHaveLength(3)
     expect(problems).toEqual([])
   })

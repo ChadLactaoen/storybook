@@ -598,6 +598,22 @@ describe('batch state and ending', () => {
     expect(['Two', 'Three', 'Four'].map(endingOf)).toEqual([true, true, true])
   })
 
+  it('reports the state the selection shares, and null when it does not', () => {
+    pickBranch()
+    expect(store.selectedState.value).toBe('TODO')
+
+    store.changeState(idOf('Three'), 'Done')
+    // Mixed: the segmented control lights nothing and the menu ticks nothing,
+    // rather than naming one of the three the selection is not all of.
+    expect(store.selectedState.value).toBeNull()
+
+    store.changeStateSelected('Done')
+    expect(store.selectedState.value).toBe('Done')
+
+    store.select(null)
+    expect(store.selectedState.value).toBeNull()
+  })
+
   it('agrees with the tri-state the sidebar draws', () => {
     pickBranch()
     expect(store.allSelectedEndings.value).toBe(false)
