@@ -24,6 +24,7 @@ import * as play from './stores/play'
 import { prefs } from './stores/prefs'
 import * as store from './stores/story'
 import type { NodeState } from './types/story'
+import { NODE_STATES } from './types/story'
 
 const canvasEl = ref<HTMLElement | null>(null)
 const searchBar = ref<InstanceType<typeof SearchFilterBar> | null>(null)
@@ -265,6 +266,19 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
     enabled: store.state.selectedIds.length > 0,
     checked: store.allSelectedEndings.value,
   },
+  // Derived rather than written out three times: the ids, the ticks and the
+  // order all come off `NODE_STATES`, which is the same list the sidebar's
+  // segmented control and the digit keys read.
+  ...Object.fromEntries(
+    NODE_STATES.map((s) => [
+      `edit.state${s}`,
+      {
+        run: () => store.changeStateSelected(s),
+        enabled: store.state.selectedIds.length > 0,
+        checked: store.selectedState.value === s,
+      },
+    ]),
+  ),
   'edit.recode': { run: () => (recodeOpen.value = true) },
 
   'view.zoomIn': { run: vp.zoomIn },
@@ -297,6 +311,7 @@ useShortcuts({
   addPassage: () => store.addPassage(store.state.selectedId ?? undefined),
   deletePassage: deleteSelected,
   toggleEnding: store.endingToggleSelected,
+  setState: store.changeStateSelected,
   focusSearch: () => searchBar.value?.focus(),
   toggleBodyEditor: () => void toggleBodyEditor(),
   toggleCheatSheet,

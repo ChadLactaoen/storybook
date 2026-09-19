@@ -947,6 +947,18 @@ export const selectedNodes = computed(() =>
   state.doc.nodes.filter((n) => state.selectedIds.includes(n.id)).sort(compareNodes),
 )
 
+/**
+ * The state the whole selection shares, or null when they disagree.
+ *
+ * The one definition of it, for the reason `allSelectedEndings` is: the
+ * segmented control lights from this, the menu ticks from it, and a mixed set
+ * lights nothing rather than naming one of the states it is not all of.
+ */
+export const selectedState = computed<NodeState | null>(() => {
+  const first = selectedNodes.value[0]?.state ?? null
+  return selectedNodes.value.every((n) => n.state === first) ? first : null
+})
+
 /** How many of the selection are endings — what the sidebar's tri-state draws. */
 export const selectedEndingCount = computed(
   () => selectedNodes.value.filter((n) => n.isEnding).length,

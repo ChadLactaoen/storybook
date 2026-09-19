@@ -155,11 +155,45 @@ export const COMMANDS: readonly CommandSpec[] = [
     toggle: true,
     hint: 'Mark every selected passage as an ending, or clear it',
   },
+  // One per state, in the order `NODE_STATES` gives them, keyed by the digit at
+  // that position — so the keys run left to right across the sidebar's segmented
+  // control. `commands.test.ts` pins that pairing, because `useShortcuts` reads
+  // the digit as an index into `NODE_STATES` rather than naming the states again.
+  {
+    id: 'edit.stateTODO',
+    label: 'TODO',
+    group: 'edit',
+    section: 3,
+    scope: 'global',
+    chord: { key: '1' },
+    toggle: true,
+    hint: 'Set every selected passage to TODO',
+  },
+  {
+    id: 'edit.stateDraft',
+    label: 'Draft',
+    group: 'edit',
+    section: 3,
+    scope: 'global',
+    chord: { key: '2' },
+    toggle: true,
+    hint: 'Set every selected passage to Draft',
+  },
+  {
+    id: 'edit.stateDone',
+    label: 'Done',
+    group: 'edit',
+    section: 3,
+    scope: 'global',
+    chord: { key: '3' },
+    toggle: true,
+    hint: 'Set every selected passage to Done',
+  },
   {
     id: 'edit.recode',
     label: 'Recode…',
     group: 'edit',
-    section: 3,
+    section: 4,
     scope: 'global',
     hint: "Renumber every passage's code from the tree",
   },
