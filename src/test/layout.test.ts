@@ -183,6 +183,63 @@ describe('geometry', () => {
     expect(minCardGap(res.nodes)).toBeGreaterThanOrEqual(NODE_GAP - 0.01)
   })
 
+  it('carries a passage a sibling link pushed down a level over its own children', () => {
+    // Linking two passages that sit on the same level pushes the destination
+    // down one, so it acquires a second parent while the first one's edge grows
+    // a dummy chain. The forest can hang it off only one of the two, `ordering`
+    // puts it somewhere else in the layer, and `enforceOrder` slides it to
+    // reconcile them. Sliding the node on its own left everything below it
+    // behind: the branch's two endings stayed under an unrelated subtree, a
+    // third of the drawing away from the passage they belong to.
+    //
+    // Only the pushed-down branch is asserted, and deliberately so. The
+    // branches whose children `enforceOrder` pushed *right* are still 128 off
+    // their own midpoint, before this change and after it — a parent is never
+    // re-centred once its children move. That is a separate defect, noted in
+    // `tidy.ts`, and claiming it here would make this test a lie.
+    const branches = ['A', 'B', 'C', 'D', 'E', 'F']
+    const fan = (link: Record<string, string[]>) => {
+      // Copied, not aliased: `fan` is called once per direction and a future
+      // case that appends a start-level link would corrupt the other run.
+      const spec: Record<string, string[]> = { Start: [...branches] }
+      for (const b of branches) {
+        spec[b] = link[b] ?? [b + '1', b + '2']
+        spec[b + '1'] = []
+        spec[b + '2'] = []
+      }
+      return spec
+    }
+
+    // Both directions: the leftmost branch reaching the rightmost, and back.
+    for (const [from, to] of [['A', 'F'], ['F', 'A']] as const) {
+      const doc = docFrom(fan({ [from]: [from + '1', from + '2', to] }))
+      const res = layoutStory(doc)
+      const at = (title: string) => res.nodes.find((n) => n.title === title)!
+      // `to` is the one the link pushed down out of its siblings' level.
+      expect(at(to).level).toBe(3)
+      expect(at(to).x).toBeCloseTo((at(to + '1').x + at(to + '2').x) / 2, 2)
+      expect(minCardGap(res.nodes)).toBeGreaterThanOrEqual(NODE_GAP - 0.01)
+      // `minCardGap` only sees real cards, and what this change moves is dummy
+      // chains — so check the bend points too, or an edge could come to be
+      // drawn straight across a card with every other assertion still green.
+      for (const edge of res.edges) {
+        for (const p of edge.points.slice(1, -1)) {
+          for (const n of res.nodes) {
+            if (Math.abs(p.y - n.y) > n.height / 2) continue
+            expect(Math.abs(p.x - n.x)).toBeGreaterThan(n.width / 2)
+          }
+        }
+      }
+      // The slide reads `childrenOf`, which is built from layer order, so the
+      // new path needs the same shuffle-invariance as the rest of layout.
+      for (let i = 0; i < 4; i++) {
+        expect(layoutStory({ ...doc, nodes: shuffled(doc.nodes, i + 5) }).stats.hash).toBe(
+          res.stats.hash,
+        )
+      }
+    }
+  })
+
   it('keeps cards clear of one another on a wide uneven tree', () => {
     const res = layoutStory(
       docFrom({

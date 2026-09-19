@@ -17,7 +17,14 @@ import type { LKey, LNode, LayeredGraph, LayoutConfig } from './types'
  * passage has two parents: such a node hangs off one of them in the layout
  * forest, and `enforceOrder` may then have to slide it to keep the within-layer
  * order `ordering.ts` chose. Merges are common in a story, so treat the rule as
- * "exact for trees, best effort elsewhere".
+ * "exact for trees, best effort elsewhere". What a slide costs is the slid
+ * node's position relative to the parent it does *not* hang off; it carries its
+ * own subtree, so nothing below it pays.
+ *
+ * A separate residue this does not address: `enforceOrder` slides a node
+ * without re-centring the parents *above* it. A branch whose children were
+ * pushed right ends up sitting over its left child rather than between the two.
+ * Fixing that needs a bottom-up re-centring pass this module does not have.
  */
 export function tidyComponent(lg: LayeredGraph, layers: LKey[][], cfg: LayoutConfig): void {
   const left = candidate(lg, layers, cfg, false)
@@ -175,7 +182,7 @@ function sweep(lg: LayeredGraph, layers: LKey[][], cfg: LayoutConfig, mirror: bo
     }
   }
 
-  enforceOrder(lg, layers, sep)
+  enforceOrder(lg, layers, sep, childrenOf)
 }
 
 /**
@@ -184,16 +191,66 @@ function sweep(lg: LayeredGraph, layers: LKey[][], cfg: LayoutConfig, mirror: bo
  * A no-op for a tree, where the forest and the layer order agree. Where they
  * cannot agree — a node with two parents, or a root pushed down a level — this
  * is what keeps minimum separation and the crossing-minimised order intact, at
- * the cost of the centring of whatever it moves.
+ * the cost of where the node it moves sits relative to its other parent.
+ *
+ * It moves that node's subtree with it, and that is the whole point. The walk
+ * above places a child at `parent.x + offset` and then never revisits it, so
+ * sliding a node on its own left everything beneath it behind, still centred on
+ * an x its parent had vacated — a branch's endings stranded under an unrelated
+ * subtree, with the edges reaching across the drawing to find them. A sibling
+ * link is what produces that shape in practice: it pushes its destination down
+ * a level, which is exactly how a passage acquires the second parent the forest
+ * cannot honour.
+ *
+ * Translating rigidly is safe because layers are walked top down and every
+ * shift is rightward: a descendant moved here is re-checked when its own layer
+ * comes up, and can only be pushed further right, never back into the node
+ * behind it. A dummy is carried like any other node — declining to would strand
+ * the target subtree exactly as this exists to prevent, one layer further down.
+ *
+ * It does cost width where a slide happens at every layer: a chain in which
+ * *every* passage carries a skip link into it draws about 60% wider, because
+ * each shift now propagates down the rest of the chain instead of kinking one
+ * edge. Measured against the shapes stories actually have — trees, branch and
+ * merge, a hub with returns, skip links at any density below every passage —
+ * the drawing is unchanged to the pixel.
  */
-function enforceOrder(lg: LayeredGraph, layers: LKey[][], sep: (a: LNode, b: LNode) => number): void {
+function enforceOrder(
+  lg: LayeredGraph,
+  layers: LKey[][],
+  sep: (a: LNode, b: LNode) => number,
+  childrenOf: Map<LKey, LKey[]>,
+): void {
   for (const layer of layers) {
     for (let i = 1; i < layer.length; i++) {
       const left = lg.nodes.get(layer[i - 1]!)!
       const right = lg.nodes.get(layer[i]!)!
       const min = left.x + sep(left, right)
-      if (right.x < min) right.x = min
+      if (right.x < min) {
+        const dx = min - right.x
+        // Assigned, not `+= dx`: `tidyComponent` averages two feasible solutions
+        // and claims non-overlap survives with no epsilon, which rests on this
+        // landing exactly on `min`. Only the descendants take the addition.
+        right.x = min
+        shiftDescendants(lg, childrenOf, layer[i]!, dx)
+      }
     }
+  }
+}
+
+/** Translate everything hanging off `key` in the forest, but not `key` itself. */
+function shiftDescendants(
+  lg: LayeredGraph,
+  childrenOf: Map<LKey, LKey[]>,
+  key: LKey,
+  dx: number,
+): void {
+  const stack: LKey[] = [...(childrenOf.get(key) ?? [])]
+  while (stack.length > 0) {
+    const k = stack.pop()!
+    lg.nodes.get(k)!.x += dx
+    const kids = childrenOf.get(k)
+    if (kids) for (const c of kids) stack.push(c)
   }
 }
 
