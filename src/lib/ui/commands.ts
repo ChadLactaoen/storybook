@@ -144,6 +144,18 @@ export const COMMANDS: readonly CommandSpec[] = [
     hint: 'Add a passage with no links to it yet',
   },
   {
+    id: 'edit.passageEnding',
+    label: 'Mark as Ending',
+    group: 'edit',
+    section: 2,
+    scope: 'global',
+    chord: { key: 'e' },
+    // Ticked only when the whole selection is already marked, so a mixed set
+    // reads as "not yet", which is also the direction the key will take it.
+    toggle: true,
+    hint: 'Mark every selected passage as an ending, or clear it',
+  },
+  {
     id: 'edit.recode',
     label: 'Recode…',
     group: 'edit',

@@ -490,6 +490,148 @@ describe('multi-select and mass delete', () => {
   })
 })
 
+describe('batch state and ending', () => {
+  const stateOf = (title: string) => store.state.doc.nodes.find((n) => n.title === title)!.state
+  const endingOf = (title: string) => store.state.doc.nodes.find((n) => n.title === title)!.isEnding
+
+  /** The selection the sidebar's batch controls act on. */
+  function pickBranch(): void {
+    write(idOf('One'), '[[Two]]')
+    write(idOf('Two'), '[[Three]]\n[[Four]]')
+    store.selectSubtree(idOf('Two'))
+    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Two', 'Three', 'Four'])
+  }
+
+  it('sets the state of the whole selection as one undo step', () => {
+    pickBranch()
+    const before = serializeDoc(store.state.doc)
+
+    store.changeStateSelected('Done')
+    expect(['Two', 'Three', 'Four'].map(stateOf)).toEqual(['Done', 'Done', 'Done'])
+    // Untouched: the batch acts on the selection, not on the story.
+    expect(stateOf('One')).toBe('TODO')
+
+    store.undo()
+    expect(serializeDoc(store.state.doc)).toBe(before)
+  })
+
+  it('marks the whole selection as endings as one undo step', () => {
+    pickBranch()
+    const before = serializeDoc(store.state.doc)
+
+    store.endingSetSelected(true)
+    expect(['Two', 'Three', 'Four'].map(endingOf)).toEqual([true, true, true])
+    expect(endingOf('One')).toBe(false)
+
+    store.undo()
+    expect(serializeDoc(store.state.doc)).toBe(before)
+  })
+
+  it('does not commit when the whole selection already agrees', () => {
+    pickBranch()
+    store.changeStateSelected('Done')
+    store.undo()
+    expect(store.canRedo.value).toBe(true)
+
+    // The guard in `setStateMany`, which is the same one `setEnding` has always
+    // had. Everything selected is TODO again after that undo, so asking for
+    // TODO must not push an empty entry and throw the redo away.
+    store.changeStateSelected('TODO')
+    expect(store.canRedo.value).toBe(true)
+    store.endingSetSelected(false)
+    expect(store.canRedo.value).toBe(true)
+
+    store.redo()
+    expect(['Two', 'Three', 'Four'].map(stateOf)).toEqual(['Done', 'Done', 'Done'])
+  })
+
+  it('commits when only part of the selection would change', () => {
+    pickBranch()
+    store.changeState(idOf('Three'), 'Done')
+    store.changeStateSelected('Done')
+    expect(['Two', 'Three', 'Four'].map(stateOf)).toEqual(['Done', 'Done', 'Done'])
+
+    // One undo takes the batch off and leaves the single write that preceded it.
+    store.undo()
+    expect(['Two', 'Three', 'Four'].map(stateOf)).toEqual(['TODO', 'Done', 'TODO'])
+  })
+
+  it('toggles the ending flag for a single passage', () => {
+    write(idOf('One'), '[[Two]]')
+    store.select(idOf('Two'))
+
+    // One passage is just a selection of one: the same call the sidebar's
+    // checkbox and the keyboard both make, with nothing to branch on.
+    store.endingToggleSelected()
+    expect(endingOf('Two')).toBe(true)
+    store.endingToggleSelected()
+    expect(endingOf('Two')).toBe(false)
+  })
+
+  it('marks a mixed selection rather than clearing the ones already set', () => {
+    pickBranch()
+    store.endingSet(idOf('Three'), true)
+    store.selectSubtree(idOf('Two'))
+
+    store.endingToggleSelected()
+    expect(['Two', 'Three', 'Four'].map(endingOf)).toEqual([true, true, true])
+
+    // Only once everything agrees does the key clear, which is what makes a
+    // second press undo the first.
+    store.endingToggleSelected()
+    expect(['Two', 'Three', 'Four'].map(endingOf)).toEqual([false, false, false])
+  })
+
+  it('does nothing when the selection holds no passage', () => {
+    pickBranch()
+    store.endingSetSelected(true)
+    store.undo()
+    expect(store.canRedo.value).toBe(true)
+
+    // Clearing the selection leaves `selectedIds` empty, the same as anchoring
+    // on a phantom. Toggling must not commit, or the redo would be thrown away.
+    store.select(null)
+    store.endingToggleSelected()
+    expect(store.canRedo.value).toBe(true)
+
+    store.redo()
+    expect(['Two', 'Three', 'Four'].map(endingOf)).toEqual([true, true, true])
+  })
+
+  it('agrees with the tri-state the sidebar draws', () => {
+    pickBranch()
+    expect(store.allSelectedEndings.value).toBe(false)
+    expect(store.selectedEndingCount.value).toBe(0)
+
+    store.endingSet(idOf('Three'), true)
+    expect(store.selectedEndingCount.value).toBe(1)
+    expect(store.allSelectedEndings.value).toBe(false)
+
+    store.endingSetSelected(true)
+    expect(store.allSelectedEndings.value).toBe(true)
+
+    // Empty is not "all of them": with nothing selected the box is not ticked,
+    // and the key has nothing to act on.
+    store.select(null)
+    expect(store.allSelectedEndings.value).toBe(false)
+  })
+
+  it('changes neither the drawing nor the selection', () => {
+    pickBranch()
+    const hash = store.layout.value.stats.hash
+
+    store.changeStateSelected('Draft')
+    store.endingSetSelected(true)
+
+    // Both fields are deliberately outside `layoutKey`, so a batch of either is
+    // a pure re-render: no card moves, and the selection survives to be acted
+    // on again.
+    expect(store.layout.value.stats.hash).toBe(hash)
+    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Two', 'Three', 'Four'])
+    expect(store.state.selectedId).toBe(idOf('Two'))
+  })
+})
+
 describe('story notes through the store', () => {
   it('commits, undoes and rides the save file out', () => {
     store.storyNotesSet('Mira never learns the truth.')

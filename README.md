@@ -60,7 +60,7 @@ choice a passage is locked behind, or that no route reaches it at all.
 | Relations | One-directional — Mira→Tam records only how Mira regards Tam. The sheet shows the reverse as dimmed read-only context. Renaming or deleting a character cascades through every relation |
 | Story index | **Story** → **Cast & Settings** (`Cmd ;`): every setting and character with a passage count. Click a row to filter the tree; rename from here to update every passage at once. The cast lists in roster order, reordered with the ▲▼ arrows on each row or alphabetized with **Sort A–Z** |
 | State | TODO / Draft / Done, shown as a coloured badge on each card |
-| Endings | Tick **Mark as Ending** in the sidebar and the card gets a teal underline and an **END** flag. Never guessed for you &mdash; a passage with no links yet is indistinguishable from one you meant to finish. Routes stop at an ending, so the endings divide the story's routes between them rather than overlapping, and anything linked *past* one is unreachable (Story stats says so) |
+| Endings | Tick **Mark as Ending** in the sidebar, or press `E`, and the card gets a teal underline and an **END** flag. Works on a whole selection at once, as one undo step. Never guessed for you &mdash; a passage with no links yet is indistinguishable from one you meant to finish. Routes stop at an ending, so the endings divide the story's routes between them rather than overlapping, and anything linked *past* one is unreachable (Story stats says so) |
 | Reader | **Story** &rarr; **Play**, the toolbar button, or `Cmd P`: read the draft back a choice at a time, as a book page. Conditions actually run, so you can watch which branch fires; a console shows the variables you are carrying, which passage set each, the route so far as `P1->P3->P7`, and the marks collected along it &mdash; where a card has to write `A*D` because the routes disagree, the console says which one you took, `ABD`. **Sidebar &rarr; Advanced &rarr; Play from here** starts anywhere, with everything unset and a note saying so. Read-only &mdash; a session never changes the story |
 | Tags | **Story** &rarr; **Tags**, or `Cmd G`: every tag with the passages carrying it and the share of routes that run through at least one of them. Tick several and it answers the harder question &mdash; how many routes collect *all* of them somewhere along the way, in any order, across any passages &mdash; and how many collect none. Click a count to break the tag down by level &mdash; how many passages carry it at each depth and what share of that level they are &mdash; with the passages listed underneath; click a level to narrow that list to it. **Filter** shows them on the tree instead. A tag no passage carries offers **Remove** instead, which clears it from the story and from the filter chips; a tag still in use is refused rather than stripped off the passages carrying it |
 | Story stats | **Story** &rarr; **Stats**, the routes pill, or `Cmd /`. Word count, every ending with the share of routes reaching it, and a draft-health list &mdash; broken links, unreachable passages, dead ends you never marked. Click any row to jump to the passage. Computed when you open it, not as you type |
@@ -116,7 +116,8 @@ Wheel or pinch to zoom at the cursor, drag the background to pan.
 `Cmd F` focuses search, `Cmd G` opens the tag analyzer, `Cmd J` opens the story
 notes, `Cmd Z` / `Cmd Shift Z`
 undo and redo, `N` adds a
-passage, `Delete` removes everything selected. Formatting keys are handled by
+passage, `E` marks everything selected as an ending or clears it, `Delete`
+removes everything selected. Formatting keys are handled by
 the editor itself rather than the global map, so they only fire where a
 selection means something.
 
@@ -125,7 +126,10 @@ Sheet**, with **Notes** under it; open together they split it in half.
 
 `Cmd`-click a card to select it and everything it leads to, `Shift`-click to add
 or drop one, and click the background to clear. With more than one selected the
-sidebar lists them and offers a single delete.
+sidebar lists them and offers the edits that mean something for a set: **State**,
+**Mark as Ending** and a single delete. The State row lights nothing while the
+selection disagrees, and the Ending box draws a dash rather than claiming either
+way — a mixed set marks everything, and only once they all agree does it clear.
 
 Work auto-saves to `localStorage` on a short debounce. **Export** downloads the
 canonical JSON; **Import** reads it back.

@@ -1291,6 +1291,156 @@ describe('selecting more than one passage', () => {
     expect(problems).toEqual([])
   })
 
+  it('sets the state of the whole selection from the sidebar', async () => {
+    await branchingStory()
+    await click('Two', { metaKey: true })
+
+    const inspector = host.querySelector('.inspector')!
+    const segs = [...inspector.querySelectorAll<HTMLElement>('.batch .seg')]
+    expect(segs.map((el) => el.textContent!.trim())).toEqual(['TODO', 'Draft', 'Done'])
+    // Everything selected is still TODO, so that segment is the lit one.
+    expect(segs.filter((el) => el.classList.contains('on')).map((el) => el.textContent!.trim()))
+      .toEqual(['TODO'])
+
+    segs.find((el) => el.textContent!.includes('Done'))!.click()
+    await nextTick()
+
+    expect(store.state.doc.nodes.map((n) => n.state)).toEqual(['TODO', 'Done', 'Done'])
+    // The badge is what the author actually reads, and only a real render
+    // proves the class reached it.
+    expect(host.querySelectorAll('.card.state-Done')).toHaveLength(2)
+    expect(problems).toEqual([])
+  })
+
+  it('lights no state segment while the selection disagrees', async () => {
+    await branchingStory()
+    store.changeState(store.state.doc.nodes.find((n) => n.title === 'Three')!.id, 'Done')
+    await click('Two', { metaKey: true })
+
+    const inspector = host.querySelector('.inspector')!
+    expect(inspector.querySelectorAll('.batch .seg.on')).toHaveLength(0)
+    expect(inspector.textContent).toContain('Mixed')
+    expect(problems).toEqual([])
+  })
+
+  it('marks and clears the whole selection as endings from one checkbox', async () => {
+    await branchingStory()
+    await click('Two', { metaKey: true })
+
+    const box = host.querySelector<HTMLInputElement>('.inspector .batch .pref input')!
+    expect(box.checked).toBe(false)
+    expect(box.indeterminate).toBe(false)
+
+    box.click()
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.isEnding)).toEqual([false, true, true])
+    expect(host.querySelectorAll('.card .flag-end')).toHaveLength(2)
+
+    // The same box the other way: all-on clears.
+    box.click()
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.isEnding)).toEqual([false, false, false])
+    expect(host.querySelectorAll('.card .flag-end')).toHaveLength(0)
+    expect(problems).toEqual([])
+  })
+
+  it('draws the ending box indeterminate while the selection disagrees', async () => {
+    await branchingStory()
+    store.endingSet(store.state.doc.nodes.find((n) => n.title === 'Three')!.id, true)
+    await click('Two', { metaKey: true })
+
+    const box = host.querySelector<HTMLInputElement>('.inspector .batch .pref input')!
+    // A dash, not a tick: the selection is one of each, and the box says so
+    // rather than claiming either. `render` is the only check that can see it.
+    expect(box.indeterminate).toBe(true)
+    expect(box.checked).toBe(false)
+
+    // Mixed marks everything rather than clearing the one that is already set.
+    box.click()
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.isEnding)).toEqual([false, true, true])
+    expect(problems).toEqual([])
+  })
+
+  it('toggles the whole selection as endings from the keyboard', async () => {
+    await branchingStory()
+    await click('Two', { metaKey: true })
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e' }))
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.isEnding)).toEqual([false, true, true])
+    expect(host.querySelectorAll('.card .flag-end')).toHaveLength(2)
+
+    // The box the key stands in for has to follow it, or the sidebar would say
+    // one thing while the document said another.
+    const box = host.querySelector<HTMLInputElement>('.inspector .batch .pref input')!
+    expect(box.checked).toBe(true)
+    expect(box.indeterminate).toBe(false)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e' }))
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.isEnding)).toEqual([false, false, false])
+    expect(problems).toEqual([])
+  })
+
+  it('toggles a single passage with the same key', async () => {
+    await branchingStory()
+    await click('Two')
+    expect(store.state.selectedIds).toHaveLength(1)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'E' }))
+    await nextTick()
+    // Upper case deliberately: a host that reports a shifted letter must not be
+    // one where the key does nothing.
+    expect(store.state.doc.nodes.map((n) => n.isEnding)).toEqual([false, true, false])
+    expect(problems).toEqual([])
+  })
+
+  it('leaves the key alone while the author is typing a body', async () => {
+    await branchingStory()
+    await click('Two')
+
+    const area = host.querySelector<HTMLTextAreaElement>('.inspector textarea.input')!
+    area.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true }))
+    await nextTick()
+
+    // `isTyping` catches it. Writing the word "ending" in a passage must not
+    // mark it as one.
+    expect(store.state.doc.nodes.map((n) => n.isEnding)).toEqual([false, false, false])
+    expect(problems).toEqual([])
+  })
+
+  it('stands the key down behind the character sheet', async () => {
+    await branchingStory()
+    store.characterCreate('Mira')
+    await click('Two', { metaKey: true })
+    store.openCharacterSheet('Mira')
+    await nextTick()
+    expect(host.querySelector('.veil')).not.toBeNull()
+
+    // The sheet's own controls are buttons, so `isTyping` is false and nothing
+    // else catches them. Without the sheet in `modalOpen` these would reach the
+    // canvas underneath and edit a selection nobody can see.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e' }))
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n' }))
+    await nextTick()
+
+    expect(store.state.doc.nodes.map((n) => n.isEnding)).toEqual([false, false, false])
+    expect(store.state.doc.nodes).toHaveLength(3)
+    expect(problems).toEqual([])
+  })
+
+  it('keeps no empty section above the footer while nothing is pending', async () => {
+    await branchingStory()
+    await click('Two', { metaKey: true })
+
+    // `.scroll` is a flex column with a gap, so a section rendering nothing
+    // still costs 16px of dead space above the footer.
+    const sections = host.querySelectorAll('.inspector .scroll > section')
+    expect([...sections].every((el) => el.textContent!.trim().length > 0)).toBe(true)
+    expect(problems).toEqual([])
+  })
+
   it('deletes the whole selection from the keyboard', async () => {
     await branchingStory()
     await click('Two', { metaKey: true })

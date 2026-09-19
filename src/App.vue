@@ -66,6 +66,12 @@ const modalOpen = computed(
     recodeOpen.value ||
     statsOpen.value ||
     tagsOpen.value ||
+    // The character sheet is a veil like the rest, and its buttons put focus on
+    // a `<button>` — so neither `isTyping` nor anything else catches it. Without
+    // it here, `n`, Delete and `E` all reach the canvas underneath: pressing E
+    // while a branch is selected would mark every passage in it as an ending,
+    // behind the veil and out of sight.
+    store.state.openCharacter !== null ||
     play.playOpen.value,
 )
 
@@ -252,6 +258,13 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
     run: deleteSelected,
     enabled: store.state.selectedIds.length > 0 || store.state.selectedId !== null,
   },
+  'edit.passageEnding': {
+    run: store.endingToggleSelected,
+    // `selectedIds` rather than the anchor: a phantom is selectable and has no
+    // passage to mark, so Delete's looser test would enable a no-op here.
+    enabled: store.state.selectedIds.length > 0,
+    checked: store.allSelectedEndings.value,
+  },
   'edit.recode': { run: () => (recodeOpen.value = true) },
 
   'view.zoomIn': { run: vp.zoomIn },
@@ -283,6 +296,7 @@ useShortcuts({
   redo: store.redo,
   addPassage: () => store.addPassage(store.state.selectedId ?? undefined),
   deletePassage: deleteSelected,
+  toggleEnding: store.endingToggleSelected,
   focusSearch: () => searchBar.value?.focus(),
   toggleBodyEditor: () => void toggleBodyEditor(),
   toggleCheatSheet,

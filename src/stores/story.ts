@@ -523,8 +523,41 @@ export function changeState(id: string, value: NodeState): void {
   commit(M.setState(state.doc, id, value))
 }
 
+/**
+ * Set the state of everything selected, as one undo step.
+ *
+ * Selection-wide like `removeSelected`, and for the same reason: the author
+ * picked a branch, so the edit is about the branch. `setStateMany` returns the
+ * document itself when the whole selection already agrees, so `commit` pushes
+ * nothing and a redo waiting behind it survives.
+ */
+export function changeStateSelected(value: NodeState): void {
+  commit(M.setStateMany(state.doc, state.selectedIds, value))
+}
+
 export function endingSet(id: string, value: boolean): void {
   commit(M.setEnding(state.doc, id, value))
+}
+
+/** Mark or unmark everything selected as an ending, as one undo step. */
+export function endingSetSelected(value: boolean): void {
+  commit(M.setEndingMany(state.doc, state.selectedIds, value))
+}
+
+/**
+ * What the sidebar's checkbox does, from the keyboard.
+ *
+ * One passage or a whole set, the same key — `selectedIds` is the selection
+ * either way, so there is nothing to branch on. A mixed set marks everything
+ * rather than clearing the ones already set: the same asymmetry the checkbox
+ * has, and the one that makes a second press undo the first.
+ *
+ * A phantom anchor selects nothing, so this is a no-op rather than a write to
+ * a passage that does not exist.
+ */
+export function endingToggleSelected(): void {
+  if (selectedNodes.value.length === 0) return
+  endingSetSelected(!allSelectedEndings.value)
 }
 
 export function changeLevelOffset(id: string, offset: number): void {
@@ -912,6 +945,24 @@ export const selectedIdSet = computed(() => new Set(state.selectedIds))
 /** The selection as passages, canonical order, ids the document lost dropped. */
 export const selectedNodes = computed(() =>
   state.doc.nodes.filter((n) => state.selectedIds.includes(n.id)).sort(compareNodes),
+)
+
+/** How many of the selection are endings — what the sidebar's tri-state draws. */
+export const selectedEndingCount = computed(
+  () => selectedNodes.value.filter((n) => n.isEnding).length,
+)
+
+/**
+ * Whether the whole selection is already endings.
+ *
+ * The one definition of it: the checkbox draws from this, the keyboard toggle
+ * picks its direction from it, and the menu ticks from it. Three copies of
+ * `every(n => n.isEnding)` would be three chances for the box and the key to
+ * disagree about what a click means, which is the drift `forwardTargets`
+ * documents.
+ */
+export const allSelectedEndings = computed(
+  () => selectedNodes.value.length > 0 && selectedEndingCount.value === selectedNodes.value.length,
 )
 
 export const tags = computed(() => M.allTags(state.doc))

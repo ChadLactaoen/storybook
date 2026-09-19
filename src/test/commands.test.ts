@@ -36,6 +36,7 @@ function spyHandlers() {
     redo: act('redo'),
     addPassage: act('addPassage'),
     deletePassage: act('deletePassage'),
+    toggleEnding: act('toggleEnding'),
     focusSearch: act('focusSearch'),
     toggleBodyEditor: act('toggleBodyEditor'),
     toggleCheatSheet: act('toggleCheatSheet'),

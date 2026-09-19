@@ -12,6 +12,10 @@ import {
   resolveLinks,
   setBody,
   setCode,
+  setEnding,
+  setEndingMany,
+  setState,
+  setStateMany,
   setStoryNotes,
   setTagColor,
   setNote,
@@ -398,6 +402,64 @@ describe('auto-create and delete', () => {
     const next = deleteNodes(doc, [doc.nodes[0]!.id, doc.nodes[1]!.id])
     expect(next.startNodeId).toBe(next.nodes[0]!.id)
     expect(next.nodes.map((n) => n.title)).toEqual(['Three'])
+  })
+})
+
+describe('batch state and ending', () => {
+  const doc = docFrom({ One: ['Two', 'Three'], Two: [], Three: [] })
+  const [one, two, three] = doc.nodes.map((n) => n.id) as [string, string, string]
+
+  it('sets the state of several passages in one edit', () => {
+    const next = setStateMany(doc, [two, three], 'Done')
+
+    expect(next.nodes.map((n) => n.state)).toEqual(['TODO', 'Done', 'Done'])
+    // A state change is not a statement about the prose, the same as a delete.
+    expect(next.nodes.map((n) => n.body)).toEqual(doc.nodes.map((n) => n.body))
+  })
+
+  it('marks several passages as endings in one edit', () => {
+    const next = setEndingMany(doc, [two, three], true)
+    expect(next.nodes.map((n) => n.isEnding)).toEqual([false, true, true])
+  })
+
+  it('ignores ids the document does not have', () => {
+    const next = setStateMany(doc, [two, 'no-such-id'], 'Draft')
+    expect(next.nodes.map((n) => n.state)).toEqual(['TODO', 'Draft', 'TODO'])
+  })
+
+  it('returns the same document when every id already holds the value', () => {
+    // The store's commit compares by reference. A whole selection already
+    // agreeing is the common case here, not the rare one — clicking Done on a
+    // branch that is mostly done must not push an empty undo entry.
+    expect(setStateMany(doc, [], 'Done')).toBe(doc)
+    expect(setStateMany(doc, [one, two, three], 'TODO')).toBe(doc)
+    expect(setStateMany(doc, ['no-such-id'], 'Done')).toBe(doc)
+
+    expect(setEndingMany(doc, [], true)).toBe(doc)
+    expect(setEndingMany(doc, [one, two, three], false)).toBe(doc)
+  })
+
+  it('commits when only some of the batch would change', () => {
+    const partly = setStateMany(doc, [two], 'Done')
+    // `three` is still TODO, so the batch is a real edit even though `two` is
+    // already Done — the guard asks whether *any* id changes, not whether all do.
+    expect(setStateMany(partly, [two, three], 'Done')).not.toBe(partly)
+  })
+
+  it('keeps the single-passage writes as the one-entry case', () => {
+    expect(setState(doc, two, 'Draft').nodes[1]!.state).toBe('Draft')
+    expect(setEnding(doc, two, true).nodes[1]!.isEnding).toBe(true)
+    // `setState` used to clone unconditionally; routing it through the batch
+    // gives it the guard `setEnding` always had.
+    expect(setState(doc, two, 'TODO')).toBe(doc)
+    expect(setEnding(doc, two, false)).toBe(doc)
+  })
+
+  it('leaves the rest of the document alone', () => {
+    const next = setEndingMany(doc, [three], true)
+    expect(serializeDoc({ ...next, nodes: next.nodes.map((n) => ({ ...n, isEnding: false })) })).toBe(
+      serializeDoc(doc),
+    )
   })
 })
 
