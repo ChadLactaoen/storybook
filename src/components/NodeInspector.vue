@@ -26,6 +26,25 @@ const impact = store.deleteImpact
 const multi = computed(() => store.state.selectedIds.length > 1)
 const refused = computed(() => (impact.value?.stranded.length ?? 0) > 0)
 
+/**
+ * The selection's shared state, or null when they disagree.
+ *
+ * Mixed lights no segment at all rather than picking one: a lit button would
+ * claim the whole selection is already that, and the next click would then look
+ * like a no-op instead of the change it actually is.
+ */
+const pickedState = computed<NodeState | null>(() => {
+  const first = picked.value[0]?.state ?? null
+  return picked.value.every((n) => n.state === first) ? first : null
+})
+
+// From the store, not recomputed here: the keyboard toggle and the Edit menu
+// read the same two, so a local copy would be a second answer to what a click
+// on this box means.
+const endingCount = store.selectedEndingCount
+const allEndings = store.allSelectedEndings
+const mixedEndings = computed(() => endingCount.value > 0 && !allEndings.value)
+
 const pendingDelete = ref(false)
 watch(multi, () => (pendingDelete.value = false))
 
@@ -455,7 +474,56 @@ const upBlockedBy = computed(() => store.blockingParent.value)
             </button>
           </li>
         </ul>
+      </section>
 
+      <!-- The same two fields the single-passage inspector offers, asked of the
+           whole set. Both land as one undo step, and neither is in `layoutKey`,
+           so nothing on the canvas moves. -->
+      <section class="batch">
+        <span class="label">State</span>
+        <div class="segmented">
+          <button
+            v-for="s in NODE_STATES"
+            :key="s"
+            class="seg"
+            :class="[`state-${s}`, { on: pickedState === s }]"
+            :title="`Set all ${picked.length} to ${s}`"
+            @click="store.changeStateSelected(s as NodeState)"
+          >
+            <span class="dot" />
+            {{ s }}
+          </button>
+        </div>
+        <p v-if="pickedState === null" class="hint">
+          Mixed &mdash; picking one sets all {{ picked.length }}.
+        </p>
+      </section>
+
+      <section class="batch">
+        <!-- Driven off `allEndings`, never off the event's `checked`: a click on
+             an indeterminate box does not report the same value across browsers,
+             and the document already knows the answer. Mixed and all-off both
+             mark; all-on clears. -->
+        <label class="pref">
+          <input
+            type="checkbox"
+            :checked="allEndings"
+            :indeterminate="mixedEndings"
+            @change="store.endingSetSelected(!allEndings)"
+          />
+          <span class="text">
+            Mark as Ending
+            <span class="hint">
+              Routes stop at each of these. {{ endingCount }} of {{ picked.length }}
+              {{ endingCount === 1 ? 'already is' : 'already are' }}.
+            </span>
+          </span>
+        </label>
+      </section>
+
+      <!-- Conditional on the whole section, not just its contents: `.scroll` is
+           a flex column with a gap, so an empty section still costs one. -->
+      <section v-if="impact && (refused || pendingDelete)">
         <!-- A blocked action says so where the button is, not only in the
              banner: the Delete below is disabled and this explains why. -->
         <div v-if="impact && refused" class="confirm">

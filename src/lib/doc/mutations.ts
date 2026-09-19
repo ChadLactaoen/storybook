@@ -421,21 +421,52 @@ export function materializePhantom(
   }).doc
 }
 
+/**
+ * Set the state of several passages in one document edit, so a multi-select
+ * change lands as a single undo step rather than one entry per passage.
+ *
+ * Guarded like `setEndingMany`: `commit` compares by reference, so returning a
+ * fresh document when every id already holds `value` would push an empty undo
+ * entry and wipe redo. A whole selection already agreeing is the common case,
+ * not the rare one — the author clicks Done on a branch that is mostly done.
+ */
+export function setStateMany(
+  doc: StoryDoc,
+  ids: readonly string[],
+  value: NodeState,
+): StoryDoc {
+  const pick = new Set(ids)
+  if (!doc.nodes.some((n) => pick.has(n.id) && n.state !== value)) return doc
+  const next = clone(doc)
+  next.nodes = next.nodes.map((n) => (pick.has(n.id) ? { ...n, state: value } : n))
+  return next
+}
+
 export function setState(doc: StoryDoc, id: string, state: NodeState): StoryDoc {
-  return replaceNode(doc, id, { state })
+  return setStateMany(doc, [id], state)
 }
 
 /**
- * Mark a passage as a place a route stops, or unmark it.
+ * Mark several passages as places a route stops, or unmark them, in one edit.
  *
  * Guarded like `setNote`: `commit` compares by reference, so returning a fresh
  * document for an unchanged value would push an empty undo entry and wipe redo.
  * A checkbox is easy to toggle twice.
  */
+export function setEndingMany(
+  doc: StoryDoc,
+  ids: readonly string[],
+  value: boolean,
+): StoryDoc {
+  const pick = new Set(ids)
+  if (!doc.nodes.some((n) => pick.has(n.id) && n.isEnding !== value)) return doc
+  const next = clone(doc)
+  next.nodes = next.nodes.map((n) => (pick.has(n.id) ? { ...n, isEnding: value } : n))
+  return next
+}
+
 export function setEnding(doc: StoryDoc, id: string, value: boolean): StoryDoc {
-  const node = doc.nodes.find((n) => n.id === id)
-  if (!node || node.isEnding === value) return doc
-  return replaceNode(doc, id, { isEnding: value })
+  return setEndingMany(doc, [id], value)
 }
 
 export function setLevelOffset(doc: StoryDoc, id: string, offset: number): StoryDoc {

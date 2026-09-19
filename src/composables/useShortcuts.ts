@@ -11,6 +11,8 @@ export interface ShortcutHandlers {
   addPassage: () => void
   /** Deletes the whole selection, not just the anchor. */
   deletePassage: () => void
+  /** Marks the whole selection as endings, or clears it. Selection-wide too. */
+  toggleEnding: () => void
   focusSearch: () => void
   toggleBodyEditor: () => void
   toggleCheatSheet: () => void
@@ -222,6 +224,14 @@ export function useShortcuts(handlers: ShortcutHandlers) {
     if (e.key === 'Backspace' || e.key === 'Delete') {
       e.preventDefault()
       handlers.deletePassage()
+      return
+    }
+    // Selection-wide like Backspace above: one passage or a set, the same key.
+    // Case-folded for the same reason every chord is — a host that sends `E`
+    // must not be a host where the key does nothing.
+    if (e.key === 'e' || e.key === 'E') {
+      e.preventDefault()
+      handlers.toggleEnding()
       return
     }
     // Deliberately not Tab: hijacking it globally would break keyboard
