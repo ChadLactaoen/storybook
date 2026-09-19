@@ -155,12 +155,12 @@ canonical JSON; **Import** reads it back.
 | `xcoord` | lay each component out, then pack them left to right |
 | `tidy` | bottom-up rigid-subtree placement: parents land on the midpoint of their outermost children — exactly so for a tree, best effort once a passage has two parents |
 | `routing` | C1-smooth cubics, straight-run collapse, arrowheads clipped to card boundaries |
-| `paths` | distinct path counts as BigInt (they grow exponentially), forwards from a passage, backwards to one, and forwards while avoiding a set of passages; also the one definition of an edge a route can take |
+| `paths` | distinct path counts as BigInt (they grow exponentially), forwards from a passage, backwards to one, forwards while avoiding a set of passages, and forwards split by how many marked passages a route goes through; also the one definition of an edge a route can take |
 | `stats` | word count, the routes reaching each ending, and the draft-health lint |
 | `recode` | a numbering read off the drawing, so codes can be renamed to match the tree |
 | `gates` | what conditional links prove: which choice a passage is locked behind, and which branches are dead |
 | `slugs` | the running slug per passage &mdash; the marks along the route here, with `*` where the routes disagree |
-| `tags` | how much of the story a tag covers, counted in routes rather than passages &mdash; which routes collect several at once, and where the tagged passages sit, level by level |
+| `tags` | how much of the story a tag covers, counted in routes rather than passages &mdash; which routes collect several at once, how often one is collected along a route, and where the tagged passages sit, level by level |
 | `macros` *(in `lib/harlowe/`)* | reads `(set:)` and `(if:)` as text, so a guarded link can narrow a trail |
 | `run` *(in `lib/harlowe/`)* | the reader's evaluator: a passage's prose, choices and variables, as typed nodes &mdash; a sandbox that feeds nothing above |
 

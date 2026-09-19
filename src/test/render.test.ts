@@ -360,6 +360,32 @@ describe('the app renders', () => {
     expect(problems).toEqual([])
   })
 
+  it('ticking one tag renders the collected-how-often rows', async () => {
+    // The combination section only exists once a tag is ticked, so nothing
+    // mounted its markup before this — and a template-only mistake in there is
+    // exactly what this file is for.
+    mount()
+    store.newStory('Hit Check')
+    await nextTick()
+
+    store.tagAdd(store.state.doc.nodes[0]!.id, 'opening')
+    await nextTick()
+    await runCommand('Tags')
+
+    const panel = host.querySelector('[aria-label="Tag analyzer"]')!
+    const box = panel.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    box.click()
+    await nextTick()
+
+    const text = panel.textContent!.replace(/\s+/g, ' ')
+    expect(text).toContain('Combination')
+    // One passage carrying the tag: every route collects it exactly once.
+    expect(text).toContain('exactly once')
+    expect(text).toContain('exactly twice')
+    expect(text).toContain('three or more times')
+    expect(problems).toEqual([])
+  })
+
   it('pops the body editor out over the window, writing the same document', async () => {
     mount()
     store.newStory('Roomy')

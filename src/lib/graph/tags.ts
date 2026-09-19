@@ -29,6 +29,15 @@
  * `LayoutResult.levels[].count`, which counts phantoms that could never carry a
  * tag.
  *
+ * **The other legal sum** is how often one tag is collected. A route passes
+ * through a tag's passages exactly one number of times, so "never, once,
+ * twice, three or more" partitions the routes the way endings do — the level
+ * breakdown above partitions the *passages*, and the two are not the same kind
+ * of total — so `sum(buckets) === totalRoutes`, and `buckets[0]` is the same number the
+ * complement above computes for "none". See `tagHits`. It is a sum over
+ * *routes*, which is why it is sound; the thing this module refuses is a sum
+ * over tagged passages.
+ *
  * An analysis, not a layout stage: `layoutStory` never calls it, because a tag
  * moves nothing on the canvas. It reads the graph the layout already retains
  * and the fields `DerivedGraph` deliberately does not carry — `tags` is in the
@@ -41,11 +50,17 @@
  * second is the one that can state something false out loud on a hub-and-spoke
  * story, which is why the panel names the model rather than letting the number
  * speak for itself. `slugs.ts` reached the same fork and wrote the argument.
+ *
+ * A *count* errs differently again, and it is worth being plain about: "exactly
+ * twice" is neither a lower bound nor an upper one. A reader who loops back
+ * through a tagged passage collects it a third time, and the route they took is
+ * not a route here at all. The buckets are exact about the model and the model
+ * is named on screen; they are not a claim about a reader who circles.
  */
 
 import type { NodeId, StoryDoc } from '../../types/story'
 import { compareStr } from '../../types/story'
-import { countPaths, countPathsAvoiding, countPathsToAll, share } from './paths'
+import { countPaths, countPathsAvoiding, countPathsByHits, countPathsToAll, share } from './paths'
 import type { LayoutResult } from './types'
 
 /**
@@ -130,6 +145,49 @@ export interface TagCombination {
   totalRoutes: bigint
   /** True when more than `MAX_COMBINED_TAGS` were asked for. Nothing was counted. */
   overCap: boolean
+}
+
+/**
+ * What the non-empty buckets are called, and — by being counted — how many
+ * there are.
+ *
+ * The cap is read off the labels rather than declared beside them because the
+ * two cannot be allowed to drift: a cap raised on its own leaves a bucket with
+ * no row to print it in, and the saturating one keeps a name that has quietly
+ * become a lie ("three or more" when it now means exactly three). One
+ * description, the way `commands.ts` holds one description of a command; the
+ * panel renders these and counts nothing itself.
+ *
+ * Three, because the question an author is asking is "once, twice, or a lot" —
+ * past that the distinction stops changing what they would do about it, and an
+ * uncapped histogram would be as long as the deepest route in the story. The
+ * last label is not "exactly" anything, which is what makes it the saturating
+ * bucket.
+ */
+export const TAG_HIT_LABELS = ['exactly once', 'exactly twice', 'three or more times'] as const
+
+/** How many collections are counted apart before they are lumped together. */
+export const TAG_HIT_CAP = TAG_HIT_LABELS.length
+
+/**
+ * How often the routes collect one tag.
+ *
+ * Unlike everything else in this module the buckets partition the routes, so
+ * they sum to `totalRoutes` — a route passes through the tag's passages exactly
+ * one number of times. `buckets[0]` is the same "routes collecting none" the
+ * complement computes, arrived at the other way round, and the two are asserted
+ * equal.
+ */
+export interface TagHits {
+  tag: string
+  totalRoutes: bigint
+  /**
+   * Length `TAG_HIT_CAP + 1`: routes collecting the tag zero times, once,
+   * twice, then three or more. Sums to `totalRoutes`.
+   */
+  buckets: bigint[]
+  /** Each bucket as a share of `totalRoutes`, one decimal, index for index. */
+  percents: number[]
 }
 
 /** Every tag the story knows about: in use, plus registered but not yet used. */
@@ -257,6 +315,42 @@ export function computeTagStats(doc: StoryDoc, layout: LayoutResult): TagAnalysi
   for (const n of doc.nodes) if (n.tags.length > 0) taggedPassages += 1
 
   return { totalRoutes, rows, taggedPassages, brokenRoutes }
+}
+
+/**
+ * How often the routes collect one tag: never, once, twice, or three or more.
+ *
+ * The complement answers *whether* a route collects a tag and stops there, so
+ * a corridor of three tagged passages and a single tagged room read alike —
+ * which is the question an author asks about a pacing or a resource tag. One
+ * walk carrying a small vector answers it, and because a route collects the tag
+ * exactly one number of times the answer is a partition, not an overlapping
+ * tally: the buckets sum to `totalRoutes`.
+ *
+ * A tag no passage carries puts every route in `buckets[0]`, which is true and
+ * says so; a story with no start counts nothing at all, as everything here
+ * does. Only the panel asks, and only while it is open, so like the rest of
+ * this module it is computed on demand and memoized nowhere.
+ */
+export function tagHits(doc: StoryDoc, layout: LayoutResult, tag: string): TagHits {
+  const { graph, backEdges } = layout
+  const startId = doc.startNodeId
+  const endings = endingsOf(doc)
+  const marked = new Set(index(doc).get(tag) ?? [])
+
+  const buckets = countPathsByHits(graph, backEdges, startId, marked, TAG_HIT_CAP, endings)
+  // Summed, not counted again: the buckets partition the routes, so a second
+  // walk would be a second opinion about a number this one already holds — and
+  // the claim above becomes true by construction rather than by two counters
+  // agreeing. A story with no start sums to zero, which is the right answer.
+  const totalRoutes = buckets.reduce((a, b) => a + b, 0n)
+
+  return {
+    tag,
+    totalRoutes,
+    buckets,
+    percents: buckets.map((n) => share(n, totalRoutes)),
+  }
 }
 
 /**

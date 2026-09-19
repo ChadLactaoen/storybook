@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { layoutStory } from '../lib/graph/layout'
-import { countPaths, countPathsAvoiding, NO_ENDINGS } from '../lib/graph/paths'
-import { combineTags, computeTagStats, MAX_COMBINED_TAGS } from '../lib/graph/tags'
+import { countPaths, countPathsAvoiding, countPathsByHits, NO_ENDINGS } from '../lib/graph/paths'
+import {
+  combineTags,
+  computeTagStats,
+  tagHits,
+  MAX_COMBINED_TAGS,
+  TAG_HIT_CAP,
+} from '../lib/graph/tags'
 import type { StoryDoc } from '../types/story'
 import { docFrom, shuffled } from './helpers'
 
@@ -17,29 +23,38 @@ function rowOf(doc: StoryDoc, tag: string) {
   return tagStats(doc).rows.find((r) => r.tag === tag)!
 }
 
+function hitsOf(doc: StoryDoc, tag: string) {
+  return tagHits(doc, layoutStory(doc), tag)
+}
+
 function idOf(doc: StoryDoc, title: string): string {
   return doc.nodes.find((n) => n.title === title)!.id
 }
 
 /**
  * Every route the slow way: walk the graph enumerating whole paths, and return
- * the set of tags each one collects.
+ * how many times each one collects each tag.
  *
  * The oracle exists because the module under test never enumerates a route — it
- * counts complements and cancels subsets — so a test that reasoned the same way
- * would only prove the reasoning consistent with itself. This walks what a
- * reader walks. It is exponential, so every fixture using it stays small.
+ * counts complements, cancels subsets and carries a histogram — so a test that
+ * reasoned the same way would only prove the reasoning consistent with itself.
+ * This walks what a reader walks. It is exponential, so every fixture using it
+ * stays small.
+ *
+ * A count per tag rather than a set: "did this route collect it" is
+ * `(count ?? 0) > 0`, so the touching and combining questions read straight off
+ * it, while "exactly twice" needs the multiplicity a set throws away.
  */
-function routeTags(doc: StoryDoc): Set<string>[] {
+function routeTags(doc: StoryDoc): Map<string, number>[] {
   const { graph, backEdges } = layoutStory(doc)
   const endings = new Set(doc.nodes.filter((n) => n.isEnding).map((n) => n.id))
   const tagsOf = new Map(doc.nodes.map((n) => [n.id, n.tags]))
-  const out: Set<string>[] = []
+  const out: Map<string, number>[] = []
   if (doc.startNodeId === null) return out
 
-  const walk = (id: string, carried: Set<string>, seen: Set<string>) => {
-    const here = new Set(carried)
-    for (const t of tagsOf.get(id) ?? []) here.add(t)
+  const walk = (id: string, carried: Map<string, number>, seen: Set<string>) => {
+    const here = new Map(carried)
+    for (const t of tagsOf.get(id) ?? []) here.set(t, (here.get(t) ?? 0) + 1)
 
     if (endings.has(id)) {
       out.push(here)
@@ -61,18 +76,29 @@ function routeTags(doc: StoryDoc): Set<string>[] {
     }
   }
 
-  walk(doc.startNodeId, new Set(), new Set([doc.startNodeId]))
+  walk(doc.startNodeId, new Map(), new Set([doc.startNodeId]))
   return out
 }
 
 /** What the oracle says, for one tag and for a set. */
 function oracle(doc: StoryDoc) {
   const routes = routeTags(doc)
+  const got = (r: Map<string, number>, tag: string) => (r.get(tag) ?? 0) > 0
   return {
     total: BigInt(routes.length),
-    touching: (tag: string) => BigInt(routes.filter((r) => r.has(tag)).length),
-    all: (tags: string[]) => BigInt(routes.filter((r) => tags.every((t) => r.has(t))).length),
-    none: (tags: string[]) => BigInt(routes.filter((r) => !tags.some((t) => r.has(t))).length),
+    touching: (tag: string) => BigInt(routes.filter((r) => got(r, tag)).length),
+    all: (tags: string[]) => BigInt(routes.filter((r) => tags.every((t) => got(r, t))).length),
+    none: (tags: string[]) => BigInt(routes.filter((r) => !tags.some((t) => got(r, t))).length),
+    // Saturating at the same place `tagHits` does, so the two are comparable
+    // bucket for bucket rather than only in total.
+    hits: (tag: string) => {
+      const out = new Array<bigint>(TAG_HIT_CAP + 1).fill(0n)
+      for (const r of routes) {
+        const i = Math.min(r.get(tag) ?? 0, TAG_HIT_CAP)
+        out[i] = out[i]! + 1n
+      }
+      return out
+    },
   }
 }
 
@@ -261,6 +287,116 @@ describe('combining tags', () => {
   })
 })
 
+describe('how often a route collects a tag', () => {
+  it('separates a route collecting a tag twice from one collecting it once', () => {
+    // A -> B -> D walks two tagged passages; A -> C -> D walks one. The
+    // complement counts both as "touching" and cannot tell them apart.
+    const doc = docFrom(DIAMOND, { tags: { B: ['combat'], D: ['combat'] } })
+    const h = hitsOf(doc, 'combat')
+    expect(h.totalRoutes).toBe(2n)
+    expect(h.buckets).toEqual([0n, 1n, 1n, 0n])
+    expect(h.percents).toEqual([0, 50, 50, 0])
+  })
+
+  it('partitions the routes: the buckets sum to the total', () => {
+    // One route per bucket, so the sum is not a coincidence of zeroes.
+    const doc = docFrom(
+      {
+        A: ['Z', 'W', 'X', 'Y'],
+        Z: [],
+        W: ['W1'],
+        W1: [],
+        X: ['X1'],
+        X1: ['X2'],
+        X2: [],
+        Y: ['Y1'],
+        Y1: ['Y2'],
+        Y2: ['Y3'],
+        Y3: [],
+      },
+      { tags: { W: ['t'], X: ['t'], X1: ['t'], Y: ['t'], Y1: ['t'], Y2: ['t'] } },
+    )
+    const h = hitsOf(doc, 't')
+    expect(h.buckets).toEqual([1n, 1n, 1n, 1n])
+    expect(h.buckets.reduce((a, b) => a + b, 0n)).toBe(h.totalRoutes)
+  })
+
+  it('agrees with the two numbers already on screen', () => {
+    // `buckets[0]` is the complement's "none", reached the other way round, and
+    // everything above it is the row's touching count. Two counters that
+    // disagreed about one story would be worse than either.
+    const doc = docFrom(
+      { A: ['B', 'C'], B: ['D', 'E'], C: ['E', 'F'], D: [], E: ['G'], F: [], G: [] },
+      { tags: { B: ['x'], E: ['x'], F: ['x'], G: ['y'] } },
+    )
+    const h = hitsOf(doc, 'x')
+    expect(h.buckets[0]).toBe(combine(doc, ['x']).none)
+    expect(h.totalRoutes - h.buckets[0]!).toBe(rowOf(doc, 'x').routes)
+  })
+
+  it('lumps everything past the cap into the top bucket', () => {
+    const doc = docFrom(
+      { A: ['B'], B: ['C'], C: ['D'], D: ['E'], E: [] },
+      { tags: { B: ['t'], C: ['t'], D: ['t'], E: ['t'] } },
+    )
+    // Four collections, one route, and the top bucket says "three or more".
+    expect(hitsOf(doc, 't').buckets).toEqual([0n, 0n, 0n, 1n])
+    expect(TAG_HIT_CAP).toBe(3)
+  })
+
+  it('counts the tag on a passage that is also a marked ending', () => {
+    // The counterpart of the `blocked`-before-`endings` case above: the route
+    // stopping on B has collected the tag it stops on, so it belongs at one.
+    const doc = docFrom(DIAMOND, { tags: { B: ['finale'] }, endings: ['B'] })
+    expect(hitsOf(doc, 'finale').buckets).toEqual([1n, 1n, 0n, 0n])
+  })
+
+  it('counts a tag on the start passage on every route', () => {
+    const doc = docFrom(DIAMOND, { tags: { A: ['prologue'] } })
+    expect(hitsOf(doc, 'prologue').buckets).toEqual([0n, 2n, 0n, 0n])
+  })
+
+  it('puts every route at zero for a tag no passage carries', () => {
+    const doc = docFrom(DIAMOND, { tags: { B: ['x'] } })
+    const h = hitsOf(doc, 'unused')
+    expect(h.buckets).toEqual([2n, 0n, 0n, 0n])
+    expect(h.percents[0]).toBe(100)
+  })
+
+  it('counts nothing at all for a story with no start passage', () => {
+    const doc = docFrom(DIAMOND, { tags: { B: ['x'] } })
+    doc.startNodeId = null
+    expect(hitsOf(doc, 'x')).toMatchObject({ totalRoutes: 0n, buckets: [0n, 0n, 0n, 0n] })
+  })
+
+  it('collects nothing along a back edge or a self-link', () => {
+    // The one route is A -> B -> C: two collections going forwards. The back
+    // edge C -> B would be a third for a reader who circled, and is not a route.
+    const doc = docFrom({ A: ['B'], B: ['C'], C: ['B'] }, { tags: { B: ['loop'], C: ['loop'] } })
+    expect(hitsOf(doc, 'loop').buckets).toEqual([0n, 0n, 1n, 0n])
+  })
+
+  it('agrees with a brute-force walk of every route', () => {
+    const doc = docFrom(
+      { A: ['B', 'C'], B: ['D', 'E'], C: ['E', 'F'], D: [], E: ['G'], F: [], G: [] },
+      { tags: { B: ['x'], E: ['y', 'x'], F: ['z'], G: ['y'] } },
+    )
+    const truth = oracle(doc)
+    for (const tag of ['x', 'y', 'z']) {
+      expect(hitsOf(doc, tag).buckets).toEqual(truth.hits(tag))
+    }
+  })
+
+  it('does not depend on the order the passages are stored in', () => {
+    const doc = docFrom(DIAMOND, { tags: { A: ['x'], B: ['x'], C: ['y'], D: ['x', 'y'] } })
+    const canonical = ['x', 'y'].map((t) => hitsOf(doc, t).buckets)
+    for (const seed of [1, 7, 99]) {
+      const mixed = { ...doc, nodes: shuffled(doc.nodes, seed) }
+      expect(['x', 'y'].map((t) => hitsOf(mixed, t).buckets)).toEqual(canonical)
+    }
+  })
+})
+
 describe('countPathsAvoiding', () => {
   it('blocks a passage without inventing a route that stops before it', () => {
     // If `kids` were filtered instead of the walk returning zero at the top, A
@@ -284,6 +420,30 @@ describe('countPathsAvoiding', () => {
     const doc = docFrom(DIAMOND)
     const { graph, backEdges } = layoutStory(doc)
     expect(countPathsAvoiding(graph, backEdges, null, new Set())).toBe(0n)
+  })
+
+  it('refuses a cap with no bucket to saturate into', () => {
+    const doc = docFrom(DIAMOND)
+    const { graph, backEdges } = layoutStory(doc)
+    // At cap 0 the only bucket would mean "zero or more", which is every route
+    // — the exact opposite of what `[0]` is documented to hold.
+    expect(() => countPathsByHits(graph, backEdges, doc.startNodeId, new Set(), 0)).toThrow()
+  })
+
+  it('is the histogram’s first bucket, and countPaths is its total', () => {
+    // The two counters answer the same story from different directions, and the
+    // panel prints both: "none of these" beside "exactly twice".
+    const doc = docFrom(
+      { A: ['B', 'C'], B: ['D'], C: ['D'], D: ['E', 'F'], E: [], F: [] },
+      { tags: { B: ['t'], D: ['t'] } },
+    )
+    const { graph, backEdges } = layoutStory(doc)
+    const marked = new Set([idOf(doc, 'B'), idOf(doc, 'D')])
+    const buckets = countPathsByHits(graph, backEdges, doc.startNodeId, marked, TAG_HIT_CAP)
+    expect(buckets[0]).toBe(countPathsAvoiding(graph, backEdges, doc.startNodeId, marked))
+    expect(buckets.reduce((a, b) => a + b, 0n)).toBe(
+      countPaths(graph, backEdges, doc.startNodeId!, NO_ENDINGS),
+    )
   })
 })
 
