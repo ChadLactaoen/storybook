@@ -153,6 +153,33 @@ describe('the app renders', () => {
     expect(problems).toEqual([])
   })
 
+  it('draws one stripe per distinct tag colour, in palette order', async () => {
+    mount()
+    store.newStory('Render Check')
+    const startId = store.state.doc.nodes[0]!.id
+    // Stored alphabetically, so the colours interleave: purple, yellow, yellow, red.
+    // 'zeta' stays `none` — a tag with no colour earns no stripe but still gets a chip.
+    for (const t of ['alpha', 'beta', 'delta', 'gamma', 'zeta']) store.tagAdd(startId, t)
+    store.tagRecolor('alpha', 'purple')
+    store.tagRecolor('beta', 'yellow')
+    store.tagRecolor('delta', 'yellow')
+    store.tagRecolor('gamma', 'red')
+    await nextTick()
+
+    const stripes = [...host.querySelectorAll<HTMLElement>('.card .stripe')]
+    // Four coloured tags, three colours: the second yellow is merged away.
+    expect(stripes).toHaveLength(3)
+    // Palette order (TAG_COLORS), not tag order — red sits left of purple on every card.
+    expect(stripes.map((s) => s.getAttribute('style'))).toEqual([
+      'background: var(--tag-red);',
+      'background: var(--tag-yellow);',
+      'background: var(--tag-purple);',
+    ])
+    // The uncoloured tag is still named below.
+    expect(host.textContent).toContain('zeta')
+    expect(problems).toEqual([])
+  })
+
   it('shows the inspector for the selected passage', async () => {
     mount()
     store.newStory('Render Check')
