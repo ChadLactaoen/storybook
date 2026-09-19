@@ -469,8 +469,35 @@ export function setEnding(doc: StoryDoc, id: string, value: boolean): StoryDoc {
   return setEndingMany(doc, [id], value)
 }
 
+/**
+ * Nudge several passages below their structural floor, or return them to it,
+ * in one edit — so a multi-select move lands as a single undo step rather than
+ * one entry, and one Sugiyama pass, per passage.
+ *
+ * `setStateMany`'s shape, and guarded for its reason: `commit` compares by
+ * reference, so a fresh document for a batch that changes nothing would push an
+ * empty undo entry and wipe redo. Unlike State and Ending this field *is* in
+ * `layoutKey`, so a spurious clone would also buy a re-layout.
+ *
+ * Clamped once, ahead of the guard — `setLevelOffset(doc, id, 9)` on a passage
+ * already at 1 has to be the no-op it looks like, which the `replaceNode` this
+ * replaced cloned straight through.
+ */
+export function setLevelOffsetMany(
+  doc: StoryDoc,
+  ids: readonly string[],
+  offset: number,
+): StoryDoc {
+  const value = Math.min(1, Math.max(0, Math.trunc(offset)))
+  const pick = new Set(ids)
+  if (!doc.nodes.some((n) => pick.has(n.id) && n.levelOffset !== value)) return doc
+  const next = clone(doc)
+  next.nodes = next.nodes.map((n) => (pick.has(n.id) ? { ...n, levelOffset: value } : n))
+  return next
+}
+
 export function setLevelOffset(doc: StoryDoc, id: string, offset: number): StoryDoc {
-  return replaceNode(doc, id, { levelOffset: Math.min(1, Math.max(0, Math.trunc(offset))) })
+  return setLevelOffsetMany(doc, [id], offset)
 }
 
 export function setStartNode(doc: StoryDoc, id: string): StoryDoc {

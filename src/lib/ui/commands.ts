@@ -189,11 +189,31 @@ export const COMMANDS: readonly CommandSpec[] = [
     toggle: true,
     hint: 'Set every selected passage to Done',
   },
+  // A pair, not a toggle: the direction *is* the command, and `enabled` is what
+  // a mixed selection dims. After the states rather than beside Ending because
+  // a level is positional and a state is not. No chord — `[`, `]` and the
+  // arrows stay free, and a chordless row enrols nothing in `commands.test.ts`.
+  {
+    id: 'edit.levelDown',
+    label: 'Nudge down a level',
+    group: 'edit',
+    section: 4,
+    scope: 'global',
+    hint: 'Nudge every selected passage one level below its floor',
+  },
+  {
+    id: 'edit.levelUp',
+    label: 'Move up a level',
+    group: 'edit',
+    section: 4,
+    scope: 'global',
+    hint: 'Return every selected passage to the earliest level its links allow',
+  },
   {
     id: 'edit.recode',
     label: 'Recode…',
     group: 'edit',
-    section: 4,
+    section: 5,
     scope: 'global',
     hint: "Renumber every passage's code from the tree",
   },

@@ -14,6 +14,8 @@ import {
   setCode,
   setEnding,
   setEndingMany,
+  setLevelOffset,
+  setLevelOffsetMany,
   setState,
   setStateMany,
   setStoryNotes,
@@ -460,6 +462,61 @@ describe('batch state and ending', () => {
     expect(serializeDoc({ ...next, nodes: next.nodes.map((n) => ({ ...n, isEnding: false })) })).toBe(
       serializeDoc(doc),
     )
+  })
+})
+
+describe('batch level offset', () => {
+  const doc = docFrom({ One: ['Two', 'Three'], Two: [], Three: [] })
+  const [one, two, three] = doc.nodes.map((n) => n.id) as [string, string, string]
+
+  it('nudges several passages in one edit', () => {
+    const next = setLevelOffsetMany(doc, [two, three], 1)
+
+    expect(next.nodes.map((n) => n.levelOffset)).toEqual([0, 1, 1])
+    // A nudge is not a statement about the prose, the same as a state change.
+    expect(next.nodes.map((n) => n.body)).toEqual(doc.nodes.map((n) => n.body))
+  })
+
+  it('clamps out of range in both directions', () => {
+    expect(setLevelOffsetMany(doc, [two, three], 9).nodes.map((n) => n.levelOffset)).toEqual([
+      0, 1, 1,
+    ])
+    const pushed = setLevelOffsetMany(doc, [one, two, three], 1)
+    expect(setLevelOffsetMany(pushed, [two], -3).nodes.map((n) => n.levelOffset)).toEqual([1, 0, 1])
+  })
+
+  it('ignores ids the document does not have', () => {
+    const next = setLevelOffsetMany(doc, [two, 'no-such-id'], 1)
+    expect(next.nodes.map((n) => n.levelOffset)).toEqual([0, 1, 0])
+  })
+
+  it('returns the same document when every id already sits where it is asked to', () => {
+    expect(setLevelOffsetMany(doc, [], 1)).toBe(doc)
+    expect(setLevelOffsetMany(doc, [one, two, three], 0)).toBe(doc)
+    expect(setLevelOffsetMany(doc, ['no-such-id'], 1)).toBe(doc)
+
+    // Clamped ahead of the guard, so an out-of-range ask against a passage
+    // already at 1 is the no-op it looks like. The `replaceNode` this
+    // replaced cloned straight through it.
+    const pushed = setLevelOffsetMany(doc, [two], 1)
+    expect(setLevelOffsetMany(pushed, [two], 9)).toBe(pushed)
+  })
+
+  it('commits when only some of the batch would change', () => {
+    const partly = setLevelOffsetMany(doc, [two], 1)
+    expect(setLevelOffsetMany(partly, [two, three], 1)).not.toBe(partly)
+  })
+
+  it('keeps the single-passage write as the one-entry case', () => {
+    expect(setLevelOffset(doc, two, 1).nodes[1]!.levelOffset).toBe(1)
+    expect(setLevelOffset(doc, two, 0)).toBe(doc)
+  })
+
+  it('leaves the rest of the document alone', () => {
+    const next = setLevelOffsetMany(doc, [three], 1)
+    expect(
+      serializeDoc({ ...next, nodes: next.nodes.map((n) => ({ ...n, levelOffset: 0 })) }),
+    ).toBe(serializeDoc(doc))
   })
 })
 

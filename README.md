@@ -64,7 +64,7 @@ choice a passage is locked behind, or that no route reaches it at all.
 | Reader | **Story** &rarr; **Play**, the toolbar button, or `Cmd P`: read the draft back a choice at a time, as a book page. Conditions actually run, so you can watch which branch fires; a console shows the variables you are carrying, which passage set each, the route so far as `P1->P3->P7`, and the marks collected along it &mdash; where a card has to write `A*D` because the routes disagree, the console says which one you took, `ABD`. **Sidebar &rarr; Advanced &rarr; Play from here** starts anywhere, with everything unset and a note saying so. Read-only &mdash; a session never changes the story |
 | Tags | **Story** &rarr; **Tags**, or `Cmd G`: every tag with the passages carrying it and the share of routes that run through at least one of them. Tick several and it answers the harder question &mdash; how many routes collect *all* of them somewhere along the way, in any order, across any passages &mdash; and how many collect none. Click a count to break the tag down by level &mdash; how many passages carry it at each depth and what share of that level they are &mdash; with the passages listed underneath; click a level to narrow that list to it. **Filter** shows them on the tree instead. A tag no passage carries offers **Remove** instead, which clears it from the story and from the filter chips; a tag still in use is refused rather than stripped off the passages carrying it |
 | Story stats | **Story** &rarr; **Stats**, the routes pill, or `Cmd /`. Word count, every ending with the share of routes reaching it, and a draft-health list &mdash; broken links, unreachable passages, dead ends you never marked. Click any row to jump to the passage. Computed when you open it, not as you type |
-| Levels | Assigned automatically. A passage can be nudged down exactly one level; moving up is structurally impossible and the inspector says which parent pins it |
+| Levels | Assigned automatically. A passage can be nudged down exactly one level; moving up is structurally impossible and the inspector says which parent pins it. Works on a whole selection at once, as one undo step, but only while they all agree about where they sit &mdash; a mixed set moves together or not at all. A selected passage under another selected one lands further than one level down, because its floor moves with its parent |
 | Story codes | A reader's route is the codes of the passages they visited, `P1->P3->P7`. Print it at the end of your story with `(joined: "->", ...(history:), (passage:)'s name)` |
 | Conditional links | An `(if: $v is "x")` guarding a link is read and matched against the `(set: $v to "x")` that supplies it. When every route into a passage needs the same value, the sidebar names the choice it is locked behind. Only `if` and `else-if` with a plain `$v is "…"` are read |
 | Dead branches | If nothing supplies the value a passage's incoming conditions test — a mistyped `"sakura"` — the sidebar says nothing reaches it |
@@ -128,9 +128,14 @@ Sheet**, with **Notes** under it; open together they split it in half.
 `Cmd`-click a card to select it and everything it leads to, `Shift`-click to add
 or drop one, and click the background to clear. With more than one selected the
 sidebar lists them and offers the edits that mean something for a set: **State**
-(also `1` / `2` / `3`), **Mark as Ending** (also `E`) and a single delete. The State row lights nothing while the
+(also `1` / `2` / `3`), **Mark as Ending** (also `E`), **Level** and a single
+delete. The State row lights nothing while the
 selection disagrees, and the Ending box draws a dash rather than claiming either
 way — a mixed set marks everything, and only once they all agree does it clear.
+Level is the one that refuses instead: both arrows dim while the set disagrees,
+because "a level down" is not the same move for a passage already nudged, and
+half a batch is worse than none. It is also the only one of the three that
+redraws the tree; the others are pure re-renders.
 
 Work auto-saves to `localStorage` on a short debounce. **Export** downloads the
 canonical JSON; **Import** reads it back.

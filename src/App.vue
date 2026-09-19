@@ -279,6 +279,16 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
       },
     ]),
   ),
+  // `canNudge*` rather than a selection-size test: a mixed set has no shared
+  // move, so the row dims rather than doing half of one.
+  'edit.levelDown': {
+    run: () => store.levelNudgeSelected(1),
+    enabled: store.canNudgeSelectedDown.value,
+  },
+  'edit.levelUp': {
+    run: () => store.levelNudgeSelected(-1),
+    enabled: store.canNudgeSelectedUp.value,
+  },
   'edit.recode': { run: () => (recodeOpen.value = true) },
 
   'view.zoomIn': { run: vp.zoomIn },

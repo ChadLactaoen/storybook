@@ -87,7 +87,8 @@ describe('the spec walkthrough', () => {
     write(idOf('One'), '[[Four]]\n[[Three]]')
     write(idOf('Four'), '[[Two]]')
 
-    store.changeLevelOffset(idOf('Three'), 1)
+    store.select(idOf('Three'))
+    store.levelNudgeSelected(1)
 
     expect(levelOf('Three')).toBe(3)
     expect(levelOf('Two')).toBe(3)
@@ -244,7 +245,8 @@ describe('the spec walkthrough', () => {
   it('renders identically after a save/load round trip', () => {
     write(idOf('One'), '[[Two]]\n[[Three]]')
     write(idOf('Two'), '[[Four]]')
-    store.changeLevelOffset(idOf('Three'), 1)
+    store.select(idOf('Three'))
+    store.levelNudgeSelected(1)
     store.tagAdd(idOf('Two'), 'combat')
 
     const json = serializeDoc(store.state.doc)
@@ -645,6 +647,113 @@ describe('batch state and ending', () => {
     expect(store.layout.value.stats.hash).toBe(hash)
     expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Two', 'Three', 'Four'])
     expect(store.state.selectedId).toBe(idOf('Two'))
+  })
+})
+
+describe('batch level offset', () => {
+  /** One -> Two -> {Three, Four}, with Two and everything under it selected. */
+  function pickBranch(): void {
+    write(idOf('One'), '[[Two]]')
+    write(idOf('Two'), '[[Three]]\n[[Four]]')
+    store.selectSubtree(idOf('Two'))
+    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Two', 'Three', 'Four'])
+  }
+
+  it('nudges the whole selection as one undo step', () => {
+    pickBranch()
+    const before = serializeDoc(store.state.doc)
+
+    store.levelNudgeSelected(1)
+    expect(store.state.doc.nodes.filter((n) => n.levelOffset === 1)).toHaveLength(3)
+
+    // One step, not three: the batch is a single mutation and a single commit.
+    store.undo()
+    expect(serializeDoc(store.state.doc)).toBe(before)
+    store.redo()
+    expect(store.state.doc.nodes.filter((n) => n.levelOffset === 1)).toHaveLength(3)
+  })
+
+  it('drops a selected passage under another selected one further than one level', () => {
+    pickBranch()
+    expect(['Two', 'Three', 'Four'].map(levelOf)).toEqual([2, 3, 3])
+
+    store.levelNudgeSelected(1)
+
+    // Not a bug and not a thing to "fix": `minLevel` is recomputed from the
+    // parent's *final* level, so Two's own nudge raises the floor under Three
+    // and Four before their offsets are added on top. Nudging one below your
+    // floor is what the control says it does; the floor is derived.
+    expect(['Two', 'Three', 'Four'].map(levelOf)).toEqual([3, 5, 5])
+  })
+
+  it('refuses a selection that disagrees about where it sits', () => {
+    pickBranch()
+    store.select(idOf('Three'))
+    store.levelNudgeSelected(1)
+    store.selectSubtree(idOf('Two'))
+
+    expect(store.selectedOffset.value).toBe(null)
+    expect(store.canNudgeSelectedDown.value).toBe(false)
+    expect(store.canNudgeSelectedUp.value).toBe(false)
+    expect(store.selectedNudgedCount.value).toBe(1)
+
+    const before = serializeDoc(store.state.doc)
+    store.undo()
+    store.redo()
+    // Redo is the tell: a refused move that still committed would have cleared
+    // it, and a no-op that cloned anyway would have pushed an empty entry.
+    store.selectSubtree(idOf('Two'))
+    store.levelNudgeSelected(1)
+    store.levelNudgeSelected(-1)
+    expect(serializeDoc(store.state.doc)).toBe(before)
+    expect(store.canUndo.value).toBe(true)
+  })
+
+  it('reverses exactly, drawing and all', () => {
+    pickBranch()
+    const doc = serializeDoc(store.state.doc)
+    const hash = store.layout.value.stats.hash
+
+    store.levelNudgeSelected(1)
+    store.levelNudgeSelected(-1)
+
+    expect(serializeDoc(store.state.doc)).toBe(doc)
+    expect(store.layout.value.stats.hash).toBe(hash)
+  })
+
+  it('does nothing with nothing selected', () => {
+    write(idOf('One'), '[[Two]]')
+    store.select(null)
+    const before = serializeDoc(store.state.doc)
+
+    store.levelNudgeSelected(1)
+    store.levelNudgeSelected(-1)
+    expect(serializeDoc(store.state.doc)).toBe(before)
+    expect(store.canUndo.value).toBe(true)
+  })
+
+  it('keeps the selection and the anchor, so the move can be taken back', () => {
+    pickBranch()
+    store.levelNudgeSelected(1)
+
+    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Two', 'Three', 'Four'])
+    expect(store.state.selectedId).toBe(idOf('Two'))
+    expect(store.canNudgeSelectedUp.value).toBe(true)
+  })
+
+  it('redraws, unlike every other batch — this field is in `layoutKey`', () => {
+    pickBranch()
+    const hash = store.layout.value.stats.hash
+    const version = store.layoutVersion.value
+
+    store.levelNudgeSelected(1)
+
+    // The deliberate mirror of 'changes neither the drawing nor the selection'
+    // above: State and Ending are absent from `layoutKey` and are pure
+    // re-renders, `levelOffset` is in it and is a real Sugiyama pass. A test
+    // pinning the hash here would be asserting something false.
+    expect(store.layout.value.stats.hash).not.toBe(hash)
+    expect(store.layoutVersion.value).toBeGreaterThan(version)
   })
 })
 
