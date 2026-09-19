@@ -2,7 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as store from '../stores/story'
 import { formatCount } from '../lib/graph/paths'
-import { combineTags, computeTagStats, MAX_COMBINED_TAGS } from '../lib/graph/tags'
+import {
+  combineTags,
+  computeTagStats,
+  tagHits,
+  MAX_COMBINED_TAGS,
+  TAG_HIT_LABELS,
+} from '../lib/graph/tags'
 import type { TagRow } from '../lib/graph/tags'
 import { nodeLabel } from '../types/story'
 
@@ -35,6 +41,37 @@ const combo = computed(() =>
   picked.value.length === 0
     ? null
     : combineTags(store.state.doc, store.layout.value, picked.value),
+)
+
+/**
+ * How often one tag is collected, alongside the combination above.
+ *
+ * Only for a single pick: with two tags ticked "twice" has no one meaning —
+ * twice each, or twice between them — and a question the panel cannot phrase
+ * is one it should not answer. One extra walk, on the same terms as `combo`.
+ */
+const hits = computed(() =>
+  picked.value.length === 1 ? tagHits(store.state.doc, store.layout.value, picked.value[0]!) : null,
+)
+
+/**
+ * The collected-how-often rows: bucket 1 upwards, which is exactly the routes
+ * the row above them already counts, split three ways. They are indented for
+ * that reason — the share column would otherwise read as five rows summing to
+ * two hundred per cent. Bucket 0 is not among them; it is the "none of these"
+ * row, and printing it twice under two names would invite the same addition.
+ *
+ * The labels come from `tags.ts` beside the cap that decides how many buckets
+ * there are, so a cap raised on its own cannot leave one unprinted.
+ */
+const hitRows = computed(() =>
+  hits.value === null
+    ? []
+    : TAG_HIT_LABELS.map((label, i) => ({
+        label,
+        count: hits.value!.buckets[i + 1]!,
+        percent: hits.value!.percents[i + 1]!,
+      })),
 )
 
 const atCap = computed(() => picked.value.length >= MAX_COMBINED_TAGS)
@@ -315,6 +352,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                   </td>
                   <td class="num">{{ combo.allPercent }}%</td>
                 </tr>
+                <tr v-for="row in hitRows" :key="row.label" class="sub">
+                  <td>&mdash; of those, <strong>{{ row.label }}</strong></td>
+                  <td class="num">{{ formatCount(row.count) }}</td>
+                  <td class="bar-col">
+                    <span
+                      v-if="row.percent > 0"
+                      class="bar"
+                      :style="{ width: `${row.percent}%` }"
+                    />
+                  </td>
+                  <td class="num">{{ row.percent }}%</td>
+                </tr>
                 <tr>
                   <td>Routes collecting <strong>none</strong> of these</td>
                   <td class="num">{{ formatCount(combo.none) }}</td>
@@ -338,14 +387,20 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             <p v-if="combo.missing.length > 0" class="hint hint-warn">
               No passage carries {{ combo.missing.join(', ') }}, so no route can collect it.
             </p>
-            <p class="hint">
+            <p v-if="hits" class="hint">
+              The indented rows split the one above them, counted in passages: a
+              route&rsquo;s tally is how many tagged passages it goes through. A reader
+              who loops back would collect it again, which no route here does.
+            </p>
+            <p v-else class="hint">
               In any order, on any passages &mdash; they need not be the same one, and a
               passage carrying two of these satisfies both.
             </p>
           </template>
         </section>
         <p v-else-if="s.rows.length > 0" class="hint">
-          Tick two or more tags above to ask how many routes collect all of them.
+          Tick a tag above to ask how often a route collects it, or two or more to ask
+          how many routes collect all of them.
         </p>
       </div>
 
@@ -527,6 +582,15 @@ table.rows tbody tr:last-child td {
 
 tr.zero td {
   color: var(--text-faint);
+}
+
+/* A breakdown of the row above, and it has to look like one: read flat, the
+   share column would sum past a hundred per cent, because these routes are
+   already counted there. The indent is on the label only, so the numbers stay
+   in their columns and remain readable down the table. */
+tr.sub td:first-child {
+  padding-left: 14px;
+  color: var(--text-dim);
 }
 
 tr.reconcile td {

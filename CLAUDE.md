@@ -290,6 +290,25 @@ cannot see is a reader looping back: dropping back edges only ever *removes* a
 collection, so "all of these" is a lower bound and "none of these" is an **upper** one —
 the panel names the model rather than letting the number speak for itself.
 
+How *often* a route collects one tag is the other legal sum, and it is legal for the
+same reason: a route passes through a tag's passages exactly one number of times, so
+never / once / twice / three-or-more partitions the routes the way endings do.
+`countPathsByHits` (`paths.ts`) is `forwardCounter` carrying a small saturating vector
+instead of one `bigint` — `h(n)[j]` is the routes from `n` collecting `j` more marks —
+and `tagHits` (`tags.ts`) is what the panel asks. Two orderings carry over verbatim and
+fail the same quiet way: the mark is applied **after** the terminal case, so a tagged
+ending files its route at one rather than zero, and `kids` is still never filtered. The
+buckets sum to `countPaths` and `buckets[0]` is `countPathsAvoiding` — both asserted,
+because two counters disagreeing about one story is worse than either. What the buckets
+are *not* is a bound: "at least once" is a lower bound under the dropped back edges, but
+"exactly twice" is neither, since a reader who circles collects a third. The panel names
+the model rather than letting the count speak for itself, and shows the breakdown only
+for a single ticked tag — with two, "twice" has no one meaning. On screen the three
+buckets are indented under "collecting all of these", because they *are* that row split
+three ways: read flat, the share column sums past a hundred per cent. Their labels live
+in `tags.ts` beside the cap, and the cap is `TAG_HIT_LABELS.length`, so a cap raised on
+its own cannot leave a bucket with no row to print it in.
+
 The per-level breakdown on each row is the one sum that *is* legal here, for the reason the
 route counts are not: a passage sits on exactly one level, so levels partition the
 *passages* the way endings partition the routes, and `sum(levels[].passages) === passages`

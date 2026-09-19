@@ -196,6 +196,123 @@ function forwardCounter(
 }
 
 /**
+ * Count routes from `startId` by **how many** marked passages they pass
+ * through: a histogram where `[j]` is the routes collecting exactly `j`, and
+ * the last entry is `cap` *or more*.
+ *
+ * The complement trick behind `countPathsAvoiding` answers "any" and "none" and
+ * stops there — one `bigint` per passage cannot say how often. This carries a
+ * vector instead, which is the whole difference: `h(n)[j]` is the routes from
+ * `n` down to a terminal whose suffix, `n` included, collects exactly `j`
+ * marks.
+ *
+ * Unlike the tag counts built on `countPathsAvoiding`, these buckets *are* a
+ * partition — a route collects the tag exactly one number of times — so
+ * `sum(countPathsByHits(...)) === countPaths(...)`, and `[0]` is exactly
+ * `countPathsAvoiding(..., marked, ...)`. Both are asserted in `tags.test.ts`,
+ * because two counters that disagree about the same story would be worse than
+ * either.
+ *
+ * Saturating at `cap` rather than growing the vector to the longest route keeps
+ * the arithmetic bounded by the question an author asks — "once, twice, or a
+ * lot" — instead of by the depth of the story.
+ *
+ * A null `startId` counts nothing at all, the way `countPathsAvoiding` does.
+ */
+export function countPathsByHits(
+  g: DerivedGraph,
+  backEdges: ReadonlySet<EdgeId>,
+  startId: NodeId | null,
+  marked: ReadonlySet<NodeId>,
+  cap: number,
+  endings: ReadonlySet<NodeId> = NO_ENDINGS,
+): bigint[] {
+  // A cap below one has no bucket to saturate into: `[0]` would mean "zero or
+  // more", which is every route, and the identity above would quietly state
+  // the opposite of what it says. Nothing asks for that today, so refuse it
+  // rather than return a histogram that means something else.
+  if (cap < 1) throw new Error(`countPathsByHits: cap must be at least 1, got ${cap}`)
+  if (startId === null) return new Array<bigint>(cap + 1).fill(0n)
+  return forwardHistogram(g, backEdges, endings, marked, cap)(startId)
+}
+
+/**
+ * The recurrence behind `countPathsByHits`, shaped like `forwardCounter` above
+ * and load-bearing in the same two places:
+ *
+ * - **The mark is applied after the terminal case, never before it.** A passage
+ *   can be both a marked ending and carry the tag being asked about; the route
+ *   that stops there has collected it, so the answer is one route at `j = 1`,
+ *   not one at `j = 0`. This is the counterpart of `blocked` being checked
+ *   before `endings` in `forwardCounter`, and it fails the same way — quietly,
+ *   by filing routes under a count they do not have.
+ * - **`kids` is never filtered**, for the reason written there: `kids.length
+ *   === 0` means *a route ends here*.
+ *
+ * Every vector is built fresh and the memoized one is never written through, so
+ * a shifted result cannot reach back into the table it was read from. The memo
+ * is sound only for the `(endings, marked, cap)` question it closed over, so
+ * each question gets its own counter.
+ */
+function forwardHistogram(
+  g: DerivedGraph,
+  backEdges: ReadonlySet<EdgeId>,
+  endings: ReadonlySet<NodeId>,
+  marked: ReadonlySet<NodeId>,
+  cap: number,
+): (id: NodeId) => bigint[] {
+  const memo = new Map<NodeId, bigint[]>()
+  const visiting = new Set<NodeId>()
+
+  /** One route, having collected nothing yet — the terminal case. */
+  const one = (): bigint[] => {
+    const v = new Array<bigint>(cap + 1).fill(0n)
+    v[0] = 1n
+    return v
+  }
+
+  const walk = (id: NodeId): bigint[] => {
+    const cached = memo.get(id)
+    if (cached !== undefined) return cached
+    if (visiting.has(id)) return new Array<bigint>(cap + 1).fill(0n)
+
+    let here: bigint[]
+    if (endings.has(id)) {
+      // Before the out-edges, as in `forwardCounter`: an ending with links
+      // still leaving it is one route, not the sum of what follows.
+      here = one()
+    } else {
+      visiting.add(id)
+      const kids = forwardTargets(g, backEdges, id, endings)
+      if (kids.length === 0) {
+        here = one()
+      } else {
+        here = new Array<bigint>(cap + 1).fill(0n)
+        for (const k of kids) {
+          const sub = walk(k)
+          for (let j = 0; j <= cap; j += 1) here[j] = here[j]! + sub[j]!
+        }
+      }
+      visiting.delete(id)
+    }
+
+    if (marked.has(id)) {
+      const shifted = new Array<bigint>(cap + 1).fill(0n)
+      for (let j = 0; j <= cap; j += 1) {
+        const to = Math.min(j + 1, cap)
+        shifted[to] = shifted[to]! + here[j]!
+      }
+      here = shifted
+    }
+
+    memo.set(id, here)
+    return here
+  }
+
+  return walk
+}
+
+/**
  * Count distinct story paths that run from `startId` down to `targetId` — the
  * mirror of `countPaths`, walking in-edges instead of out.
  *
