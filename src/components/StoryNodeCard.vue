@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { NodeLayout } from '../lib/graph/types'
-import { nodeLabel } from '../types/story'
+import { TAG_COLORS, nodeLabel } from '../types/story'
 import type { NodeState, SelectMode, TagColor } from '../types/story'
 
 const props = defineProps<{
@@ -40,7 +40,6 @@ function modeOf(e: MouseEvent): SelectMode {
   return 'replace'
 }
 
-/** Only coloured tags earn a stripe; `none` tags still show as a chip below. */
 /** Hover text: titles repeat, so the code has to be in here to identify the card. */
 const label = computed(() => nodeLabel(props.node.code, props.node.title))
 
@@ -71,11 +70,28 @@ const runShown = computed(() => {
   return '\u2026' + chars.slice(chars.length - (RUN_MAX - 1)).join('')
 })
 
-const stripes = computed(() =>
-  props.tags
-    .map((t) => props.tagColors.get(t) ?? 'none')
-    .filter((c): c is Exclude<TagColor, 'none'> => c !== 'none'),
-)
+/**
+ * The distinct colours this passage's tags carry, in palette order.
+ *
+ * One segment per *colour*, not per tag. The chips below already name the tags;
+ * the stripe is a colour channel, and a second yellow says nothing the first one
+ * did not while halving the width every other colour on the card gets.
+ *
+ * Palette order rather than tag order, because `node.tags` is sorted by name: two
+ * passages carrying the same three colours would otherwise draw them in whatever
+ * order their tags happened to be called, and the stripe is the only tag signal
+ * left below DETAIL_ZOOM, where comparing two cards at a glance is the whole use.
+ * Red sits left of purple on every card in the story.
+ *
+ * Walking TAG_COLORS rather than the tags is what gets both at once, and drops
+ * `none` for free — a `none` tag earns no stripe but still shows as a chip.
+ */
+const stripes = computed(() => {
+  const present = new Set(props.tags.map((t) => props.tagColors.get(t) ?? 'none'))
+  return TAG_COLORS.filter(
+    (c): c is Exclude<TagColor, 'none'> => c !== 'none' && present.has(c),
+  )
+})
 
 const style = computed(() => ({
   left: `${props.node.x - props.node.width / 2}px`,
@@ -108,8 +124,8 @@ const style = computed(() => ({
   >
     <div v-if="stripes.length > 0" class="stripes">
       <span
-        v-for="(color, i) in stripes"
-        :key="i"
+        v-for="color in stripes"
+        :key="color"
         class="stripe"
         :style="{ background: `var(--tag-${color})` }"
       />
