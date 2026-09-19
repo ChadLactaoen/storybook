@@ -26,17 +26,10 @@ const impact = store.deleteImpact
 const multi = computed(() => store.state.selectedIds.length > 1)
 const refused = computed(() => (impact.value?.stranded.length ?? 0) > 0)
 
-/**
- * The selection's shared state, or null when they disagree.
- *
- * Mixed lights no segment at all rather than picking one: a lit button would
- * claim the whole selection is already that, and the next click would then look
- * like a no-op instead of the change it actually is.
- */
-const pickedState = computed<NodeState | null>(() => {
-  const first = picked.value[0]?.state ?? null
-  return picked.value.every((n) => n.state === first) ? first : null
-})
+// From the store, like the two below: the digit shortcuts and the Edit menu
+// read the same value, and a local copy would be a second answer to which
+// segment is lit. Mixed lights nothing rather than picking one.
+const pickedState = store.selectedState
 
 // From the store, not recomputed here: the keyboard toggle and the Edit menu
 // read the same two, so a local copy would be a second answer to what a click

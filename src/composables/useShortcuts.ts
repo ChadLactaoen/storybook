@@ -1,5 +1,7 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import { IS_MAC } from '../lib/ui/platform'
+import type { NodeState } from '../types/story'
+import { NODE_STATES } from '../types/story'
 
 export interface ShortcutHandlers {
   zoomIn: () => void
@@ -13,6 +15,12 @@ export interface ShortcutHandlers {
   deletePassage: () => void
   /** Marks the whole selection as endings, or clears it. Selection-wide too. */
   toggleEnding: () => void
+  /**
+   * Sets the whole selection's state. Takes the value rather than one handler
+   * per state: the keys are an index into `NODE_STATES`, so a state added there
+   * needs nothing here.
+   */
+  setState: (value: NodeState) => void
   focusSearch: () => void
   toggleBodyEditor: () => void
   toggleCheatSheet: () => void
@@ -232,6 +240,17 @@ export function useShortcuts(handlers: ShortcutHandlers) {
     if (e.key === 'e' || e.key === 'E') {
       e.preventDefault()
       handlers.toggleEnding()
+      return
+    }
+    // 1, 2, 3 across the sidebar's segmented control, left to right. Read as a
+    // position in `NODE_STATES` rather than matched state by state, so the two
+    // cannot fall out of order; `commands.test.ts` holds the table to the same
+    // pairing. Unshifted digits only — the mod branch above has already taken
+    // Cmd 1 and Cmd 0 for zoom, and they returned before reaching here.
+    const state = NODE_STATES[Number(e.key) - 1]
+    if (e.key.length === 1 && state !== undefined) {
+      e.preventDefault()
+      handlers.setState(state)
       return
     }
     // Deliberately not Tab: hijacking it globally would break keyboard
