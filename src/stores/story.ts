@@ -560,8 +560,35 @@ export function endingToggleSelected(): void {
   endingSetSelected(!allSelectedEndings.value)
 }
 
-export function changeLevelOffset(id: string, offset: number): void {
-  commit(M.setLevelOffset(state.doc, id, offset))
+/**
+ * Move everything selected one level down, or back up to its floor, as one
+ * undo step.
+ *
+ * One passage or a whole set, the same call — `selectedIds` is the selection
+ * either way, so there is nothing to branch on, exactly as
+ * `endingToggleSelected` above.
+ *
+ * The refusal lives here rather than in the mutation. A passage sits at its
+ * floor or one below it, so a selection that disagrees about which has no
+ * shared move: setting them all to 1 would move half of them and call it a
+ * batch. `setLevelOffsetMany`'s own guard is a different question — it is about
+ * undo hygiene, and would wave that partial move straight through.
+ *
+ * Nothing *structural* is refused, and nothing needs to be: no assignment of
+ * offsets can put an edge inside a level (see `assignLevels`). What a selected
+ * passage under another selected one does is land further than one level down,
+ * because its floor moved with its parent.
+ *
+ * `delta` is in levels and in offset units at once, because they are the same
+ * unit. Taking the direction rather than the absolute value is what keeps the
+ * check above from being skippable by a caller.
+ */
+export function levelNudgeSelected(delta: -1 | 1): void {
+  const offset = selectedOffset.value
+  if (offset === null) return
+  const next = offset + delta
+  if (next !== 0 && next !== 1) return
+  commit(M.setLevelOffsetMany(state.doc, state.selectedIds, next))
 }
 
 export function makeStart(id: string): void {
@@ -976,6 +1003,35 @@ export const selectedEndingCount = computed(
 export const allSelectedEndings = computed(
   () => selectedNodes.value.length > 0 && selectedEndingCount.value === selectedNodes.value.length,
 )
+
+/**
+ * The level offset the whole selection shares, or null when they disagree.
+ *
+ * The one definition of it, for the reason `selectedState` is: both arrows in
+ * the sidebar and both rows in the Edit menu pick their enabled state from
+ * this, and three copies of `every(n => n.levelOffset === first)` would be
+ * three chances for a button and a menu row to disagree about whether a press
+ * does anything.
+ *
+ * An empty selection reads as null too — `first` is null and `every` over
+ * nothing is true — which is exactly the answer wanted: neither direction is
+ * offered.
+ */
+export const selectedOffset = computed<number | null>(() => {
+  const first = selectedNodes.value[0]?.levelOffset ?? null
+  return selectedNodes.value.every((n) => n.levelOffset === first) ? first : null
+})
+
+/** How many of the selection sit below their floor — what the mixed hint counts. */
+export const selectedNudgedCount = computed(
+  () => selectedNodes.value.filter((n) => n.levelOffset === 1).length,
+)
+
+// A passage sits at its floor or one below it, so "can move" is only a question
+// of which of the two the whole selection is on. Mixed is neither, and that is
+// the refusal.
+export const canNudgeSelectedDown = computed(() => selectedOffset.value === 0)
+export const canNudgeSelectedUp = computed(() => selectedOffset.value === 1)
 
 export const tags = computed(() => M.allTags(state.doc))
 export const tagColors = computed(() => M.tagColorMap(state.doc))

@@ -1521,6 +1521,70 @@ describe('selecting more than one passage', () => {
     expect(problems).toEqual([])
   })
 
+  it('nudges the whole selection from the sidebar', async () => {
+    await branchingStory()
+    await click('Two', { metaKey: true })
+
+    const arrows = () => [...host.querySelectorAll<HTMLButtonElement>('.inspector .level-btns .btn')]
+    const [up, down] = arrows() as [HTMLButtonElement, HTMLButtonElement]
+    expect(up.disabled).toBe(true)
+    expect(down.disabled).toBe(false)
+
+    down.click()
+    await nextTick()
+
+    expect(store.state.doc.nodes.map((n) => n.levelOffset)).toEqual([0, 1, 1])
+    // Three drops two, not one: Two's nudge raised the floor under it first.
+    expect(store.layout.value.nodes.map((n) => n.level)).toEqual([1, 3, 5])
+
+    const [up2, down2] = arrows() as [HTMLButtonElement, HTMLButtonElement]
+    expect(up2.disabled).toBe(false)
+    expect(down2.disabled).toBe(true)
+
+    up2.click()
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.levelOffset)).toEqual([0, 0, 0])
+    expect(problems).toEqual([])
+  })
+
+  it('dims both arrows and says why while the selection disagrees', async () => {
+    await branchingStory()
+    await click('Three')
+    host.querySelector<HTMLButtonElement>('.inspector [data-tab="advanced"]')!.click()
+    await nextTick()
+    host.querySelectorAll<HTMLButtonElement>('.inspector .level-btns .btn')[1]!.click()
+    await nextTick()
+
+    await click('Two', { metaKey: true })
+    const arrows = [...host.querySelectorAll<HTMLButtonElement>('.inspector .level-btns .btn')]
+    expect(arrows.map((b) => b.disabled)).toEqual([true, true])
+
+    // A disabled control whose reason is invisible is the failure this whole
+    // file exists to catch, so the hint has to name it.
+    const level = host.querySelector('.inspector .level')!.closest('section')!
+    expect(level.textContent).toContain('Mixed')
+    expect(level.textContent).toContain('1 of 2')
+    expect(problems).toEqual([])
+  })
+
+  it('moves a single passage through the same action', async () => {
+    await branchingStory()
+    await click('Three')
+    expect(store.state.selectedIds).toEqual([store.state.selectedId])
+    host.querySelector<HTMLButtonElement>('.inspector [data-tab="advanced"]')!.click()
+    await nextTick()
+
+    const [up, down] = [
+      ...host.querySelectorAll<HTMLButtonElement>('.inspector .level-btns .btn'),
+    ] as [HTMLButtonElement, HTMLButtonElement]
+    expect(up.disabled).toBe(true)
+    down.click()
+    await nextTick()
+
+    expect(store.state.doc.nodes.map((n) => n.levelOffset)).toEqual([0, 0, 1])
+    expect(problems).toEqual([])
+  })
+
   it('keeps no empty section above the footer while nothing is pending', async () => {
     await branchingStory()
     await click('Two', { metaKey: true })
@@ -2730,6 +2794,12 @@ describe('the menu bar', () => {
    * So the story is first put in a state where every command is genuinely
    * available — something to undo, something to redo, a selection to delete
    * and a start to play from — and anything still dimmed is unbound.
+   *
+   * Two sweeps, not one, because the level pair is mutually exclusive by
+   * design: a passage sits at its floor or one below it, so exactly one of
+   * ↑ and ↓ is live in any single state. Asserting that every label comes up
+   * live in *some* state still catches the unbound row, which is dimmed in
+   * both.
    */
   it('binds every command it offers', async () => {
     await withStory()
@@ -2741,15 +2811,29 @@ describe('the menu bar', () => {
     store.select(id)
     await nextTick()
 
-    for (const group of ['File', 'Edit', 'View', 'Story', 'Help']) {
-      title(group).click()
-      await nextTick()
-      expect(items().length).toBeGreaterThan(0)
-      for (const item of items()) {
-        const label = item.querySelector('.menu-label')!.textContent!.trim()
-        expect(`${label}: ${item.disabled}`).toBe(`${label}: false`)
+    const seen = new Set<string>()
+    const live = new Set<string>()
+
+    async function sweep() {
+      for (const group of ['File', 'Edit', 'View', 'Story', 'Help']) {
+        title(group).click()
+        await nextTick()
+        expect(items().length).toBeGreaterThan(0)
+        for (const item of items()) {
+          const label = item.querySelector('.menu-label')!.textContent!.trim()
+          seen.add(label)
+          if (!item.disabled) live.add(label)
+        }
       }
     }
+
+    await sweep()
+    // The other side of the level pair: nudged down, ↑ is the live one.
+    store.levelNudgeSelected(1)
+    await nextTick()
+    await sweep()
+
+    expect([...seen].filter((label) => !live.has(label))).toEqual([])
     expect(problems).toEqual([])
   })
 })

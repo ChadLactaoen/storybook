@@ -424,11 +424,22 @@ function castNote(name: string, note: string) {
 
 /* ---------- level control ---------- */
 
-const pushedDown = computed(() => (node.value?.levelOffset ?? 0) === 1)
+// From the store, like `pickedState` and `allEndings` above: the Edit menu
+// reads the same three, so a local `levelOffset === 1` here would be a second
+// answer to whether an arrow does anything. Both branches of this component
+// read them, because one passage is a selection of one — `select` puts a real
+// node in `selectedIds`, and the single-passage branch only renders for one.
+const canDown = store.canNudgeSelectedDown
+const canUp = store.canNudgeSelectedUp
+const nudgedCount = store.selectedNudgedCount
+const pushedDown = computed(() => store.selectedOffset.value === 1)
 
-function setOffset(offset: number) {
-  if (node.value) store.changeLevelOffset(node.value.id, offset)
-}
+// Display only, and local for that reason — `blockingParent` is in the store
+// because it reads the anchor; this reads the layout the component already has.
+const pickedLevels = computed(() => {
+  const ls = picked.value.map((n) => store.layout.value.nodeById.get(n.id)?.level ?? 0)
+  return { min: Math.min(...ls), max: Math.max(...ls) }
+})
 
 /**
  * A passage can only ever sit at its structural floor or one below it. Moving
@@ -469,9 +480,10 @@ const upBlockedBy = computed(() => store.blockingParent.value)
         </ul>
       </section>
 
-      <!-- The same two fields the single-passage inspector offers, asked of the
-           whole set. Both land as one undo step, and neither is in `layoutKey`,
-           so nothing on the canvas moves. -->
+      <!-- The same three controls the single-passage inspector offers, asked of
+           the whole set, each landing as one undo step. State and Ending are
+           absent from `layoutKey`, so those two are pure re-renders; Level is
+           in it, and is the one control here that moves the cards. -->
       <section class="batch">
         <span class="label">State</span>
         <div class="segmented">
@@ -489,6 +501,70 @@ const upBlockedBy = computed(() => store.blockingParent.value)
         </div>
         <p v-if="pickedState === null" class="hint">
           Mixed &mdash; picking one sets all {{ picked.length }}.
+        </p>
+      </section>
+
+      <!-- The single inspector's Level control, asked of the whole set, and in
+           the same order it sits there: Level, then Ending. No `.seg` in here
+           — the State control above owns that class, and a second one would
+           join every assertion that reaches for `.batch .seg`. -->
+      <section class="batch">
+        <span class="label">Level</span>
+        <div class="level">
+          <div class="level-now">
+            <strong v-if="pickedLevels.min === pickedLevels.max">
+              Level {{ pickedLevels.min }}
+            </strong>
+            <strong v-else>Levels {{ pickedLevels.min }}&ndash;{{ pickedLevels.max }}</strong>
+            <span class="muted">{{ pushedDown ? 'nudged down' : canDown ? 'auto' : 'mixed' }}</span>
+          </div>
+          <div class="level-btns">
+            <!-- A disabled arrow whose reason is invisible is the failure the
+                 `<summary>` note in CLAUDE.md is about, so each of the three
+                 states says its own piece. -->
+            <button
+              class="btn btn-icon"
+              :disabled="!canUp"
+              :title="
+                canUp
+                  ? `Return all ${picked.length} to their earliest level`
+                  : canDown
+                    ? 'Already at the earliest levels their links allow'
+                    : 'Mixed — some are nudged down and some are not'
+              "
+              @click="store.levelNudgeSelected(-1)"
+            >
+              &uarr;
+            </button>
+            <button
+              class="btn btn-icon"
+              :disabled="!canDown"
+              :title="
+                canDown
+                  ? `Nudge all ${picked.length} one level down`
+                  : canUp
+                    ? 'Already nudged down'
+                    : 'Mixed — some are nudged down and some are not'
+              "
+              @click="store.levelNudgeSelected(1)"
+            >
+              &darr;
+            </button>
+          </div>
+        </div>
+        <p class="hint">
+          <template v-if="canDown">
+            Each one drops a level below its own floor. A selected passage under another
+            selected one drops further than that, because its floor moves too.
+          </template>
+          <template v-else-if="canUp">
+            All {{ picked.length }} sit one level below their natural spot.
+          </template>
+          <template v-else>
+            Mixed &mdash; {{ nudgedCount }} of {{ picked.length }}
+            {{ nudgedCount === 1 ? 'is' : 'are' }} nudged down. They move together or not at
+            all, so even them up one at a time first.
+          </template>
         </p>
       </section>
 
@@ -719,23 +795,23 @@ const upBlockedBy = computed(() => store.blockingParent.value)
             <div class="level-btns">
               <button
                 class="btn btn-icon"
-                :disabled="!pushedDown"
+                :disabled="!canUp"
                 :title="
-                  pushedDown
+                  canUp
                     ? `Return to level ${geom.minLevel}`
                     : upBlockedBy
                       ? `Blocked by “${nodeLabel(upBlockedBy.code, upBlockedBy.title)}” at level ${upBlockedBy.level}`
                       : 'Already at the earliest possible level'
                 "
-                @click="setOffset(0)"
+                @click="store.levelNudgeSelected(-1)"
               >
                 &uarr;
               </button>
               <button
                 class="btn btn-icon"
-                :disabled="pushedDown"
+                :disabled="!canDown"
                 :title="`Push down to level ${geom.minLevel + 1}`"
-                @click="setOffset(1)"
+                @click="store.levelNudgeSelected(1)"
               >
                 &darr;
               </button>

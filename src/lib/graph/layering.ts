@@ -21,6 +21,14 @@ import type { DerivedGraph, EdgeId, LevelingResult } from './types'
  *
  * Evaluated in topological order, so `minLevel(v)` already reflects every
  * accepted offset above it.
+ *
+ * Folded in this way, no assignment of offsets can be illegal: for a forward
+ * edge `p -> v`, `minLevel(v) >= level(p) + 1` by construction and
+ * `level(v) >= minLevel(v)` because the offset is clamped to {0, 1} and never
+ * negative, so `level(v) > level(p)` whatever the author nudged. Which is also
+ * why nudging a whole *set* down is not a validation question — a selected
+ * passage under another selected one simply lands further than one level down,
+ * because its floor moved too.
  */
 export function assignLevels(
   g: DerivedGraph,

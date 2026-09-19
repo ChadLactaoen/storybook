@@ -77,6 +77,39 @@ describe('level offset', () => {
     const { byTitle } = levels(doc)
     expect(byTitle).toEqual({ One: 1, Two: 3 })
   })
+
+  /**
+   * The invariant test above runs with no offsets, so nothing held it against
+   * the one field the author can actually move. Which matters now that a whole
+   * selection can be nudged at once: it is what says the tool needs no
+   * per-passage legality check beyond the 0-or-1 range, because there is no
+   * combination of offsets that puts an edge inside a level.
+   *
+   * Every assignment, not a sample — the shortcut shape `assignLevels`'s own
+   * comment uses, so the one graph BFS gets wrong is the one under test.
+   */
+  it('keeps every edge crossing a level whatever the author nudged', () => {
+    const spec = {
+      One: ['Four', 'Three', 'Two'],
+      Four: ['Two', 'Five'],
+      Three: ['Five'],
+      Two: ['Five'],
+      Five: [],
+    }
+    const titles = Object.keys(spec)
+
+    for (let mask = 0; mask < 1 << titles.length; mask++) {
+      const offsets = Object.fromEntries(
+        titles.map((t, i) => [t, (mask >> i) & 1]),
+      )
+      const doc = docFrom(spec, { offsets })
+      const { g, res } = levels(doc)
+      for (const e of g.edges) {
+        if (e.selfLoop) continue
+        expect(res.level.get(e.targetId)!).toBeGreaterThan(res.level.get(e.sourceId)!)
+      }
+    }
+  })
 })
 
 describe('cycles', () => {
