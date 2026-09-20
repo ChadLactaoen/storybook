@@ -757,6 +757,109 @@ describe('batch level offset', () => {
   })
 })
 
+describe('batch setting', () => {
+  const settingOf = (title: string) =>
+    store.state.doc.nodes.find((n) => n.title === title)!.setting
+
+  function pickBranch(): void {
+    write(idOf('One'), '[[Two]]')
+    write(idOf('Two'), '[[Three]]\n[[Four]]')
+    store.selectSubtree(idOf('Two'))
+    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Two', 'Three', 'Four'])
+  }
+
+  it('puts the whole selection in one place as one undo step', () => {
+    pickBranch()
+    const before = serializeDoc(store.state.doc)
+
+    store.settingSetSelected('  The cellar  ')
+    expect(['Two', 'Three', 'Four'].map(settingOf)).toEqual([
+      'The cellar',
+      'The cellar',
+      'The cellar',
+    ])
+    // Untouched: the batch acts on the selection, not on the story.
+    expect(settingOf('One')).toBe('')
+
+    store.undo()
+    expect(serializeDoc(store.state.doc)).toBe(before)
+  })
+
+  it('clears the whole selection when handed nothing', () => {
+    pickBranch()
+    store.settingSetSelected('The cellar')
+    store.settingSetSelected('')
+    expect(['Two', 'Three', 'Four'].map(settingOf)).toEqual(['', '', ''])
+
+    store.undo()
+    expect(['Two', 'Three', 'Four'].map(settingOf)).toEqual([
+      'The cellar',
+      'The cellar',
+      'The cellar',
+    ])
+  })
+
+  it('does not commit when the whole selection already agrees', () => {
+    pickBranch()
+    store.settingSetSelected('The cellar')
+    store.undo()
+    expect(store.canRedo.value).toBe(true)
+
+    // The guard in `setSettingMany`. Everything selected is unset again after
+    // that undo, so asking to clear must not push an empty entry and throw the
+    // redo away — and neither must a padded repeat once it is set.
+    store.settingSetSelected('')
+    expect(store.canRedo.value).toBe(true)
+
+    store.redo()
+    store.settingSetSelected(' The cellar ')
+    expect(store.canRedo.value).toBe(false)
+    expect(['Two', 'Three', 'Four'].map(settingOf)).toEqual([
+      'The cellar',
+      'The cellar',
+      'The cellar',
+    ])
+  })
+
+  it('reads the shared setting, and null while they disagree', () => {
+    pickBranch()
+    expect(store.selectedSetting.value).toBe('')
+    expect(store.selectedSettingCount.value).toBe(0)
+
+    store.settingSet(idOf('Three'), 'Docks')
+    expect(store.selectedSetting.value).toBeNull()
+    expect(store.selectedSettingCount.value).toBe(1)
+
+    // A mixed selection has a shared move, unlike a mixed level: naming one
+    // place is something every passage in the set can do.
+    store.settingSetSelected('The cellar')
+    expect(store.selectedSetting.value).toBe('The cellar')
+    expect(store.selectedSettingCount.value).toBe(3)
+  })
+
+  it('changes neither the drawing nor the selection', () => {
+    pickBranch()
+    const hash = store.layout.value.stats.hash
+
+    store.settingSetSelected('The cellar')
+
+    // `setting` is deliberately absent from `layoutKey`, so this is a pure
+    // re-render — the mirror of the level batch, which is in it and redraws.
+    expect(store.layout.value.stats.hash).toBe(hash)
+    expect(store.selectedNodes.value.map((n) => n.title)).toEqual(['Two', 'Three', 'Four'])
+    expect(store.state.selectedId).toBe(idOf('Two'))
+  })
+
+  it('writes one passage through the same call', () => {
+    write(idOf('One'), '[[Two]]')
+    store.select(idOf('Two'))
+
+    store.settingSetSelected('Docks')
+    expect(settingOf('Two')).toBe('Docks')
+    expect(settingOf('One')).toBe('')
+  })
+})
+
 describe('story notes through the store', () => {
   it('commits, undoes and rides the save file out', () => {
     store.storyNotesSet('Mira never learns the truth.')

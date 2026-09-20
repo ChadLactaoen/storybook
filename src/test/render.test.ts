@@ -251,6 +251,32 @@ describe('the app renders', () => {
     expect(problems).toEqual([])
   })
 
+  it('puts the stored setting back in the field when only padding was typed', async () => {
+    mount()
+    store.newStory('Render Check')
+    const id = store.state.doc.nodes[0]!.id
+    store.settingSet(id, 'Tavern')
+    store.select(id)
+    await nextTick()
+
+    const field = host.querySelector<HTMLInputElement>('#passage-setting')!
+    const before = store.state.doc
+
+    field.value = '  Tavern  '
+    field.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    // `setSetting` is `setSettingMany`'s one-entry case, so this stores nothing
+    // and costs no undo entry — and the field must not go on showing padding
+    // the document never took.
+    expect(store.state.doc).toBe(before)
+
+    field.dispatchEvent(new Event('blur'))
+    await nextTick()
+    expect(field.value).toBe('Tavern')
+    expect(problems).toEqual([])
+  })
+
   it('lists settings and cast with counts in the index panel', async () => {
     mount()
     store.newStory('Render Check')
@@ -1412,6 +1438,85 @@ describe('selecting more than one passage', () => {
     box.click()
     await nextTick()
     expect(store.state.doc.nodes.map((n) => n.isEnding)).toEqual([false, true, true])
+    expect(problems).toEqual([])
+  })
+
+  it('puts the whole selection in one setting from the sidebar', async () => {
+    await branchingStory()
+    await click('Two', { metaKey: true })
+
+    const field = host.querySelector<HTMLInputElement>('.inspector #batch-setting')!
+    const apply = () =>
+      [...host.querySelectorAll<HTMLButtonElement>('.inspector .batch .apply')][0]!
+
+    // Nothing to apply yet: the whole selection agrees on having no setting.
+    expect(apply().disabled).toBe(true)
+    expect(apply().textContent!.trim()).toBe('Clear on 0 passages')
+
+    field.value = 'The cellar'
+    field.dispatchEvent(new Event('input'))
+    await nextTick()
+    expect(apply().disabled).toBe(false)
+    expect(apply().textContent!.trim()).toBe('Apply to 2 passages')
+
+    apply().click()
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.setting)).toEqual(['', 'The cellar', 'The cellar'])
+
+    // Applied, so there is nothing left to do — and the reason is on the page,
+    // not only in the tooltip.
+    expect(apply().disabled).toBe(true)
+    expect(host.querySelector('.inspector')!.textContent).toContain('already in this setting')
+    expect(problems).toEqual([])
+  })
+
+  it('clears the whole selection from an empty field, and says how many', async () => {
+    await branchingStory()
+    store.settingSet(store.state.doc.nodes.find((n) => n.title === 'Three')!.id, 'Docks')
+    await click('Two', { metaKey: true })
+
+    const inspector = host.querySelector('.inspector')!
+    // One of each, so the field seeds blank and the hint names the split
+    // rather than claiming either setting.
+    const field = inspector.querySelector<HTMLInputElement>('#batch-setting')!
+    expect(field.value).toBe('')
+    // The hint agrees with the button: it does not claim a replace while the
+    // button offers a clear.
+    expect(inspector.textContent).toContain('Clear the setting on 1 of these 2')
+    expect(inspector.textContent).not.toContain('Applying replaces all of them')
+
+    const apply = inspector.querySelector<HTMLButtonElement>('.batch .apply')!
+    expect(apply.textContent!.trim()).toBe('Clear on 1 passage')
+    expect(apply.disabled).toBe(false)
+
+    apply.click()
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.setting)).toEqual(['', '', ''])
+    expect(problems).toEqual([])
+  })
+
+  it('keeps the typed setting while the document changes underneath it', async () => {
+    await branchingStory()
+    await click('Two', { metaKey: true })
+
+    const field = host.querySelector<HTMLInputElement>('.inspector #batch-setting')!
+    field.value = 'The cellar'
+    field.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    // Every mutation clones, so a draft watching the selected *nodes* would be
+    // reset by an edit anywhere in the story — including one the author made
+    // with this half-typed.
+    store.changeState(store.state.doc.nodes[0]!.id, 'Done')
+    await nextTick()
+    expect(host.querySelector<HTMLInputElement>('.inspector #batch-setting')!.value).toBe(
+      'The cellar',
+    )
+
+    // Changing what is selected does reset it, which is the point of the key.
+    await click('Start')
+    await click('Two', { metaKey: true })
+    expect(host.querySelector<HTMLInputElement>('.inspector #batch-setting')!.value).toBe('')
     expect(problems).toEqual([])
   })
 

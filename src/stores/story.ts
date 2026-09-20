@@ -845,6 +845,19 @@ export function settingSet(id: string, value: string): void {
   commit(M.setSetting(state.doc, id, value))
 }
 
+/**
+ * Put everything selected in one place, as one undo step.
+ *
+ * No uniformity refusal, unlike `levelNudgeSelected`. That one refuses a
+ * disagreeing selection because a passage sits at its floor or one below it, so
+ * "all to 1" would move half the set and call it a batch. A setting has no such
+ * partial: whatever the selection currently disagrees about, naming one place
+ * is a move every one of them can take.
+ */
+export function settingSetSelected(value: string): void {
+  commit(M.setSettingMany(state.doc, state.selectedIds, value))
+}
+
 export function settingRename(from: string, to: string): void {
   commit(M.renameSetting(state.doc, from, to))
   const target = to.trim()
@@ -985,6 +998,26 @@ export const selectedState = computed<NodeState | null>(() => {
   const first = selectedNodes.value[0]?.state ?? null
   return selectedNodes.value.every((n) => n.state === first) ? first : null
 })
+
+/**
+ * The setting the whole selection shares, or null when they disagree.
+ *
+ * The one definition of it, for the reason `selectedState` is: the field seeds
+ * from this and the Apply button dims from it, so a second `every(...)` in the
+ * panel would be a second answer to whether pressing it does anything.
+ *
+ * All-empty is a shared setting of `''`, not a disagreement — the selection
+ * genuinely agrees, and the field should start blank with nothing to apply.
+ */
+export const selectedSetting = computed<string | null>(() => {
+  const first = selectedNodes.value[0]?.setting ?? null
+  return selectedNodes.value.every((n) => n.setting === first) ? first : null
+})
+
+/** How many of the selection carry a setting — what Clear would touch. */
+export const selectedSettingCount = computed(
+  () => selectedNodes.value.filter((n) => n.setting !== '').length,
+)
 
 /** How many of the selection are endings — what the sidebar's tri-state draws. */
 export const selectedEndingCount = computed(
