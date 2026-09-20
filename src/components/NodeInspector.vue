@@ -395,6 +395,23 @@ const setting = computed({
   set: (v: string) => node.value && store.settingSet(node.value.id, v),
 })
 
+/**
+ * Put back what was actually stored, on the way out of the field.
+ *
+ * `setSetting` is `setSettingMany`'s one-entry case, so an edit that only adds
+ * whitespace returns the *same* document — deliberately, so it pushes no undo
+ * entry — and Vue therefore never re-renders to write the trimmed value back
+ * into the input. Without this the field goes on showing padding that was never
+ * stored, which is the "renders, but reads wrong" failure CLAUDE.md is about.
+ *
+ * On blur rather than per keystroke, for `slugDraft`'s reason: re-seeding as
+ * the character appeared would delete a trailing space as it was typed and snap
+ * the caret to the end.
+ */
+function settleSetting(e: Event): void {
+  ;(e.target as HTMLInputElement).value = node.value?.setting ?? ''
+}
+
 // Both hints are one element with a computed string rather than two `v-if`
 // paragraphs, so the section's shape never changes with a preference.
 const settingHint = computed(() =>
@@ -448,6 +465,62 @@ const pickedLevels = computed(() => {
  * Saying which parent pins it is far more useful than a validation error.
  */
 const upBlockedBy = computed(() => store.blockingParent.value)
+
+/* ---------- batch setting ---------- */
+
+// From the store, like the three above, and for the same reason: the field
+// seeds from `pickedSetting` and the button dims from it, so a local
+// `every(...)` here would be a second answer to what a press does.
+const pickedSetting = store.selectedSetting
+const settingCount = store.selectedSettingCount
+
+/**
+ * A draft behind a button, not a computed writing through.
+ *
+ * The three controls beside it are one click each and reversible by eye; this
+ * one is free text over a whole set, and its *empty* value erases. Blur is not
+ * an intent signal for that, and a guard against the accidental blur would make
+ * clearing a mixed selection unreachable — so the write waits for the button.
+ */
+const settingDraft = ref('')
+
+// Keyed on the selection, not on `picked`: every mutation clones, so watching
+// the node array would clobber what the author is typing on any edit anywhere
+// in the document. The join is a primitive, so re-selecting the same set —
+// which happens on every re-derive — leaves the draft alone.
+watch(
+  () => store.state.selectedIds.join(' '),
+  () => (settingDraft.value = pickedSetting.value ?? ''),
+  { immediate: true },
+)
+
+const settingTrimmed = computed(() => settingDraft.value.trim())
+
+// Mirrors `setSettingMany`'s own guard rather than restating it: nothing to
+// apply when the whole selection is already there, nothing to clear when none
+// of them has one. The mutation would refuse either anyway — this is so the
+// button says so before it is pressed.
+const canApplySetting = computed(() =>
+  settingTrimmed.value === ''
+    ? settingCount.value > 0
+    : pickedSetting.value !== settingTrimmed.value,
+)
+
+const settingReason = computed(() => {
+  if (canApplySetting.value) {
+    return settingTrimmed.value === ''
+      ? `Clear the setting on ${settingCount.value} of these ${picked.value.length}`
+      : `Put all ${picked.value.length} in "${settingTrimmed.value}"`
+  }
+  if (settingTrimmed.value === '') return 'None of these has a setting to clear'
+  return `All ${picked.value.length} are already in this setting`
+})
+
+function applySetting() {
+  if (!canApplySetting.value) return
+  store.settingSetSelected(settingDraft.value)
+  settingDraft.value = settingTrimmed.value
+}
 </script>
 
 <template>
@@ -480,10 +553,13 @@ const upBlockedBy = computed(() => store.blockingParent.value)
         </ul>
       </section>
 
-      <!-- The same three controls the single-passage inspector offers, asked of
-           the whole set, each landing as one undo step. State and Ending are
-           absent from `layoutKey`, so those two are pure re-renders; Level is
-           in it, and is the one control here that moves the cards. -->
+      <!-- The same four controls the single-passage inspector offers, asked of
+           the whole set, each landing as one undo step. State, Ending and
+           Setting are absent from `layoutKey`, so those three are pure
+           re-renders; Level is in it, and is the one control here that moves
+           the cards. Setting comes last of the four: the other three are one
+           click, and grouping them keeps the free-text one with its own button
+           out of their way. -->
       <section class="batch">
         <span class="label">State</span>
         <div class="segmented">
@@ -588,6 +664,52 @@ const upBlockedBy = computed(() => store.blockingParent.value)
             </span>
           </span>
         </label>
+      </section>
+
+      <!-- Behind a button, unlike the three above: see `settingDraft`. No
+           `.seg` and no `.pref` in here either — those two belong to the State
+           and Ending controls, and a second of each would join every assertion
+           reaching for `.batch .seg` or `.batch .pref`. -->
+      <section class="batch">
+        <label class="label" for="batch-setting">Setting</label>
+        <input
+          id="batch-setting"
+          v-model="settingDraft"
+          class="field"
+          list="known-settings"
+          placeholder="Where do these happen?"
+          @keydown.enter.prevent="applySetting"
+        />
+        <!-- The same id as the single-passage field's list, and safe: that
+             aside is this one's `v-else-if`, so only ever one is mounted. -->
+        <datalist id="known-settings">
+          <option v-for="value in store.settingSuggestions.value" :key="value" :value="value" />
+        </datalist>
+        <!-- A disabled button whose reason is invisible is the failure the
+             `<summary>` note in CLAUDE.md is about, so the hint below says the
+             same thing the tooltip does, in the open. -->
+        <button
+          class="btn btn-primary apply"
+          :disabled="!canApplySetting"
+          :title="settingReason"
+          @click="applySetting"
+        >
+          <template v-if="settingTrimmed === ''">
+            Clear on {{ settingCount }} {{ settingCount === 1 ? 'passage' : 'passages' }}
+          </template>
+          <template v-else>Apply to {{ picked.length }} passages</template>
+        </button>
+        <!-- The mixed line only while there is something to *apply*: with the
+             field empty the button reads "Clear on N", and a hint saying the
+             apply replaces all of them would contradict the button above it.
+             `settingReason` is what the tooltip says, so the two agree. -->
+        <p class="hint">
+          <template v-if="pickedSetting === null && settingTrimmed !== ''">
+            Mixed &mdash; {{ settingCount }} of {{ picked.length }}
+            {{ settingCount === 1 ? 'has' : 'have' }} a setting. Applying replaces all of them.
+          </template>
+          <template v-else>{{ settingReason }}.</template>
+        </p>
       </section>
 
       <!-- Conditional on the whole section, not just its contents: `.scroll` is
@@ -742,6 +864,7 @@ const upBlockedBy = computed(() => store.blockingParent.value)
             class="field"
             list="known-settings"
             placeholder="Where does this happen?"
+            @blur="settleSetting"
           />
           <datalist id="known-settings">
             <option v-for="value in store.settingSuggestions.value" :key="value" :value="value" />
@@ -1221,6 +1344,18 @@ code {
 .level-btns {
   display: flex;
   gap: 4px;
+}
+
+/* The only batch control with a button of its own, so it needs the spacing the
+   segmented row and the checkbox get from their own layout. Full width because
+   its label counts the selection and grows with it — and centred, because a
+   full-width bordered box with left-aligned text directly under a text field
+   reads as a second text field. `btn-primary` is the other half of that: this
+   is the panel's one action, the way Recode is its panel's. */
+.apply {
+  width: 100%;
+  margin-top: 6px;
+  justify-content: center;
 }
 
 .stats {

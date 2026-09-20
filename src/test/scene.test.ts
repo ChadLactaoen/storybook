@@ -17,6 +17,7 @@ import {
   setCharacterBio,
   setPassageCharacterNote,
   setSetting,
+  setSettingMany,
   settingUsage,
   sortCharacters,
 } from '../lib/doc/mutations'
@@ -542,6 +543,68 @@ describe('aggregation', () => {
       { value: 'Tavern', count: 2, nodeIds: ['1', '2'] },
       { value: 'Docks', count: 1, nodeIds: ['3'] },
     ])
+  })
+})
+
+describe('batch setting', () => {
+  const three = () =>
+    docFrom({ A: ['B'], B: ['C'], C: [] }, { settings: { A: 'Tavern', C: 'Docks' } })
+
+  it('puts a whole set in one place in one edit', () => {
+    const doc = three()
+    const next = setSettingMany(doc, [idOf(doc, 'A'), idOf(doc, 'B')], 'Cellar')
+    expect(next.nodes.map((n) => n.setting)).toEqual(['Cellar', 'Cellar', 'Docks'])
+  })
+
+  it('trims, and ignores ids the document does not have', () => {
+    const doc = three()
+    const next = setSettingMany(doc, [idOf(doc, 'B'), 'no-such-id'], '  Cellar  ')
+    expect(next.nodes.map((n) => n.setting)).toEqual(['Tavern', 'Cellar', 'Docks'])
+  })
+
+  it('clears the whole set when the value is empty', () => {
+    const doc = three()
+    const next = setSettingMany(doc, doc.nodes.map((n) => n.id), '')
+    expect(next.nodes.map((n) => n.setting)).toEqual(['', '', ''])
+  })
+
+  // `commit` compares by reference, so a fresh document here would push an
+  // empty undo entry and wipe a pending redo.
+  it('returns the same document when nothing would change', () => {
+    const doc = three()
+    expect(setSettingMany(doc, [], 'Cellar')).toBe(doc)
+    expect(setSettingMany(doc, ['no-such-id'], 'Cellar')).toBe(doc)
+    expect(setSettingMany(doc, [idOf(doc, 'A')], 'Tavern')).toBe(doc)
+    expect(setSettingMany(doc, [idOf(doc, 'B')], '   ')).toBe(doc)
+  })
+
+  // Trimming has to happen ahead of the guard, or this clones.
+  it('treats a padded repeat of the same setting as the no-op it looks like', () => {
+    const doc = three()
+    expect(setSettingMany(doc, [idOf(doc, 'A')], '  Tavern  ')).toBe(doc)
+  })
+
+  it('commits when only some of the batch would change', () => {
+    const doc = three()
+    const next = setSettingMany(doc, [idOf(doc, 'A'), idOf(doc, 'B')], 'Tavern')
+    expect(next).not.toBe(doc)
+    expect(next.nodes.map((n) => n.setting)).toEqual(['Tavern', 'Tavern', 'Docks'])
+  })
+
+  it('is what the single-passage write is made of', () => {
+    const doc = three()
+    const one = setSetting(doc, idOf(doc, 'B'), ' Cellar ')
+    expect(one.nodes.map((n) => n.setting)).toEqual(['Tavern', 'Cellar', 'Docks'])
+    expect(setSetting(doc, idOf(doc, 'A'), 'Tavern')).toBe(doc)
+  })
+
+  it('leaves the rest of the document alone', () => {
+    const doc = three()
+    const next = setSettingMany(doc, [idOf(doc, 'A')], 'Cellar')
+    expect(next.nodes.map((n) => [n.code, n.title, n.body])).toEqual(
+      doc.nodes.map((n) => [n.code, n.title, n.body]),
+    )
+    expect(next.startNodeId).toBe(doc.startNodeId)
   })
 })
 

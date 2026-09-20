@@ -843,8 +843,36 @@ export function setNote(doc: StoryDoc, id: string, value: string): StoryDoc {
 
 /* ---------- setting ---------- */
 
+/**
+ * Put several passages in one place, in one edit — so a multi-select change
+ * lands as a single undo step rather than one entry per passage.
+ *
+ * `setStateMany`'s shape, and guarded for its reason: `commit` compares by
+ * reference, so a fresh document for a batch that changes nothing would push an
+ * empty undo entry and wipe redo. A run of passages already sharing a setting
+ * is the common case here, not the rare one — the author is usually adding the
+ * one that was missed.
+ *
+ * Trimmed once, ahead of the guard, for the reason `setLevelOffsetMany` clamps
+ * ahead of its own: `"  Alley  "` applied to a set already on `"Alley"` has to
+ * be the no-op it looks like, which the `replaceNode` this replaced cloned
+ * straight through.
+ */
+export function setSettingMany(
+  doc: StoryDoc,
+  ids: readonly string[],
+  value: string,
+): StoryDoc {
+  const setting = value.trim()
+  const pick = new Set(ids)
+  if (!doc.nodes.some((n) => pick.has(n.id) && n.setting !== setting)) return doc
+  const next = clone(doc)
+  next.nodes = next.nodes.map((n) => (pick.has(n.id) ? { ...n, setting } : n))
+  return next
+}
+
 export function setSetting(doc: StoryDoc, id: string, value: string): StoryDoc {
-  return replaceNode(doc, id, { setting: value.trim() })
+  return setSettingMany(doc, [id], value)
 }
 
 /**

@@ -128,14 +128,20 @@ Sheet**, with **Notes** under it; open together they split it in half.
 `Cmd`-click a card to select it and everything it leads to, `Shift`-click to add
 or drop one, and click the background to clear. With more than one selected the
 sidebar lists them and offers the edits that mean something for a set: **State**
-(also `1` / `2` / `3`), **Mark as Ending** (also `E`), **Level** and a single
-delete. The State row lights nothing while the
+(also `1` / `2` / `3`), **Mark as Ending** (also `E`), **Level**, **Setting** and
+a single delete. The State row lights nothing while the
 selection disagrees, and the Ending box draws a dash rather than claiming either
 way — a mixed set marks everything, and only once they all agree does it clear.
 Level is the one that refuses instead: both arrows dim while the set disagrees,
 because "a level down" is not the same move for a passage already nudged, and
-half a batch is worse than none. It is also the only one of the three that
+half a batch is worse than none. It is also the only one of the four that
 redraws the tree; the others are pure re-renders.
+
+Setting is the odd one out in the other direction: it is free text, so it waits
+behind an **Apply** button rather than writing on a click or a blur. A mixed set
+is no obstacle — naming one place is a move every passage in the selection can
+take — and an empty field with Apply pressed clears the setting on all of them,
+which the button says out loud before it is pressed.
 
 Work auto-saves to `localStorage` on a short debounce. **Export** downloads the
 canonical JSON; **Import** reads it back.
