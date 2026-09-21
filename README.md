@@ -166,7 +166,9 @@ canonical JSON; **Import** reads it back.
 | `recode` | a numbering read off the drawing, so codes can be renamed to match the tree |
 | `gates` | what conditional links prove: which choice a passage is locked behind, and which branches are dead |
 | `slugs` | the running slug per passage &mdash; the marks along the route here, with `*` where the routes disagree |
-| `tags` | how much of the story a tag covers, counted in routes rather than passages &mdash; which routes collect several at once, how often one is collected along a route, and where the tagged passages sit, level by level |
+| `coverage` | the route maths a tag and a character are both measured with: the routes touching a set of passages, the routes collecting several such sets at once, and how often one is collected along a route &mdash; generic over what a passage is asked to carry |
+| `tags` | the tag vocabulary handed to `coverage`: which tags exist, how many may be combined, and what the buckets are called |
+| `characters` | the same for the cast &mdash; how many routes meet each character, and which routes bring several of them together |
 | `macros` *(in `lib/harlowe/`)* | reads `(set:)` and `(if:)` as text, so a guarded link can narrow a trail |
 | `run` *(in `lib/harlowe/`)* | the reader's evaluator: a passage's prose, choices and variables, as typed nodes &mdash; a sandbox that feeds nothing above |
 

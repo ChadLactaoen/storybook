@@ -20,7 +20,7 @@ function combine(doc: StoryDoc, tags: string[]) {
 }
 
 function rowOf(doc: StoryDoc, tag: string) {
-  return tagStats(doc).rows.find((r) => r.tag === tag)!
+  return tagStats(doc).rows.find((r) => r.key === tag)!
 }
 
 function hitsOf(doc: StoryDoc, tag: string) {
@@ -167,7 +167,7 @@ describe('routes touching a tag', () => {
 
   it('orders by routes, then by name, without leaning on sort stability', () => {
     const doc = docFrom(DIAMOND, { tags: { B: ['b', 'a'], A: ['z'] } })
-    expect(tagStats(doc).rows.map((r) => r.tag)).toEqual(['z', 'a', 'b'])
+    expect(tagStats(doc).rows.map((r) => r.key)).toEqual(['z', 'a', 'b'])
   })
 
   it('agrees with a brute-force walk of every route', () => {
@@ -178,7 +178,7 @@ describe('routes touching a tag', () => {
     const truth = oracle(doc)
     const s = tagStats(doc)
     expect(s.totalRoutes).toBe(truth.total)
-    for (const row of s.rows) expect(row.routes).toBe(truth.touching(row.tag))
+    for (const row of s.rows) expect(row.routes).toBe(truth.touching(row.key))
   })
 })
 
@@ -460,7 +460,7 @@ describe('degenerate stories', () => {
   it('handles a story with no tags at all', () => {
     const s = tagStats(docFrom(DIAMOND))
     expect(s.rows).toEqual([])
-    expect(s.taggedPassages).toBe(0)
+    expect(s.coveredPassages).toBe(0)
   })
 
   it('handles a single tagged passage', () => {
@@ -560,10 +560,10 @@ describe('levels', () => {
 
   it('reads the same however the node array is ordered', () => {
     const doc = docFrom(DIAMOND, { tags: { A: ['x'], B: ['x'], C: ['y'], D: ['x', 'y'] } })
-    const canonical = tagStats(doc).rows.map((r) => [r.tag, shape(doc, r.tag)])
+    const canonical = tagStats(doc).rows.map((r) => [r.key, shape(doc, r.key)])
     for (const seed of [1, 7, 99]) {
       const mixed = { ...doc, nodes: shuffled(doc.nodes, seed) }
-      expect(tagStats(mixed).rows.map((r) => [r.tag, shape(mixed, r.tag)])).toEqual(canonical)
+      expect(tagStats(mixed).rows.map((r) => [r.key, shape(mixed, r.key)])).toEqual(canonical)
     }
   })
 })

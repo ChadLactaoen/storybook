@@ -299,6 +299,19 @@ export const COMMANDS: readonly CommandSpec[] = [
     chord: { mod: true, key: 'g' },
     hint: 'How many routes run through each tag, and which routes collect several',
   },
+  // No chord. Every mnemonic worth having is spoken for — Chrome keeps Cmd T
+  // and Cmd W, Cmd K is the per-passage cheat sheet, Cmd ; is Cast & Settings —
+  // and a binding nobody can guess is worth less than the menu row that is
+  // already there. A chordless row enrols nothing in `commands.test.ts`, which
+  // is exactly right: there is no key to assert arrives.
+  {
+    id: 'story.characters',
+    label: 'Characters',
+    group: 'story',
+    section: 1,
+    scope: 'global',
+    hint: 'How many routes meet each character, and which routes bring several together',
+  },
   {
     id: 'story.index',
     label: 'Cast & Settings',
