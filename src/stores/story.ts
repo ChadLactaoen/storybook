@@ -4,7 +4,7 @@ import * as M from '../lib/doc/mutations'
 import { serializeDoc } from '../lib/doc/serialize'
 import { clearLocal, loadLocal, localMeta, saveLocal } from '../lib/doc/storage'
 import type { SavedMeta } from '../lib/doc/storage'
-import { buildLink } from '../lib/harlowe/links'
+import { buildLink, parseLinks } from '../lib/harlowe/links'
 import { deriveGraph } from '../lib/graph/derive'
 import { fnv1a } from '../lib/graph/hash'
 import { isPhantomId } from '../lib/graph/constants'
@@ -110,6 +110,15 @@ function syncHistory(): void {
  */
 const layout = shallowRef<LayoutResult>(markRaw(layoutStory(state.doc)))
 const layoutVersion = shallowRef(0)
+/**
+ * Bumps when any passage body changes, whether or not the change moved a link.
+ *
+ * Separate from `layoutVersion` because the two now answer different questions:
+ * layout is memoized on the story's *structure*, so a prose-only edit leaves it
+ * alone, while a macro lives in prose and changes what the story means.
+ */
+const bodyVersion = shallowRef(0)
+let lastBodyKey = ''
 /** Bumps when a whole document is installed: new, load, import, discard. */
 const generation = shallowRef(0)
 
@@ -124,6 +133,25 @@ const generation = shallowRef(0)
  * only because it reaches `NodeLayout.title` and the diagnostic strings, both of
  * which live inside the memoized result.
  *
+ * What the key carries for a body is its *link signature*, not its prose. That
+ * is invariant 2 read precisely: body text is the source of truth for structure
+ * **through its `[[...]]` links**, so layout depends on a body only by way of
+ * `parseLinks`. Hashing the whole body instead made every character typed a
+ * structural change, which on a few hundred passages meant a full Sugiyama pass
+ * per keystroke. Typing prose now misses nothing and draws nothing.
+ *
+ * The signature carries the label as well as the target, because a label is not
+ * cosmetic here: it names a phantom (`derive.ts`), so it reaches `NodeLayout.title`
+ * on the dashed card, `EdgeLayout.label` on the wire, and — via
+ * `createFromPhantom` — the title written into the document when that phantom is
+ * made real. Ordinals are positional, so the ordered list carries them.
+ *
+ * Spans are deliberately absent, and that is the whole reason `DerivedEdge` no
+ * longer has one: typing a character ahead of a link shifts every span after it
+ * while the memo rightly holds, so a retained span would be a wrong offset into
+ * text that has moved. Anything wanting a span parses the live body, which is
+ * what `macros.ts` and `run.ts` already do.
+ *
  * Fields join on NUL rather than a space so that `{code:'A B', title:'C'}` and
  * `{code:'A', title:'B C'}` cannot hash alike now that codes are author-typed.
  */
@@ -131,12 +159,55 @@ let lastLayoutKey = ''
 
 const KEY_SEP = '\u0000'
 
-function layoutKey(doc: StoryDoc): string {
-  const parts = doc.nodes.map((n) =>
-    [n.id, n.code, n.title, n.levelOffset, n.body].join(KEY_SEP),
-  )
+/**
+ * Per-node cache of the two derived strings `setDoc` needs, keyed on the body
+ * they were read from.
+ *
+ * A hit is `entry.body === n.body` — a pointer compare, since a mutation copies
+ * the string reference rather than the string, so only the edited passage is
+ * ever re-parsed. The id is a bucket and not the identity: the body compare is
+ * what makes it sound, so ids reused across a new or imported story cannot
+ * poison it. Rebuilt fresh each pass so it prunes deleted passages instead of
+ * growing for the life of the tab.
+ */
+interface BodyFacts {
+  body: string
+  links: string
+  hash: string
+}
+
+let bodyFacts = new Map<string, BodyFacts>()
+
+function readBodies(doc: StoryDoc): { key: string; bodies: string } {
+  const next = new Map<string, BodyFacts>()
+  const parts: string[] = []
+  const hashes: string[] = []
+
+  for (const n of doc.nodes) {
+    const hit = bodyFacts.get(n.id)
+    let facts: BodyFacts
+    if (hit !== undefined && hit.body === n.body) {
+      facts = hit
+    } else {
+      facts = {
+        body: n.body,
+        // `label` is spelled out rather than coalesced, so a null label and an
+        // empty one stay distinguishable: the signature is a function of the
+        // parse, not of how today's templates happen to render it.
+        links: parseLinks(n.body)
+          .map((l) => `${l.target}${KEY_SEP}${l.label === null ? '\u0001' : l.label}`)
+          .join('\u0002'),
+        hash: fnv1a(n.body),
+      }
+    }
+    next.set(n.id, facts)
+    parts.push([n.id, n.code, n.title, n.levelOffset, facts.links].join(KEY_SEP))
+    hashes.push(n.id + KEY_SEP + facts.hash)
+  }
+
+  bodyFacts = next
   parts.push(String(doc.startNodeId))
-  return fnv1a(parts.join('|'))
+  return { key: fnv1a(parts.join('|')), bodies: fnv1a(hashes.join('|')) }
 }
 
 /**
@@ -154,7 +225,18 @@ function layoutKey(doc: StoryDoc): string {
  */
 function setDoc(next: StoryDoc, precomputed?: LayoutResult): void {
   state.doc = next
-  const key = layoutKey(next)
+  const { key, bodies } = readBodies(next)
+
+  // Bumped *above* the early return, and that placement is load-bearing. Now
+  // that a prose edit can leave the layout key untouched, anything memoized on
+  // `layoutVersion` alone would sit on a key that never moves and hand back an
+  // answer read from prose that has since changed. `gates` is the one that
+  // matters, and this is what it keys on.
+  if (bodies !== lastBodyKey) {
+    lastBodyKey = bodies
+    bodyVersion.value++
+  }
+
   if (key === lastLayoutKey) return
   lastLayoutKey = key
   layout.value = markRaw(precomputed ?? layoutStory(next))
@@ -188,8 +270,33 @@ watch(
 
 /* ---------- history ---------- */
 
+/**
+ * The passage whose typing the top of the undo stack belongs to, and when the
+ * last character of it arrived. Null whenever the run has been broken.
+ */
+let typingRun: { id: string; at: number } | null = null
+
+/** How long a pause ends a run of typing and starts a new undo entry. */
+const TYPING_RUN_MS = 800
+
+/**
+ * Any action that is not another character in the same passage ends the run.
+ *
+ * Called from `commit`, so every other mutation breaks it without having to know
+ * this exists, and from the places where nothing is committed but the author has
+ * plainly moved on: changing the selection, or leaving the editor.
+ */
+function endTypingRun(): void {
+  typingRun = null
+}
+
 function commit(next: StoryDoc, precomputed?: LayoutResult): void {
   if (next === state.doc) return
+  endTypingRun()
+  pushHistory(next, precomputed)
+}
+
+function pushHistory(next: StoryDoc, precomputed?: LayoutResult): void {
   undoStack.push(state.doc)
   if (undoStack.length > HISTORY_LIMIT) undoStack.shift()
   redoStack.length = 0
@@ -197,7 +304,38 @@ function commit(next: StoryDoc, precomputed?: LayoutResult): void {
   setDoc(next, precomputed)
 }
 
+/**
+ * Commit a keystroke, folding a continuous run of them into one undo entry.
+ *
+ * One entry per character made Cmd Z almost useless — it walked back through a
+ * paragraph a letter at a time — and filled the hundred-deep history with a
+ * hundred copies of one sentence being typed, so an actual structural change
+ * fell off the end long before the author thought to reach for it.
+ *
+ * Folding means *not* pushing: the entry already on the stack is the document as
+ * it stood before the run began, which is exactly what one undo should restore.
+ * A run belongs to one passage and is broken by a pause, by any other mutation
+ * (`commit` does that for free), and by leaving or reselecting — so undo can
+ * never swallow something that was not typing.
+ */
+function commitTyping(next: StoryDoc, id: string): void {
+  if (next === state.doc) return
+  const now = Date.now()
+  const continuing = typingRun !== null && typingRun.id === id && now - typingRun.at < TYPING_RUN_MS
+
+  if (continuing) {
+    // Redo is still dead — this is a new edit, not a step through history.
+    redoStack.length = 0
+    syncHistory()
+    setDoc(next)
+  } else {
+    pushHistory(next)
+  }
+  typingRun = { id, at: now }
+}
+
 export function undo(): void {
+  endTypingRun()
   const prev = undoStack.pop()
   if (!prev) return
   redoStack.push(state.doc)
@@ -208,6 +346,7 @@ export function undo(): void {
 }
 
 export function redo(): void {
+  endTypingRun()
   const next = redoStack.pop()
   if (!next) return
   undoStack.push(state.doc)
@@ -314,6 +453,10 @@ export function discardStory(): void {
 
 /** The one place both selection fields are written, so the invariant stays local. */
 function setSelection(ids: readonly string[], anchor: string | null): void {
+  // Moving the selection ends a run of typing, so the next character starts its
+  // own undo entry rather than joining one belonging to a passage the author has
+  // already left.
+  endTypingRun()
   state.selectedIds = [...new Set(ids)]
   state.selectedId = anchor
 }
@@ -503,7 +646,7 @@ export function rename(id: string, title: string): void {
 }
 
 export function editBody(id: string, body: string): void {
-  commit(M.setBody(state.doc, id, body))
+  commitTyping(M.setBody(state.doc, id, body), id)
 }
 
 /**
@@ -516,6 +659,10 @@ export function editBody(id: string, body: string): void {
  * dangling. Lands as one undo step rather than one per keystroke.
  */
 export function resolveBody(id: string, bodyAtFocus: string): void {
+  // Explicitly, not by way of `commit`: leaving the editor ends the run whether
+  // or not there was a link to bind, and `commit` returns early when there was
+  // nothing to do.
+  endTypingRun()
   commit(M.resolveLinks(state.doc, id, bodyAtFocus, inheritance()))
 }
 
@@ -1067,7 +1214,63 @@ export const canNudgeSelectedDown = computed(() => selectedOffset.value === 0)
 export const canNudgeSelectedUp = computed(() => selectedOffset.value === 1)
 
 export const tags = computed(() => M.allTags(state.doc))
-export const tagColors = computed(() => M.tagColorMap(state.doc))
+
+/**
+ * Wrap a per-passage map so it keeps its identity while its contents do not
+ * change.
+ *
+ * These maps go to every card as props, and Vue compares props by reference — so
+ * a freshly built map, however identical, re-renders the whole canvas. Rebuilding
+ * one is cheap; re-rendering several hundred cards and a thousand edge paths
+ * because of it is not, and that was the second half of the typing cost, the
+ * half a memoized layout alone could not reach.
+ *
+ * Comparing values by identity is what makes this exact rather than approximate,
+ * and it is `replaceNode`'s sharing that makes identity meaningful: a passage
+ * untouched by an edit is the same object with the same `tags` array, so an
+ * unchanged entry compares equal without anyone having to look inside it.
+ *
+ * Same shape as the `cardSlugs` memo below, and kept for the same reason.
+ */
+function stable<V>(build: () => Map<string, V>): () => Map<string, V> {
+  let last = new Map<string, V>()
+  return () => {
+    const next = build()
+    if (next.size === last.size) {
+      let same = true
+      for (const [k, v] of next) {
+        if (last.get(k) !== v) {
+          same = false
+          break
+        }
+      }
+      if (same) return last
+    }
+    last = next
+    return last
+  }
+}
+
+export const tagColors = computed(stable(() => M.tagColorMap(state.doc)))
+
+/**
+ * The three per-passage fields the canvas draws that layout knows nothing about.
+ *
+ * They live here rather than in `App.vue` so they can be memoized the way
+ * everything else the cards read is. `isEnding`, `state` and `tags` are all
+ * deliberately absent from `layoutKey` — they move nothing on the canvas — which
+ * is exactly why they have to reach the card as their own props rather than off
+ * `NodeLayout`.
+ */
+export const cardStates = computed(
+  stable(() => new Map(state.doc.nodes.map((n) => [n.id, n.state]))),
+)
+export const cardTags = computed(
+  stable(() => new Map(state.doc.nodes.map((n) => [n.id, n.tags]))),
+)
+export const cardEndings = computed(
+  stable(() => new Map(state.doc.nodes.map((n) => [n.id, n.isEnding]))),
+)
 
 /** The cast roster itself, for the picker. */
 export const roster = computed(() => state.doc.characters)
@@ -1145,13 +1348,23 @@ let lastGates = new Map<string, GateEntry>()
  * `pathsFrom`, and safe for the same reason — layout is memoized on exactly the
  * fields the graph is built from, so the graph it retains is never stale.
  *
- * Memoized on `layoutVersion` alone, because this reads `state.doc`, which
+ * Memoized rather than recomputed, because this reads `state.doc`, which
  * *every* edit replaces. Without the key a tag edit — which reaches no macro —
  * would re-parse every body in the story. No reset is needed on a new story:
- * `layoutVersion` only ever increments, so a stale key cannot be matched again.
+ * both counters only ever increment, so a stale key cannot be matched again.
+ *
+ * The key needs **both** halves, and each covers a case the other cannot see.
+ * `gatesOf` reads the graph, the back edges and every node's level, so a bare
+ * `levelOffset` nudge moves a gate without touching a body. `readStoryMacros`
+ * reads bodies, and since layout is memoized on the story's structure, editing
+ * `(set: $key to "yes")` into `"no"` changes no link and so moves no layout — on
+ * `layoutVersion` alone this computed would re-run and then hand back the
+ * previous map, stale and recomputed at once, which is the trap `runningSlugs`
+ * documents. A gate that outlived its macro is the confident lie invariant 4
+ * exists to prevent, so it is worth two counters to avoid.
  */
 export const gates = computed(() => {
-  const key = String(layoutVersion.value)
+  const key = layoutVersion.value + '|' + bodyVersion.value
   if (key === lastGateKey) return lastGates
   lastGateKey = key
 
@@ -1417,5 +1630,5 @@ export const storyJson = computed(() => serializeDoc(state.doc))
 export const canUndo = computed(() => undoDepth.value > 0)
 export const canRedo = computed(() => redoDepth.value > 0)
 
-export { state, layout, layoutVersion, generation }
+export { state, layout, layoutVersion, bodyVersion, generation }
 export type { SavedMeta }

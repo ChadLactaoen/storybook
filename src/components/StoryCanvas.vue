@@ -4,6 +4,16 @@ import type { EdgeLayout, LayoutResult, NodeLayout } from '../lib/graph/types'
 import type { NodeState, SelectMode, TagColor } from '../types/story'
 import StoryNodeCard from './StoryNodeCard.vue'
 
+/**
+ * One shared empty list for every card with no tags — a phantom always, and most
+ * passages in most drafts.
+ *
+ * A `?? []` in the template looks like it costs nothing, but it allocates a new
+ * array per card per render, and a new array is a changed prop: it would hand
+ * back exactly the re-render the memos upstream exist to avoid.
+ */
+const NO_TAGS: string[] = []
+
 const props = defineProps<{
   layout: LayoutResult
   transform: string
@@ -187,7 +197,7 @@ const levelLabels = computed(() =>
         :key="node.id"
         :node="node"
         :state="stateOf.get(node.id) ?? null"
-        :tags="tagsOf.get(node.id) ?? []"
+        :tags="tagsOf.get(node.id) ?? NO_TAGS"
         :run="runOf.get(node.id) ?? ''"
         :tag-colors="tagColors"
         :selected="inSelection(node.id)"

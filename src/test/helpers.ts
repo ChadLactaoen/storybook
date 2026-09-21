@@ -128,3 +128,19 @@ export function minCardGap(nodes: readonly { x: number; width: number; layer: nu
   }
   return min
 }
+
+/**
+ * Recursively freeze a document, so any mutation that writes in place throws.
+ *
+ * `Object.freeze` is shallow, and the aliasing bug this guards against is never
+ * at the top level — it is a `tags` array or a relation list reached three
+ * fields down. Vitest runs ESM, so strict mode turns a write to a frozen object
+ * into a `TypeError` rather than the silent no-op it would be in sloppy mode,
+ * which is the whole reason this is a usable check.
+ */
+export function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value
+  Object.freeze(value)
+  for (const v of Object.values(value as Record<string, unknown>)) deepFreeze(v)
+  return value
+}

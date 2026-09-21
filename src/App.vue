@@ -23,7 +23,6 @@ import { isPhantomId } from './lib/graph/constants'
 import * as play from './stores/play'
 import { prefs } from './stores/prefs'
 import * as store from './stores/story'
-import type { NodeState } from './types/story'
 import { NODE_STATES } from './types/story'
 
 const canvasEl = ref<HTMLElement | null>(null)
@@ -166,16 +165,14 @@ const vp = useViewport(canvasEl)
 
 const layout = store.layout
 
-const stateOf = computed(
-  () => new Map<string, NodeState>(store.state.doc.nodes.map((n) => [n.id, n.state])),
-)
-const tagsOf = computed(
-  () => new Map<string, string[]>(store.state.doc.nodes.map((n) => [n.id, n.tags])),
-)
-/** Phantoms are absent by construction, so the card falls back to `false`. */
-const isEndingOf = computed(
-  () => new Map<string, boolean>(store.state.doc.nodes.map((n) => [n.id, n.isEnding])),
-)
+// The three fields the cards draw that layout knows nothing about. They are
+// memoized in the store so they keep their identity across an edit that did not
+// touch them — built here, a fresh Map per keystroke re-rendered every card,
+// whatever the layout memo said. Phantoms are absent from all three by
+// construction, so each card falls back.
+const stateOf = store.cardStates
+const tagsOf = store.cardTags
+const isEndingOf = store.cardEndings
 
 function fit() {
   vp.zoomToFit(layout.value.bounds)

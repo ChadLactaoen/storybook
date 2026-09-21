@@ -161,18 +161,53 @@ lint — only when the panel asks. `README.md` has a per-module table.
 
 ### Rules that are load-bearing
 
-**Every mutation returns a fresh document.** `mutations.ts` is pure: nothing there reads
-layout, and layout never writes back. Its `clone()` must copy every array- and
-object-valued field — a missed one aliases across undo-history entries, so editing the
-present silently rewrites the past and only surfaces as a broken undo much later. Store
-functions call `commit()`, which pushes onto the undo stack (limit 100) and clears redo.
+**Every mutation returns a fresh document, and none writes to an object it did not
+itself create.** `mutations.ts` is pure: nothing there reads layout, and layout never
+writes back. The second clause is the precise form of the rule, and it is narrower than
+"copy everything" on purpose. `clone()` is the one way to acquire writable objects — it
+must copy every array- and object-valued field, and the mutations that genuinely do
+assign in place (`setTagColor`, `renameTag`, `renameSetting`, `recodeAll`, the roster
+edits) all call it first and write only onto what it handed back. Anything reached from
+the *input* document is read-only, because that document is also sitting on the undo
+stack: aliasing it means editing the present silently rewrites the past, and only
+surfaces as a broken undo much later.
+
+That distinction is what lets `replaceNode` share. Patching one passage copies the
+document shell, the nodes array and the one node; every untouched passage, and every
+`tags` array on it, keeps its identity. Cloning wholesale instead meant the canvas could
+not tell a keystroke from a rewrite — Vue compares props by reference, so all several
+hundred cards re-rendered for one character typed in one body, whatever the layout memo
+said. `doc.test.ts` deep-freezes a document and runs every mutation against it, so a
+future caller that patches in place fails loudly instead of quietly corrupting history.
+
+Store functions call `commit()`, which pushes onto the undo stack (limit 100) and clears
+redo. `editBody` is the one exception: it goes through `commitTyping`, which folds a
+continuous run of keystrokes in one passage into a single entry. A run is broken by a
+pause, by leaving or reselecting, and by any other mutation (`commit` ends it for free),
+so undo can never swallow something that was not typing. One entry per character made
+Cmd Z walk back through a paragraph a letter at a time, and filled the hundred-deep
+history with one sentence being typed — so the structural change worth undoing had
+already fallen off the end.
 
 **Layout must be deterministic.** `layout(doc)` must equal `layout(shuffle(doc.nodes))`;
 a property test asserts it. That requires: `Map` over plain objects, canonical iteration
 arrays instead of `Map.keys()`, codepoint comparison instead of `localeCompare` (ICU
 version varies by host), total comparators that never lean on sort stability, fixed
 iteration budgets, no transcendentals (see `EQUILATERAL_FACTOR` in `graph/constants.ts`,
-a literal rather than `Math.sqrt(3)/2`), and no DOM text measurement. Card geometry is
+a literal rather than `Math.sqrt(3)/2`), and no DOM text measurement.
+
+**`transpose` decides on a delta, and that is the same comparison, not an approximation
+of it.** Because the two nodes it tests are *adjacent*, nothing sits between them, so
+swapping them leaves the relative order of either against every third node exactly as it
+was — and a crossing is a function of two relative orders. Only the pair itself flips, so
+only crossings between an edge at one and an edge at the other can change: `after -
+before` is exactly `c_vu - c_uv`, and the strict `<` accepts and refuses precisely what
+the full recount did, ties included. Recounting the whole layer instead made
+`countBilayerCrossings` run some 43,000 times per layout on a 224-passage story rather
+than 273, which was 98% of the pipeline. Two details are load-bearing: neighbours absent
+from the adjacent layer are dropped, matching what `countBilayerCrossings` does with a
+target it cannot place; and duplicates are kept, because two links to one passage are two
+edges that cross independently. Card geometry is
 fixed in `constants.ts`.
 
 **Serialization is canonical.** `serializeDoc` emits keys in fixed order with every array
@@ -191,11 +226,36 @@ Mira→Tam records only how Mira regards Tam; the reverse is a separate entry.
 layout costs more than computing it. `setDoc` recomputes layout synchronously (not in a
 watcher, which would flush a tick late and leave `layout` describing the previous
 document) and memoizes on a hash of only the fields layout depends on — id, code, title,
-`levelOffset`, body, `startNodeId` — so tag, state and story-notes edits are pure
-re-renders. `code` is in
+`levelOffset`, `startNodeId`, and each body's **link signature** — so tag, state and
+story-notes edits are pure re-renders. `code` is in
 there because links resolve against it; leave it out and a recode goes unnoticed while
 every inbound edge re-resolves to a phantom.
 `layoutVersion` is a stale-result guard so layout can later move into a Web Worker.
+
+The signature, not the body, is invariant 2 read precisely: prose is the source of truth
+for structure **through its `[[...]]` links**, so layout depends on a body only by way of
+`parseLinks`. Hashing the whole body made every character typed a structural change — a
+full Sugiyama pass, and a full canvas re-render, per keystroke, which on a few hundred
+passages is the difference between typing and waiting. The signature is the ordered list
+of each link's target *and label*: a label names a phantom, so it reaches the dashed
+card's title, the wire's caption, and the title written into the document when that
+phantom is made real. It carries no spans, and `DerivedEdge` no longer has one — the memo
+now rightly holds across a prose edit, and a span is an offset into text that edit has
+moved. Anything wanting one parses the live body, as `macros.ts` and `run.ts` already do.
+`DerivedGraph.stateOf` is gone for the same reason: `state` was never in the key.
+
+The counterpart is `bodyVersion`, bumped in `setDoc` **above** the early return and
+whenever any body changes at all. That placement is load-bearing: now that a prose edit
+can leave the layout key untouched, anything memoized on `layoutVersion` alone would sit
+on a key that never moves and hand back an answer read from prose that has since changed.
+
+The card prop maps — `tagColors`, `cardStates`, `cardTags`, `cardEndings` — are memoized
+on their own contents so they keep their identity when nothing in them moved. They go to
+every card as props, so a freshly built Map, however identical, re-renders the whole
+canvas; that is the half of the typing cost a memoized layout alone could not reach. They
+live in the store rather than `App.vue` for that reason. `StoryCanvas` uses a shared
+`NO_TAGS` constant rather than `?? []`, which would allocate a new array per untagged
+card per render and undo the same work.
 
 **A recode is planned in `graph/` and applied in `doc/`.** `planRecode` (`graph/recode.ts`)
 is another of those analyses, like `paths.ts` and `gates.ts`: it reads
@@ -409,10 +469,18 @@ occupants only take a share of the height (`flex: 1 1 0`).
 nothing on the canvas, so the macro read is wanted only when something asks. The `gates`
 computed in the store reads the graph `LayoutResult` already retains (`graph`,
 `backEdges`) plus per-node `level`, exactly as `pathsFrom` does, and memoizes on
-`layoutVersion` alone — guards are a pure function of bodies, and bodies are already in
-`layoutKey`. Move it into `layoutStory` and every keystroke re-parses every macro in the
-story. `layout.test.ts` asserts notes do not perturb geometry, and `workflow.test.ts`
-asserts a note edit leaves `stats.hash` untouched.
+`layoutVersion` **and** `bodyVersion`. Move it into `layoutStory` and every keystroke
+re-parses every macro in the story. `layout.test.ts` asserts notes do not perturb
+geometry, and `workflow.test.ts` asserts a note edit leaves `stats.hash` untouched.
+
+Both halves of that key are needed, and each covers a case the other cannot see.
+`gatesOf` reads the graph, the back edges and every node's level, so a bare `levelOffset`
+nudge moves a gate without touching a body. `readStoryMacros` reads bodies — and since
+layout is now memoized on structure, editing `(set: $key to "yes")` into `"no"` changes
+no link and so moves no layout. On `layoutVersion` alone this computed would re-run and
+then hand back the previous map: stale and recomputed at once, the exact trap
+`runningSlugs` documents. A gate that outlived its macro is the confident lie invariant 4
+exists to prevent, which is worth a second counter to avoid.
 
 **The macro layer must not depend on the graph.** `readStoryMacros` builds its edge keys
 as `${id}|${ordinal}` to match `EdgeId` (`derive.ts`, the only place one is constructed).
@@ -442,6 +510,7 @@ route edge) and `compat` (save files that predate a field),
 `macros` (reading `(set:)` and `(if:)` out of a body, and the spans and chains an
 evaluator needs), `run` (the reader's evaluator — what renders, what is hidden, and what
 must never run),
+`perf` (the typing budget — see below),
 `workflow` (end-to-end walkthroughs), `regressions`, and `render` (mounts the real
 component tree in jsdom and fails on any Vue warning — the only check that catches
 template-only mistakes, which `vue-tsc` cannot see).
@@ -452,3 +521,21 @@ showed it. That disclosure is gone — the Code field it hid now sits plainly on
 inspector's Advanced tab, and no `<details>` remains in the app — but the lesson it
 paid for stands. Prefer a real look for anything whose failure mode is "renders, but
 reads wrong".
+
+`perf.test.ts` defends the typing budget against a 224-passage, 16-level fixture
+(`fixtures/big-story.ts`). Its assertions are counting ones, not timings: fifty prose
+keystrokes must call `layoutStory` **zero** times, a keystroke that completes a link must
+call it exactly once. A wall-clock budget is there too, but coarse, as a smoke check.
+
+The fixture has to be shaped like a story rather than a tree, and that is the point of
+it. `workflow.test.ts`'s 255-node budget test builds a *complete binary tree*, whose DFS
+preorder seed yields zero crossings — so `orderComponent` returns at its early exit and
+the ordering sweeps, the stage that costs the most by an order of magnitude, never run at
+all. It measured everything except the expensive part for as long as it existed. The perf
+fixture therefore branches with re-merges, skip links and a few loops back, and asserts
+`stats.crossings > 0` so it cannot quietly degenerate into the same blind spot.
+
+Assert the rendered strings, not `stats.hash`, when what changed is a caption: the hash
+covers node coordinates and edge path data only, so a label left stale by a too-narrow
+memo key passes every hash-equality test in the suite while the canvas shows the wrong
+thing.

@@ -1,4 +1,4 @@
-import type { NodeId, StoryDoc, StoryNode } from '../../types/story'
+import type { NodeId, StoryDoc } from '../../types/story'
 import { compareNodes, compareStr } from '../../types/story'
 import { parseLinks } from '../harlowe/links'
 import { PHANTOM_PREFIX } from './constants'
@@ -55,7 +55,6 @@ export function deriveGraph(doc: StoryDoc): DerivedGraph {
         targetCode: link.target,
         label: link.label,
         ordinal: link.ordinal,
-        span: link.span,
         dangling,
         selfLoop: targetId === node.id,
       })
@@ -69,14 +68,12 @@ export function deriveGraph(doc: StoryDoc): DerivedGraph {
   const byId = new Map<NodeId, GraphNode>()
   const codeOf = new Map<NodeId, string>()
   const titleOf = new Map<NodeId, string>()
-  const stateOf = new Map<NodeId, StoryNode['state'] | null>()
   const ids: NodeId[] = []
 
   for (const n of nodes) {
     byId.set(n.id, n)
     codeOf.set(n.id, n.code)
     titleOf.set(n.id, n.title)
-    stateOf.set(n.id, n.state)
     ids.push(n.id)
   }
   for (const p of phantoms) {
@@ -84,7 +81,6 @@ export function deriveGraph(doc: StoryDoc): DerivedGraph {
     codeOf.set(p.id, p.code)
     // A phantom has no title, only the display text some link proposed for it.
     titleOf.set(p.id, p.label ?? '')
-    stateOf.set(p.id, null)
     ids.push(p.id)
   }
 
@@ -115,7 +111,6 @@ export function deriveGraph(doc: StoryDoc): DerivedGraph {
     inAdj,
     codeOf,
     titleOf,
-    stateOf,
   }
 }
 

@@ -161,7 +161,22 @@ function sortByMedian(layer: LKey[], median: Map<LKey, number>): void {
   for (let i = 0; i < layer.length; i++) layer[i] = out[i]!
 }
 
-/** Adjacent swaps that strictly reduce local crossings, to a fixed pass cap. */
+/**
+ * Adjacent swaps that strictly reduce local crossings, to a fixed pass cap.
+ *
+ * The decision is made on a *delta* rather than by recounting the layer. Because
+ * `u` and `v` are adjacent, nothing sits between them, so swapping the two
+ * leaves the relative order of either against every third node exactly as it
+ * was — and a crossing is a function of two relative orders. Only the pair
+ * `(u, v)` flips, so only crossings between an edge at `u` and an edge at `v`
+ * can change, and the full recount was answering a question two short lists
+ * already answer.
+ *
+ * That is not a heuristic standing in for the real count, it is the same
+ * comparison: `after - before` is exactly `c_vu - c_uv`, so the strict `<` here
+ * accepts and refuses precisely what `after < before` did, ties included. The
+ * drawing, and therefore `stats.hash`, is unchanged.
+ */
 function transpose(lg: LayeredGraph, layers: LKey[][], cfg: LayoutConfig): void {
   const widest = layers.reduce((m, l) => Math.max(m, l.length), 0)
   // The first thing that blows up on a pathological story; degrade to slightly
@@ -172,14 +187,21 @@ function transpose(lg: LayeredGraph, layers: LKey[][], cfg: LayoutConfig): void 
     let improved = false
     for (let l = 0; l < layers.length; l++) {
       const layer = layers[l]!
+      if (layer.length < 2) continue
+
+      // Built once per layer: a swap inside layer `l` moves nothing in `l - 1`
+      // or `l + 1`, so no neighbour's position shifts underneath the scan.
+      const up = neighbourPositions(lg, layer, layers[l - 1], 'segsIn')
+      const down = neighbourPositions(lg, layer, layers[l + 1], 'segsOut')
+
       for (let i = 0; i + 1 < layer.length; i++) {
-        const before = localCrossings(lg, layers, l)
-        ;[layer[i], layer[i + 1]] = [layer[i + 1]!, layer[i]!]
-        const after = localCrossings(lg, layers, l)
-        if (after < before) {
+        const a = layer[i]!
+        const b = layer[i + 1]!
+        const u = pairCrossings(up.get(a)!, up.get(b)!)
+        const d = pairCrossings(down.get(a)!, down.get(b)!)
+        if (u.swapped + d.swapped < u.asIs + d.asIs) {
+          ;[layer[i], layer[i + 1]] = [b, a]
           improved = true
-        } else {
-          ;[layer[i], layer[i + 1]] = [layer[i + 1]!, layer[i]!]
         }
       }
     }
@@ -187,9 +209,62 @@ function transpose(lg: LayeredGraph, layers: LKey[][], cfg: LayoutConfig): void 
   }
 }
 
-function localCrossings(lg: LayeredGraph, layers: LKey[][], l: number): number {
-  let total = 0
-  if (l > 0) total += countBilayerCrossings(layers[l - 1]!, layers[l]!, lg)
-  if (l + 1 < layers.length) total += countBilayerCrossings(layers[l]!, layers[l + 1]!, lg)
-  return total
+const NO_POSITIONS: number[] = []
+
+/**
+ * Each node's neighbour positions in the adjacent layer, sorted.
+ *
+ * Neighbours absent from that layer are dropped, matching what
+ * `countBilayerCrossings` does with a target it cannot place — otherwise the
+ * delta would count a crossing against a node that is not there. Duplicates are
+ * kept: two links to the same passage are two edges and cross independently.
+ */
+function neighbourPositions(
+  lg: LayeredGraph,
+  layer: readonly LKey[],
+  adjacent: readonly LKey[] | undefined,
+  dir: 'segsIn' | 'segsOut',
+): Map<LKey, number[]> {
+  const out = new Map<LKey, number[]>()
+  if (adjacent === undefined) {
+    for (const k of layer) out.set(k, NO_POSITIONS)
+    return out
+  }
+  const pos = positionsOf(adjacent)
+  for (const k of layer) {
+    const ps: number[] = []
+    for (const n of lg[dir].get(k) ?? []) {
+      const p = pos.get(n)
+      if (p !== undefined) ps.push(p)
+    }
+    ps.sort((x, y) => x - y)
+    out.set(k, ps)
+  }
+  return out
+}
+
+/**
+ * Crossings between `a`'s edges and `b`'s edges, counted both ways round: with
+ * `a` on the left (`asIs`) and with `b` on the left (`swapped`).
+ *
+ * Both lists are sorted, so one monotonic walk answers both. Equal positions are
+ * a shared neighbour and cross in neither arrangement, which is why the two
+ * pointers straddle the ties rather than either one absorbing them.
+ */
+function pairCrossings(
+  a: readonly number[],
+  b: readonly number[],
+): { asIs: number; swapped: number } {
+  let asIs = 0
+  let swapped = 0
+  let below = 0
+  let atOrBelow = 0
+  for (const q of b) {
+    while (below < a.length && a[below]! < q) below++
+    if (atOrBelow < below) atOrBelow = below
+    while (atOrBelow < a.length && a[atOrBelow]! <= q) atOrBelow++
+    swapped += below
+    asIs += a.length - atOrBelow
+  }
+  return { asIs, swapped }
 }
