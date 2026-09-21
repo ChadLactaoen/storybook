@@ -3,84 +3,89 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as store from '../stores/story'
 import { formatCount } from '../lib/graph/paths'
 import {
-  combineTags,
-  computeTagStats,
-  tagHits,
-  MAX_COMBINED_TAGS,
-  TAG_HIT_LABELS,
-} from '../lib/graph/tags'
+  castHits,
+  combineCast,
+  computeCastStats,
+  CAST_HIT_LABELS,
+  MAX_COMBINED_CHARACTERS,
+} from '../lib/graph/characters'
 import type { CoverageRow } from '../lib/graph/coverage'
 import { nodeLabel } from '../types/story'
 
 const emit = defineEmits<{ close: []; open: [id: string] }>()
 
 /**
- * How much of the story a tag actually covers, computed when asked.
+ * How much of the story a character actually appears in, computed when asked.
  *
- * On demand by construction, the way `StoryStatsPanel` is: the component only
- * exists while the panel is open, so none of this runs during ordinary writing,
- * and a `computed` rather than a snapshot so an edit underneath an open panel
- * is reflected rather than going stale. No memo and no store computed — nothing
- * outside this panel reads these numbers, and a key on `layoutVersion` alone
- * would be the trap `runningSlugs` documents, since `tags` is deliberately not
- * in `layoutKey`.
+ * On demand by construction, the way `TagAnalyzerPanel` and `StoryStatsPanel`
+ * are: the component only exists while the panel is open, so none of this runs
+ * during ordinary writing, and a `computed` rather than a snapshot so an edit
+ * underneath an open panel is reflected rather than going stale. No memo and no
+ * store computed — nothing outside this panel reads these numbers, and a key on
+ * `layoutVersion` alone would be the trap `runningSlugs` documents, since
+ * `characters` is deliberately not in `layoutKey`.
  */
-const s = computed(() => computeTagStats(store.state.doc, store.layout.value))
+const s = computed(() => computeCastStats(store.state.doc, store.layout.value))
 
 const total = computed(() => formatCount(s.value.totalRoutes))
 
-/** Which tags the combination below is about. */
+/** Which characters the combination below is about. */
 const picked = ref<string[]>([])
 
 /**
  * Recomputed only when the pick changes or the document does — but the cost is
- * exponential in the number of tags picked, which is why the analyzer refuses
- * past its own ceiling rather than trusting the checkboxes to stop first.
+ * exponential in the number of characters picked, which is why the analyzer
+ * refuses past its own ceiling rather than trusting the checkboxes to stop
+ * first.
  */
 const combo = computed(() =>
   picked.value.length === 0
     ? null
-    : combineTags(store.state.doc, store.layout.value, picked.value),
+    : combineCast(store.state.doc, store.layout.value, picked.value),
 )
 
 /**
- * How often one tag is collected, alongside the combination above.
+ * How many of one character's passages a route reaches, alongside the
+ * combination above.
  *
- * Only for a single pick: with two tags ticked "twice" has no one meaning —
- * twice each, or twice between them — and a question the panel cannot phrase
- * is one it should not answer. One extra walk, on the same terms as `combo`.
+ * Only for a single pick: with two characters ticked "two passages" has no one
+ * meaning — two each, or two between them — and a question the panel cannot
+ * phrase is one it should not answer. One extra walk, on the same terms as
+ * `combo`.
  */
 const hits = computed(() =>
-  picked.value.length === 1 ? tagHits(store.state.doc, store.layout.value, picked.value[0]!) : null,
+  picked.value.length === 1
+    ? castHits(store.state.doc, store.layout.value, picked.value[0]!)
+    : null,
 )
 
 /**
- * The collected-how-often rows: bucket 1 upwards, which is exactly the routes
- * the row above them already counts, split three ways. They are indented for
- * that reason — the share column would otherwise read as five rows summing to
- * two hundred per cent. Bucket 0 is not among them; it is the "none of these"
- * row, and printing it twice under two names would invite the same addition.
+ * The met-in-how-many rows: bucket 1 upwards, which is exactly the routes the
+ * row above them already counts, split three ways. They are indented for that
+ * reason — the share column would otherwise read as five rows summing to two
+ * hundred per cent. Bucket 0 is not among them; it is the "none of these" row,
+ * and printing it twice under two names would invite the same addition.
  *
- * The labels come from `tags.ts` beside the cap that decides how many buckets
- * there are, so a cap raised on its own cannot leave one unprinted.
+ * The labels come from `characters.ts` beside the cap that decides how many
+ * buckets there are, so a cap raised on its own cannot leave one unprinted.
  */
 const hitRows = computed(() =>
   hits.value === null
     ? []
-    : TAG_HIT_LABELS.map((label, i) => ({
+    : CAST_HIT_LABELS.map((label, i) => ({
         label,
         count: hits.value!.buckets[i + 1]!,
         percent: hits.value!.percents[i + 1]!,
       })),
 )
 
-const atCap = computed(() => picked.value.length >= MAX_COMBINED_TAGS)
+const atCap = computed(() => picked.value.length >= MAX_COMBINED_CHARACTERS)
 
-function toggle(tag: string) {
-  const i = picked.value.indexOf(tag)
+function toggle(name: string) {
+  const i = picked.value.indexOf(name)
   if (i === -1) {
     if (atCap.value) return
-    picked.value.push(tag)
+    picked.value.push(name)
   } else {
     picked.value.splice(i, 1)
   }
@@ -88,28 +93,28 @@ function toggle(tag: string) {
 
 /**
  * Which list is open, and how far it is narrowed. One at a time — this is a
- * readout. `level: null` is the whole tag; a number narrows the list below the
- * breakdown to that level.
+ * readout. `level: null` is the whole character; a number narrows the list
+ * below the breakdown to that level.
  *
  * One ref rather than two, so "one open at a time" is a fact about the value
  * instead of a rule two refs have to be kept consistent with.
  */
-const expanded = ref<{ tag: string; level: number | null } | null>(null)
+const expanded = ref<{ name: string; level: number | null } | null>(null)
 
-function openTag(tag: string) {
-  expanded.value = expanded.value?.tag === tag ? null : { tag, level: null }
+function openRow(name: string) {
+  expanded.value = expanded.value?.name === name ? null : { name, level: null }
 }
 
-/** Clicking the level that is already open widens back out to the whole tag. */
-function pickLevel(tag: string, level: number) {
+/** Clicking the level that is already open widens back out to the whole cast list. */
+function pickLevel(name: string, level: number) {
   const e = expanded.value
-  expanded.value = { tag, level: e?.tag === tag && e.level === level ? null : level }
+  expanded.value = { name, level: e?.name === name && e.level === level ? null : level }
 }
 
-/** The passages the open row is listing: the whole tag, or one level of it. */
+/** The passages the open row is listing: all of them, or one level of them. */
 function entryIds(row: CoverageRow): readonly string[] {
   const e = expanded.value
-  if (!e || e.tag !== row.key) return []
+  if (!e || e.name !== row.key) return []
   if (e.level === null) return row.nodeIds
   return row.levels.find((l) => l.level === e.level)?.nodeIds ?? []
 }
@@ -122,32 +127,40 @@ function passagesOf(ids: readonly string[]) {
   })
 }
 
-function colorOf(tag: string) {
-  return `var(--tag-${store.tagColors.value.get(tag) ?? 'none'})`
-}
-
 /**
- * Show the author the passages the number was about. The canvas filter is
- * already a tag filter, so this is the same question asked of the tree.
+ * Open the character's sheet.
+ *
+ * Closing first is not politeness: the sheet sits at z-index 94 and this panel
+ * at 99, so a sheet opened with the veil still up would render behind it and
+ * the author would be looking at an analyzer that had apparently ignored them.
  */
-function filterBy(tag: string) {
-  store.toggleFilter('tagFilter', tag)
+function openSheet(name: string) {
+  store.openCharacterSheet(name)
   emit('close')
 }
 
 /**
- * Clear a tag out of the story. Offered only on a row carrying no passages, and
- * the mutation refuses anyway if one does — the button is the affordance, not
- * the guarantee.
+ * Show the author the passages the number was about. The canvas filter is
+ * already a character filter, so this is the same question asked of the tree.
+ */
+function filterBy(name: string) {
+  store.toggleFilter('characterFilter', name)
+  emit('close')
+}
+
+/**
+ * Clear a character out of the story. Offered only on a row nobody is cast in —
+ * the button is the affordance, not the guarantee, and `deleteCharacter` drops
+ * them from every cast either way.
  *
  * Dropped from the pick as well, or the combination below would go on asking
- * about a tag the story no longer has.
+ * about a character the story no longer has.
  */
-function remove(tag: string) {
-  store.tagDelete(tag)
-  const i = picked.value.indexOf(tag)
+function remove(name: string) {
+  store.characterDelete(name)
+  const i = picked.value.indexOf(name)
   if (i !== -1) picked.value.splice(i, 1)
-  if (expanded.value?.tag === tag) expanded.value = null
+  if (expanded.value?.name === name) expanded.value = null
 }
 
 /** Revealing a passage is `App`'s job — selecting alone never moves the canvas. */
@@ -166,9 +179,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 <template>
   <div class="veil" @click.self="emit('close')">
-    <div class="sheet" role="dialog" aria-label="Tag analyzer">
+    <div class="sheet" role="dialog" aria-label="Character analyzer">
       <header>
-        <h2>Tags</h2>
+        <h2>Characters</h2>
         <button class="btn btn-ghost btn-icon" title="Close" @click="emit('close')">&times;</button>
       </header>
 
@@ -180,19 +193,19 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           </div>
           <div class="tile">
             <span class="n">{{ s.rows.length }}</span>
-            <span class="k">tags</span>
+            <span class="k">characters</span>
           </div>
           <div class="tile">
             <span class="n">{{ s.coveredPassages }}</span>
-            <span class="k">tagged passages</span>
+            <span class="k">passages with a cast</span>
           </div>
         </section>
 
         <section>
           <h3>Coverage</h3>
           <p v-if="s.rows.length === 0" class="hint">
-            No tags yet. Add one to a passage from the sidebar and it will show up here with
-            the share of routes that run through it.
+            No characters yet. Add one from Cast &amp; Settings, or from a passage&rsquo;s
+            sidebar, and they will show up here with the share of routes that meet them.
           </p>
           <p v-else-if="store.state.doc.startNodeId === null" class="hint">
             No start passage is set, so the story has no routes to measure against. Passage
@@ -202,7 +215,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             <thead>
               <tr>
                 <th class="pick-col" />
-                <th>Tag</th>
+                <th>Character</th>
                 <th class="num">Passages</th>
                 <th class="num">Routes</th>
                 <th class="bar-col" />
@@ -223,9 +236,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                     />
                   </td>
                   <td>
-                    <span class="swatch" :style="{ background: colorOf(row.key) }" />
-                    {{ row.key }}
-                    <span v-if="row.passages === 0" class="tag">unused</span>
+                    <button class="link" title="Open this character's sheet" @click="openSheet(row.key)">
+                      {{ row.key }}
+                    </button>
+                    <span v-if="row.passages === 0" class="tag">uncast</span>
                     <span v-else-if="row.offRoute > 0" class="tag">
                       {{ row.offRoute }} on no route
                     </span>
@@ -234,9 +248,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                     <button
                       v-if="row.passages > 0"
                       class="link"
-                      :aria-expanded="expanded?.tag === row.key"
-                      title="Break this tag down by level"
-                      @click="openTag(row.key)"
+                      :aria-expanded="expanded?.name === row.key"
+                      title="Break this character down by level"
+                      @click="openRow(row.key)"
                     >
                       {{ row.passages }}
                     </button>
@@ -251,7 +265,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                     <button
                       v-if="row.passages > 0"
                       class="link"
-                      title="Filter the tree to this tag"
+                      title="Filter the tree to this character"
                       @click="filterBy(row.key)"
                     >
                       Filter
@@ -259,14 +273,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                     <button
                       v-else
                       class="link danger"
-                      title="Remove this tag from the story"
+                      title="Remove this character from the story"
                       @click="remove(row.key)"
                     >
                       Remove
                     </button>
                   </td>
                 </tr>
-                <tr v-if="expanded?.tag === row.key" class="entries-row">
+                <tr v-if="expanded?.name === row.key" class="entries-row">
                   <td />
                   <td colspan="6">
                     <table class="levels">
@@ -278,9 +292,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                         </tr>
                       </thead>
                       <tbody>
-                        <!-- Only the levels the tag reaches. Every row names its
-                             own level, so a skipped one reads as a gap rather
-                             than as a miscount. -->
+                        <!-- Only the levels this character reaches. Every row
+                             names its own level, so a skipped one reads as a gap
+                             rather than as a miscount. -->
                         <tr
                           v-for="lv in row.levels"
                           :key="lv.level"
@@ -290,7 +304,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                             <button
                               class="link"
                               :aria-pressed="expanded.level === lv.level"
-                              :title="`List the ${row.key} passages on level ${lv.level}`"
+                              :title="`List ${row.key}'s passages on level ${lv.level}`"
                               @click="pickLevel(row.key, lv.level)"
                             >
                               L{{ lv.level }}
@@ -307,7 +321,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
                     <p class="entries-head">
                       <template v-if="expanded.level === null">
-                        All {{ row.passages }} passages tagged <strong>{{ row.key }}</strong>
+                        All {{ row.passages }} passages with
+                        <strong>{{ row.key }}</strong> in the cast
                       </template>
                       <template v-else>
                         <strong>{{ row.key }}</strong> on level {{ expanded.level }}
@@ -328,20 +343,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         <section v-if="combo">
           <h3>Combination</h3>
           <p v-if="combo.overCap" class="hint hint-warn">
-            {{ combo.keys.length }} tags is more than the {{ MAX_COMBINED_TAGS }} this can
-            count &mdash; each one added doubles the work. Untick a few.
+            {{ combo.keys.length }} characters is more than the
+            {{ MAX_COMBINED_CHARACTERS }} this can count &mdash; each one added doubles the
+            work. Untick a few.
           </p>
           <template v-else>
             <div class="chips">
-              <span v-for="t in combo.keys" :key="t" class="chip">
-                <span class="swatch" :style="{ background: colorOf(t) }" />
-                {{ t }}
-              </span>
+              <span v-for="t in combo.keys" :key="t" class="chip">{{ t }}</span>
             </div>
             <table class="rows">
               <tbody>
                 <tr>
-                  <td>Routes collecting <strong>all</strong> of these</td>
+                  <td>Routes meeting <strong>all</strong> of these</td>
                   <td class="num">{{ formatCount(combo.all) }}</td>
                   <td class="bar-col">
                     <span
@@ -365,7 +378,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                   <td class="num">{{ row.percent }}%</td>
                 </tr>
                 <tr>
-                  <td>Routes collecting <strong>none</strong> of these</td>
+                  <td>Routes meeting <strong>none</strong> of these</td>
                   <td class="num">{{ formatCount(combo.none) }}</td>
                   <td class="bar-col">
                     <span
@@ -377,7 +390,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                   <td class="num">{{ combo.nonePercent }}%</td>
                 </tr>
                 <tr class="reconcile">
-                  <td>Passages carrying all of them at once</td>
+                  <td>Passages with all of them in the cast at once</td>
                   <td class="num">{{ combo.passagesAll }}</td>
                   <td class="bar-col" />
                   <td class="num" />
@@ -385,28 +398,30 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
               </tbody>
             </table>
             <p v-if="combo.missing.length > 0" class="hint hint-warn">
-              No passage carries {{ combo.missing.join(', ') }}, so no route can collect it.
+              No passage casts {{ combo.missing.join(', ') }}, so no route can meet them.
             </p>
             <p v-if="hits" class="hint">
               The indented rows split the one above them, counted in passages: a
-              route&rsquo;s tally is how many tagged passages it goes through. A reader
-              who loops back would collect it again, which no route here does.
+              route&rsquo;s tally is how many of this character&rsquo;s scenes it goes
+              through. A reader who loops back would meet them again, which no route here
+              does.
             </p>
             <p v-else class="hint">
-              In any order, on any passages &mdash; they need not be the same one, and a
-              passage carrying two of these satisfies both.
+              Along the same route, in any order &mdash; not necessarily in the same scene.
+              The italic row is that stricter question; tick one character alone to see how
+              much of them a route actually gets.
             </p>
           </template>
         </section>
         <p v-else-if="s.rows.length > 0" class="hint">
-          Tick a tag above to ask how often a route collects it, or two or more to ask
-          how many routes collect all of them.
+          Tick a character above to ask how much of them a route gets, or two or more to
+          ask how many routes meet all of them.
         </p>
       </div>
 
       <footer>
         <span class="muted">
-          Routes stop at an Ending and never take a back edge, so a tag collected only by
+          Routes stop at an Ending and never take a back edge, so a character met only by
           looping back is not counted.
         </span>
         <button class="btn btn-primary" @click="emit('close')">Done</button>
@@ -417,14 +432,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 <style scoped>
 /* Ladder: body 92, sheet 94, help 95, settings 96, recode 97, stats 98,
-   tags / characters 99, reader 100, startup 101. The two analyzers share a rung
-   because they are mutually unreachable: each one's veil covers the menu bar
-   that is the only way to open the other. */
-/* Anchored to the top rather than centred, which is the one place this parts
-   company with the stats sheet. Stats is a readout and never changes height;
-   ticking a tag here grows the sheet by a whole section, and a centred sheet
-   grows in both directions — so the row under the cursor slid up and the next
-   tick landed on the tag below the one aimed at. */
+   tags / characters 99, reader 100, startup 101. The two analyzers share a
+   rung because they are mutually unreachable: each one's veil covers the menu
+   bar that is the only way to open the other. */
+/* Anchored to the top rather than centred, for the reason the tag analyzer is:
+   ticking a character grows the sheet by a whole section, and a centred sheet
+   grows in both directions — so the row under the cursor slides up and the next
+   tick lands on the character below the one aimed at. */
 .veil {
   position: fixed;
   inset: 0;
@@ -595,6 +609,8 @@ tr.sub td:first-child {
   color: var(--text-dim);
 }
 
+/* The stricter question — together in one scene, not merely on one route —
+   which is a passage count and so shares no column with the routes above it. */
 tr.reconcile td {
   color: var(--text-faint);
   font-style: italic;
@@ -608,15 +624,6 @@ tr.entries-row td {
   margin-left: 6px;
   font-size: 10px;
   color: var(--text-faint);
-}
-
-.swatch {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 7px;
-  border-radius: 2px;
-  vertical-align: baseline;
 }
 
 .link {

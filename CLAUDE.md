@@ -142,7 +142,7 @@ dangling on purpose, so it must be captured when the editor takes focus, not re-
 |---|---|
 | `src/types/story.ts` | The document model, its canonical comparators (`compareStr`, `compareNodes`, `compareByName`) and `emptyCharacter` / `emptyDoc` constructors |
 | `src/lib/doc/` | `mutations.ts` (all document edits), `serialize.ts` (canonical JSON + repairing parse), `storage.ts` (localStorage), `file.ts` (import/export) |
-| `src/lib/graph/` | Deterministic Sugiyama pipeline; `layoutStory` in `layout.ts` is the only entry point the UI touches. `paths.ts`, `gates.ts` and `stats.ts` are analyses over the derived graph, called by the store and the panels rather than by `layoutStory` |
+| `src/lib/graph/` | Deterministic Sugiyama pipeline; `layoutStory` in `layout.ts` is the only entry point the UI touches. `paths.ts`, `gates.ts`, `coverage.ts` and `stats.ts` are analyses over the derived graph, called by the store and the panels rather than by `layoutStory` |
 | `src/lib/harlowe/` | `links.ts` (parse/retarget), `highlight.ts` (macros are highlighted, never executed), `macros.ts` (macros are *read* — spans and names — still never executed), `run.ts` (the reader's evaluator: the one place a macro is acted on, in a sandbox that feeds nothing above it) |
 | `src/lib/ui/` | `commands.ts` (the one description of every command — label, group, chord, hint) and `platform.ts` (the one answer to what this keyboard's modifier is called). Pure data: no Vue import, so it tests in `node` |
 | `src/stores/story.ts` | Module-level singleton store: a `reactive` state object plus exported functions and computeds. Not Pinia |
@@ -153,8 +153,9 @@ crossings → xcoord / tidy → routing` (each a module of that name). Alongside
 analyses the pipeline never calls: `paths.ts` counts distinct paths as `BigInt` (both
 forwards from a passage and backwards to one) and owns the one definition of a route edge,
 `gates.ts` reads what the story's `(if:)` macros say about which routes exist, `slugs.ts`
-spells out what a reader would have collected on the way to a passage, `tags.ts` measures
-how much of the story a tag covers, and
+spells out what a reader would have collected on the way to a passage, `coverage.ts`
+measures how much of the story something covers — with `tags.ts` and `characters.ts`
+supplying the vocabulary —
 `recode.ts` reads a numbering off the drawing, and
 `stats.ts` totals the story — words, the routes reaching each ending, and the draft-health
 lint — only when the panel asks. `README.md` has a per-module table.
@@ -332,30 +333,49 @@ links still leaving it needs.
 **Tags do not partition the routes, so a tag is counted by complement.** The endings
 table sums `to(n)` across endings because a route stops at exactly one of them; a route
 may collect the same tag three times, and a per-passage sum counts it three times. So
-`tags.ts` asks the opposite question — `countPathsAvoiding`, the routes that never enter
-any passage carrying the tag — and subtracts. The same primitive answers "which routes
-collect *all* of these", by inclusion–exclusion over which of the chosen tags a route is
-allowed to miss, at one graph walk per subset; the cap on how many tags may be combined
-therefore lives in `tags.ts`, not in the panel, because each tag added doubles the work.
-Two orderings inside `forwardCounter` are load-bearing and both state something false if
-tidied: `blocked` is checked **before** `endings`, or a passage that is both a marked
-ending and carries the tag returns `1n` as an ending before anyone notices it is blocked;
-and `kids` is **never** filtered, because `kids.length === 0` means *a route ends here*, so
-pruning blocked children invents a route that stops in the middle of the story. Like
-`gates.ts`, it runs outside `layoutStory` — a tag moves nothing on the canvas — and it
-needs no store memo at all, because only the panel reads it and the panel only exists
+`coverage.ts` asks the opposite question — `countPathsAvoiding`, the routes that never
+enter any passage carrying the tag — and subtracts. The same primitive answers "which
+routes collect *all* of these", by inclusion–exclusion over which of the chosen tags a
+route is allowed to miss, at one graph walk per subset; the cap on how many may be
+combined therefore lives in the library, not in the panel, because each one added doubles
+the work. Two orderings inside `forwardCounter` are load-bearing and both state something
+false if tidied: `blocked` is checked **before** `endings`, or a passage that is both a
+marked ending and carries the tag returns `1n` as an ending before anyone notices it is
+blocked; and `kids` is **never** filtered, because `kids.length === 0` means *a route ends
+here*, so pruning blocked children invents a route that stops in the middle of the story.
+Like `gates.ts`, it runs outside `layoutStory` — a tag moves nothing on the canvas — and
+it needs no store memo at all, because only the panel reads it and the panel only exists
 while it is open. A memo keyed on `layoutVersion` alone would be the exact trap
 `runningSlugs` documents, since `tags` is deliberately absent from `layoutKey`. What it
 cannot see is a reader looping back: dropping back edges only ever *removes* a
 collection, so "all of these" is a lower bound and "none of these" is an **upper** one —
 the panel names the model rather than letting the number speak for itself.
 
+**The same sentence holds with a character's name in it, which is why the arithmetic is
+written once.** A route through three scenes Mira is cast in meets her three times, so the
+count is the same complement, over the same primitive, erring the same way. `coverage.ts`
+is that arithmetic, generic over one function — `KeysOf`, what a passage carries — and
+`tags.ts` and `characters.ts` are adapters that own nothing but a vocabulary: the list of
+keys, the combination cap, and what the buckets are called. Those three stay per-domain
+deliberately. The key lists disagree (a tag is in use or merely registered; a character is
+on the roster or merely cast), the cap is a tolerance rather than a law, and the labels are
+wording — a tag is collected, a character is met in a passage, and `TAG_HIT_CAP` must go
+on reading off `TAG_HIT_LABELS.length` rather than a shared constant. Everything else —
+the zero-prune that depends on subsets being visited in ascending mask order, the unsigned
+`none`, the phantom-excluded level denominator — exists once, because two copies of it
+would be `forwardTargets` all over again. `characters` is absent from `layoutKey` for the
+same reason `tags` is, so neither analyzer may be memoized on `layoutVersion` alone; both
+panels compute on demand and memoize nowhere. What a route "meeting" a character means is
+reaching a passage they are cast in — presence on the page, not a speaking part, because
+`SceneCharacter` records a name and a scene note and nothing that would grade one
+appearance against another.
+
 How *often* a route collects one tag is the other legal sum, and it is legal for the
 same reason: a route passes through a tag's passages exactly one number of times, so
 never / once / twice / three-or-more partitions the routes the way endings do.
 `countPathsByHits` (`paths.ts`) is `forwardCounter` carrying a small saturating vector
 instead of one `bigint` — `h(n)[j]` is the routes from `n` collecting `j` more marks —
-and `tagHits` (`tags.ts`) is what the panel asks. Two orderings carry over verbatim and
+and `coverageHits` is what the panels ask. Two orderings carry over verbatim and
 fail the same quiet way: the mark is applied **after** the terminal case, so a tagged
 ending files its route at one rather than zero, and `kids` is still never filtered. The
 buckets sum to `countPaths` and `buckets[0]` is `countPathsAvoiding` — both asserted,
@@ -366,8 +386,9 @@ the model rather than letting the count speak for itself, and shows the breakdow
 for a single ticked tag — with two, "twice" has no one meaning. On screen the three
 buckets are indented under "collecting all of these", because they *are* that row split
 three ways: read flat, the share column sums past a hundred per cent. Their labels live
-in `tags.ts` beside the cap, and the cap is `TAG_HIT_LABELS.length`, so a cap raised on
-its own cannot leave a bucket with no row to print it in.
+in the adapter beside the cap, and the cap is that adapter's own
+`…_HIT_LABELS.length`, so a cap raised on its own cannot leave a bucket with no row to
+print it in.
 
 The per-level breakdown on each row is the one sum that *is* legal here, for the reason the
 route counts are not: a passage sits on exactly one level, so levels partition the
@@ -379,9 +400,10 @@ passages on that level, counted off `doc.nodes`, **not** `LayoutResult.levels[].
 that one includes phantoms, and a phantom can never carry a tag, so a level with a broken
 link would report every share on it as smaller than it is. The list is sparse because every
 entry names its own level: a missed level is an absent row, which on a deep story is the
-difference between a breakdown and a column of zeros. This is also the first thing in
-`tags.ts` to read `nodeById` — read, never written, still outside `layoutStory`, and still
-needing no memo, since the panel is the only caller and only exists while it is open.
+difference between a breakdown and a column of zeros. This is also the one thing in
+`coverage.ts` that reads `nodeById` — read, never written, still outside `layoutStory`, and
+still needing no memo, since the panels are the only callers and only exist while they are
+open.
 
 **A command is described once, and `useShortcuts` only dispatches.** `commands.ts` holds
 every command's label, group, chord and hint; the menu bar, the help panel and the
@@ -502,8 +524,10 @@ paths), `scene` (settings, cast), `profile` (character sheet traits and relation
 `gates` (inference from conditional links, and its fail-closed conditions),
 `commands` (the command table, and that every chord it documents is one somebody listens
 for),
-`tags` (routes through a tag, and the combinations of several, against a brute-force
-walk of every route),
+`tags` and `characters` (routes through a tag or meeting a character, and the
+combinations of several, each against its own brute-force walk of every route — two
+oracles rather than one shared helper, since an oracle that agreed with the code under
+test by construction proves nothing),
 `stats` (endings, word counts, the lint, and the line between an authored link and a
 route edge) and `compat` (save files that predate a field),
 `recode` (numbering read off the layout, in both modes),

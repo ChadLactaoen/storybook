@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import AppToolbar from './components/AppToolbar.vue'
 import StoryStatsPanel from './components/StoryStatsPanel.vue'
 import TagAnalyzerPanel from './components/TagAnalyzerPanel.vue'
+import CastAnalyzerPanel from './components/CastAnalyzerPanel.vue'
 import ReaderPanel from './components/ReaderPanel.vue'
 import MiniMap from './components/MiniMap.vue'
 import NodeInspector from './components/NodeInspector.vue'
@@ -46,6 +47,7 @@ const settingsOpen = ref(false)
 const recodeOpen = ref(false)
 const statsOpen = ref(false)
 const tagsOpen = ref(false)
+const castOpen = ref(false)
 
 /**
  * A full-screen modal owns the keyboard while it is up.
@@ -66,6 +68,7 @@ const modalOpen = computed(
     recodeOpen.value ||
     statsOpen.value ||
     tagsOpen.value ||
+    castOpen.value ||
     // The character sheet is a veil like the rest, and its buttons put focus on
     // a `<button>` — so neither `isTyping` nor anything else catches it. Without
     // it here, `n`, Delete and `E` all reach the canvas underneath: pressing E
@@ -301,6 +304,7 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
   'story.play': { run: togglePlay, enabled: store.state.doc.startNodeId !== null },
   'story.stats': { run: () => (statsOpen.value = !statsOpen.value) },
   'story.tags': { run: () => (tagsOpen.value = !tagsOpen.value) },
+  'story.characters': { run: () => (castOpen.value = !castOpen.value) },
   'story.index': { run: toggleIndex, checked: leftPanel.value === 'index' },
   'story.notes': { run: toggleNotes, checked: notesOpen.value },
 
@@ -468,6 +472,7 @@ function dismissNotices() {
     <RecodePanel v-if="recodeOpen" @close="recodeOpen = false" />
     <StoryStatsPanel v-if="statsOpen" @close="statsOpen = false" @open="openPassage" />
     <TagAnalyzerPanel v-if="tagsOpen" @close="tagsOpen = false" @open="openPassage" />
+    <CastAnalyzerPanel v-if="castOpen" @close="castOpen = false" @open="openPassage" />
     <ReaderPanel v-if="play.playOpen.value" @close="play.playClose()" />
 
     <CharacterSheet
