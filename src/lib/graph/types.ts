@@ -1,5 +1,4 @@
-import type { NodeId, NodeState, StoryNode } from '../../types/story'
-import type { Span } from '../harlowe/links'
+import type { NodeId, StoryNode } from '../../types/story'
 
 export type EdgeId = string
 /** Key in the layered graph: `n:<nodeId>` for real nodes, `d:<edgeId>:<layer>` for dummies. */
@@ -16,8 +15,12 @@ export interface DerivedEdge {
   label: string | null
   /** Position of the link within the source body. */
   ordinal: number
-  /** Where the link sits in the source text, for click-to-source. */
-  span: Span
+  // No span here, deliberately — anything wanting one parses the live body, as
+  // `macros.ts` and `run.ts` both do. Layout is memoized on the story's
+  // structure rather than its prose, so this graph is rightly retained across a
+  // prose edit; a span is an offset into text that edit has moved. Typing one
+  // character ahead of a link shifts every span after it, and a retained one
+  // would point into the wrong place while every other field here stayed true.
   /** True when no passage in the document carries the target code. */
   dangling: boolean
   /** sourceId === targetId */
@@ -54,7 +57,10 @@ export interface DerivedGraph {
   codeOf: ReadonlyMap<NodeId, string>
   /** Display title. Empty for a phantom that no link proposed a name for. */
   titleOf: ReadonlyMap<NodeId, string>
-  stateOf: ReadonlyMap<NodeId, NodeState | null>
+  // No `stateOf` here, for the reason `DerivedEdge` carries no span: `state` is
+  // absent from the layout memo key on purpose, so a map of it built here would
+  // go stale the moment anyone ticked a status. The canvas builds its own from
+  // the live document, which is the only place it can be read correctly.
 }
 
 export interface AcyclicResult {

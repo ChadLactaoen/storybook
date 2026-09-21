@@ -24,10 +24,11 @@ import {
   setSlug,
   SLUG_MAX,
 } from '../lib/doc/mutations'
+import * as M from '../lib/doc/mutations'
 import { parseDoc, serializeDoc } from '../lib/doc/serialize'
 import { deriveGraph } from '../lib/graph/derive'
 import { compareNodes, emptyDoc } from '../types/story'
-import { docFrom, shuffled } from './helpers'
+import { deepFreeze, docFrom, shuffled } from './helpers'
 
 describe('passage note', () => {
   const doc = docFrom({ One: ['Two'], Two: [] })
@@ -901,4 +902,94 @@ describe('batch recode', () => {
     expect(serializeDoc(back)).toBe(serializeDoc(next))
     expect(deriveGraph(back).phantoms).toHaveLength(0)
   })
+})
+
+/**
+ * The rule `replaceNode` leans on, made mechanical.
+ *
+ * Mutations are pure by construction, but "pure" here is narrower than it
+ * sounds: several of them *do* assign in place, onto a `clone` they just made.
+ * What must never happen is a write to something reached from the document that
+ * came in, because that document is also sitting on the undo stack — so the
+ * damage shows up as a broken undo long after the edit that caused it, with
+ * nothing to connect the two. Freezing the input turns that into an immediate
+ * throw at the guilty line.
+ */
+describe('no mutation writes to the document it was given', () => {
+  const build = () =>
+    docFrom(
+      { One: ['Two'], Two: ['Three'], Three: [] },
+      {
+        start: 'One',
+        tags: { One: ['red', 'blue'], Two: ['red'] },
+        casts: { One: ['Mira', 'Tam'], Two: ['Mira'] },
+        settings: { One: 'The docks' },
+        notes: { One: 'a note' },
+        slugs: { One: 'A' },
+        endings: ['Three'],
+      },
+    )
+
+  const idOf = (doc: ReturnType<typeof build>, title: string) =>
+    doc.nodes.find((n) => n.title === title)!.id
+
+  /**
+   * One case per mutation shape rather than per export: what is being checked is
+   * that each *kind* of write goes through `clone`, and the shapes are what
+   * differ. A mutation added later that patches in place will fail whichever of
+   * these touches its field.
+   */
+  const cases: [string, (d: ReturnType<typeof build>) => unknown][] = [
+    ['setBody', (d) => M.setBody(d, idOf(d, 'One'), 'new prose [[Go|P2]]')],
+    ['renameNode', (d) => M.renameNode(d, idOf(d, 'One'), 'Renamed')],
+    ['setCode', (d) => M.setCode(d, idOf(d, 'Two'), 'Z9')],
+    ['setSlug', (d) => M.setSlug(d, idOf(d, 'Two'), 'B')],
+    ['setNote', (d) => M.setNote(d, idOf(d, 'Two'), 'note')],
+    ['setState', (d) => M.setState(d, idOf(d, 'One'), 'Done')],
+    ['setEnding', (d) => M.setEnding(d, idOf(d, 'One'), true)],
+    ['setLevelOffset', (d) => M.setLevelOffsetMany(d, [idOf(d, 'Two')], 1)],
+    ['addTag', (d) => M.addTag(d, idOf(d, 'Three'), 'green')],
+    ['removeTag', (d) => M.removeTag(d, idOf(d, 'One'), 'red')],
+    ['setTagColor', (d) => M.setTagColor(d, 'red', 'red')],
+    ['renameTag', (d) => M.renameTag(d, 'red', 'crimson')],
+    ['deleteTag', (d) => M.deleteTag(d, 'blue')],
+    ['setSetting', (d) => M.setSetting(d, idOf(d, 'Two'), 'The pier')],
+    ['renameSetting', (d) => M.renameSetting(d, 'The docks', 'The wharf')],
+    ['createNode', (d) => M.createNode(d)],
+    ['deleteNodes', (d) => M.deleteNodes(d, [idOf(d, 'Three')])],
+    ['setStartNode', (d) => M.setStartNode(d, idOf(d, 'Two'))],
+    ['setStoryTitle', (d) => M.setStoryTitle(d, 'Retitled')],
+    ['setStoryNotes', (d) => M.setStoryNotes(d, 'scratch')],
+    ['addPassageCharacter', (d) => M.addPassageCharacter(d, idOf(d, 'Three'), 'Mira')],
+    ['removePassageCharacter', (d) => M.removePassageCharacter(d, idOf(d, 'One'), 'Tam')],
+    ['createCharacter', (d) => M.createCharacter(d, 'Ines')],
+    ['renameCharacter', (d) => M.renameCharacter(d, 'Mira', 'Mirabel')],
+    ['deleteCharacter', (d) => M.deleteCharacter(d, 'Tam')],
+    ['setCharacterBio', (d) => M.setCharacterBio(d, 'Mira', 'a bio')],
+    ['sortCharacters', (d) => M.sortCharacters(d)],
+    ['recodeAll', (d) => M.recodeAll(d, new Map(d.nodes.map((n, i) => [n.id, `Q${i + 1}`])))],
+    // Body holds a bare link the author has just written; `bodyAtFocus` is what
+    // it said when they arrived, so this is the case that mints a passage.
+    [
+      'resolveLinks',
+      (d) =>
+        M.resolveLinks(
+          M.setBody(d, idOf(d, 'Three'), '[[A new place]]'),
+          idOf(d, 'Three'),
+          '',
+        ),
+    ],
+  ]
+
+  for (const [name, run] of cases) {
+    it(`${name} leaves its input untouched`, () => {
+      const doc = build()
+      const before = serializeDoc(doc)
+      deepFreeze(doc)
+      expect(() => run(doc)).not.toThrow()
+      // Belt and braces: a frozen write throws, but a write to something the
+      // freeze somehow missed would only show up here.
+      expect(serializeDoc(doc)).toBe(before)
+    })
+  }
 })

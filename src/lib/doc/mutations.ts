@@ -23,6 +23,14 @@ import { linkSyntaxIn, parseLinks, remapLinks } from '../harlowe/links'
  * Every array- or object-valued field has to be copied here. Miss one and it
  * aliases across undo-history entries, so editing the present would silently
  * rewrite the past — a bug that only shows up as a broken undo much later.
+ *
+ * The rule that has to hold is narrower than "copy everything", though, and
+ * `replaceNode` relies on the difference: **a mutation never writes to an object
+ * it did not itself create.** `clone` is the one way to acquire writable
+ * objects, and anything reached from the input document is read-only. The
+ * handful of mutations here that do assign in place — `setTagColor`,
+ * `renameTag`, `renameSetting`, `recodeAll`, and the roster edits — all call
+ * this first and write only onto what it handed back.
  */
 function clone(doc: StoryDoc): StoryDoc {
   return {
@@ -43,12 +51,35 @@ function clone(doc: StoryDoc): StoryDoc {
   }
 }
 
+/**
+ * Patch one passage, sharing everything the patch does not touch.
+ *
+ * Deliberately not `clone`. Cloning gave every one of a story's passages — and
+ * every `tags` array on them — a fresh identity on each edit, which meant the
+ * canvas could never tell a keystroke apart from a rewrite: Vue compares props
+ * by reference, so all several hundred cards re-rendered for one character typed
+ * in one body. Sharing the untouched nodes is what lets that comparison say
+ * "nothing here moved", and it is why the memoized layout above is worth having
+ * at all.
+ *
+ * Safe under the rule stated on `clone`: nothing shared out of here is ever
+ * written to. A mutation that wants a passage's tags builds a new array and
+ * passes it as `patch`; one that rewrites the roster calls `clone` and writes
+ * onto its own copy. `doc.test.ts` deep-freezes a document and runs every
+ * mutation against it, so a future caller that patches in place fails loudly
+ * rather than quietly rewriting an undo entry.
+ *
+ * The nodes array is copied rather than indexed into, which matters more than it
+ * looks: `state.doc` is a reactive proxy, so `{ ...doc }` hands back the *same*
+ * array, and assigning into it would write straight through into the document
+ * already sitting on the undo stack.
+ */
 function replaceNode(doc: StoryDoc, id: string, patch: Partial<StoryNode>): StoryDoc {
-  const next = clone(doc)
-  const i = next.nodes.findIndex((n) => n.id === id)
+  const i = doc.nodes.findIndex((n) => n.id === id)
   if (i === -1) return doc
-  next.nodes[i] = { ...next.nodes[i]!, ...patch }
-  return next
+  const nodes = [...doc.nodes]
+  nodes[i] = { ...nodes[i]!, ...patch }
+  return { ...doc, nodes }
 }
 
 /** A code that is some prefix followed by a run of digits: `P7`, `T001`, `12`. */
