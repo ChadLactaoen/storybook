@@ -25,6 +25,8 @@ const props = defineProps<{
   dimmed: boolean
   detailed: boolean
   pathCount: string | null
+  /** Draw shape and colour only — the Developer menu's screenshot mode. */
+  textless: boolean
 }>()
 
 const emit = defineEmits<{
@@ -133,33 +135,39 @@ const style = computed(() => ({
 
     <span v-if="!node.isPhantom" class="badge" :title="state ?? 'TODO'" />
 
-    <div class="body">
-      <div v-if="run" class="run" :title="`${label} \u2014 ${run}`">{{ runShown }}</div>
-      <div v-if="node.title" class="title">{{ node.title }}</div>
-      <div v-else class="title untitled">Untitled</div>
+    <!-- Every glyph on the card sits inside this guard, and nothing else does.
+         `textless` is for a screenshot of the shape: the stripes above, the
+         state dot, the start card's accent edge and the ending's bottom rule
+         all survive it, so status and structure still read as colour. -->
+    <template v-if="!textless">
+      <div class="body">
+        <div v-if="run" class="run" :title="`${label} \u2014 ${run}`">{{ runShown }}</div>
+        <div v-if="node.title" class="title">{{ node.title }}</div>
+        <div v-else class="title untitled">Untitled</div>
 
-      <template v-if="detailed">
-        <div v-if="node.isPhantom" class="missing">No such passage &mdash; double-click to create</div>
-        <div v-else-if="tags.length > 0" class="chips">
-          <span
-            v-for="tag in tags"
-            :key="tag"
-            class="chip"
-            :style="{
-              '--chip': `var(--tag-${tagColors.get(tag) ?? 'none'})`,
-            }"
-          >
-            {{ tag }}
-          </span>
-        </div>
-      </template>
-    </div>
+        <template v-if="detailed">
+          <div v-if="node.isPhantom" class="missing">No such passage &mdash; double-click to create</div>
+          <div v-else-if="tags.length > 0" class="chips">
+            <span
+              v-for="tag in tags"
+              :key="tag"
+              class="chip"
+              :style="{
+                '--chip': `var(--tag-${tagColors.get(tag) ?? 'none'})`,
+              }"
+            >
+              {{ tag }}
+            </span>
+          </div>
+        </template>
+      </div>
 
-    <div v-if="detailed && (isStart || isEnding || pathCount)" class="foot">
-      <span v-if="isStart" class="flag">START</span>
-      <span v-if="isEnding" class="flag flag-end">END</span>
-      <span v-if="pathCount" class="paths">{{ pathCount }} paths</span>
-    </div>
+      <div v-if="detailed && (isStart || isEnding || pathCount)" class="foot">
+        <span v-if="isStart" class="flag">START</span>
+        <span v-if="isEnding" class="flag flag-end">END</span>
+        <span v-if="pathCount" class="paths">{{ pathCount }} paths</span>
+      </div>
+    </template>
   </div>
 </template>
 

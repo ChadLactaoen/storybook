@@ -20,7 +20,7 @@ import { IS_MAC, MOD_LABEL, SHIFT_LABEL } from './platform'
  * somewhere — which is the check whose absence let the drift happen.
  */
 
-export type CommandGroup = 'file' | 'edit' | 'view' | 'story' | 'help'
+export type CommandGroup = 'file' | 'edit' | 'view' | 'story' | 'help' | 'dev'
 
 /**
  * Where a command is listened for, which decides who may render it.
@@ -61,9 +61,21 @@ export interface CommandBinding {
   enabled?: boolean
   /** Only read for a `toggle` command. */
   checked?: boolean
+  /**
+   * Absent means shown. `false` removes the row from the menu entirely, and
+   * removes the menu itself once nothing in it is left.
+   *
+   * It lives here rather than on `CommandSpec` because it is a runtime answer:
+   * `group` is decided when this table is written and cannot vary, while this
+   * reads the same panel flags and prefs `enabled` and `checked` already do.
+   * Hiding is also not the same as dimming, and dimming is not a substitute —
+   * a row nobody can ever use is a row that should not be drawn, and
+   * `render.test.ts` fails any row it finds rendered but never live.
+   */
+  visible?: boolean
 }
 
-export const GROUPS: readonly CommandGroup[] = ['file', 'edit', 'view', 'story', 'help']
+export const GROUPS: readonly CommandGroup[] = ['file', 'edit', 'view', 'story', 'help', 'dev']
 
 export const GROUP_LABELS: Record<CommandGroup, string> = {
   file: 'File',
@@ -71,6 +83,7 @@ export const GROUP_LABELS: Record<CommandGroup, string> = {
   view: 'View',
   story: 'Story',
   help: 'Help',
+  dev: 'Developer',
 }
 
 export const COMMANDS: readonly CommandSpec[] = [
@@ -407,6 +420,36 @@ export const COMMANDS: readonly CommandSpec[] = [
     group: 'help',
     section: 1,
     scope: 'global',
+  },
+
+  /*
+   * Developer — the tools for reporting a drawing rather than writing a story.
+   *
+   * The whole menu is hidden unless `prefs.devMode` is on, through
+   * `CommandBinding.visible`. Both rows are chordless, and that is the same
+   * choice `view.pack*` and `story.characters` make: a chordless row enrols
+   * nothing in `commands.test.ts` and adds no line to the help sheet, which
+   * builds its table from every command carrying a chord. A gated row *with* a
+   * chord would be listed there whether or not the mode was on, and would have
+   * to be dispatched unconditionally to satisfy the chord test — a key that
+   * works while its menu is hidden.
+   */
+  {
+    id: 'dev.exportSkeleton',
+    label: 'Export skeleton…',
+    group: 'dev',
+    section: 1,
+    scope: 'global',
+    hint: 'Download the codes, links and levels with none of the prose — enough to reproduce the drawing',
+  },
+  {
+    id: 'dev.hideText',
+    label: 'Hide text on cards',
+    group: 'dev',
+    section: 1,
+    scope: 'global',
+    toggle: true,
+    hint: 'Draw the cards as shape and colour only, for a screenshot of the structure',
   },
 
   // Global, but no menu home: each needs a selection or a field to act on, so a

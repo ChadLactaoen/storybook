@@ -4,7 +4,7 @@ import { createApp, nextTick } from 'vue'
 import type { App as VueApp } from 'vue'
 import App from '../App.vue'
 import { resetPlay } from '../stores/play'
-import { resetPrefs, setPref } from '../stores/prefs'
+import { prefs, reloadPrefs, resetPrefs, setPref } from '../stores/prefs'
 import * as store from '../stores/story'
 import { COMMANDS, GROUP_LABELS } from '../lib/ui/commands'
 
@@ -942,6 +942,125 @@ describe('the app renders', () => {
   })
 })
 
+describe('the Developer menu\u2019s screenshot mode', () => {
+  /** A card with something in every text slot, and a code drawn above it. */
+  async function withEverything() {
+    mount()
+    store.newStory('Textless')
+    const id = store.state.doc.nodes[0]!.id
+    setPref('showCodes', true)
+    setPref('devMode', true)
+    store.rename(id, 'The Rusty Anchor')
+    store.tagAdd(id, 'quiet')
+    // A tag with no colour draws no stripe, and the stripe is what has to
+    // survive the text going away.
+    store.tagRecolor('quiet', 'green')
+    store.slugSet(id, 'A')
+    store.makeStart(id)
+    store.select(id)
+    store.endingToggleSelected()
+    await nextTick()
+    return id
+  }
+
+  const card = () => host.querySelector('.card')!
+
+  it('draws every glyph before it is turned on', async () => {
+    await withEverything()
+    expect(card().querySelector('.title')!.textContent).toContain('The Rusty Anchor')
+    expect(card().querySelector('.run')).not.toBeNull()
+    expect(card().querySelector('.chip')!.textContent).toContain('quiet')
+    expect(card().querySelector('.flag')).not.toBeNull()
+    expect(host.querySelector('.code-tag')).not.toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * Every glyph goes, and nothing else does. The point of the mode is a
+   * screenshot of the structure, so status and shape have to survive it — the
+   * state dot, the tag stripes, the start card's accent edge and the ending's
+   * bottom rule are all colour, and all stay.
+   */
+  it('strips the glyphs and keeps the colour', async () => {
+    await withEverything()
+    setPref('hideCardText', true)
+    await nextTick()
+
+    expect(card().querySelector('.title')).toBeNull()
+    expect(card().querySelector('.run')).toBeNull()
+    expect(card().querySelector('.chip')).toBeNull()
+    expect(card().querySelector('.flag')).toBeNull()
+    expect(card().querySelector('.foot')).toBeNull()
+    expect(host.querySelector('.code-tag')).toBeNull()
+    // Not one character left anywhere on the card.
+    expect(card().textContent!.trim()).toBe('')
+
+    expect(card().querySelector('.badge')).not.toBeNull()
+    expect(card().querySelector('.stripe')).not.toBeNull()
+    expect(card().classList.contains('start')).toBe(true)
+    expect(card().classList.contains('ending')).toBe(true)
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * The gutter's "Level 3" was the last glyph left in a screenshot taken with
+   * the level bands on, which is the default.
+   */
+  it('takes the level tags in the gutter too', async () => {
+    await withEverything()
+    expect(host.querySelector('.level-tag')).not.toBeNull()
+
+    setPref('hideCardText', true)
+    await nextTick()
+    expect(host.querySelector('.level-tag')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * A stored pair can disagree — a hand-edited store, or a build from before
+   * the rule existed. Left alone it is unrecoverable: blank cards, no menu to
+   * fix them, and `setPref('devMode', false)` refused by its own no-op guard.
+   */
+  it('refuses to load hidden text without the mode that reaches it', async () => {
+    localStorage.setItem(
+      'storybook.prefs.v1',
+      JSON.stringify({ devMode: false, hideCardText: true }),
+    )
+    reloadPrefs()
+    expect(prefs.hideCardText).toBe(false)
+
+    mount()
+    store.newStory('Textless')
+    await nextTick()
+    expect(host.querySelector('.card .title')).not.toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('takes the phantom prompt and the wire captions too', async () => {
+    mount()
+    store.newStory('Textless')
+    setPref('devMode', true)
+    const id = store.state.doc.nodes[0]!.id
+    // Writing the link creates the passage, so the phantom is what is left
+    // after deleting it — the same way a dangling link happens in practice.
+    writeBody(id, '[[Head north->Cave]]')
+    store.removePassage(store.state.doc.nodes.find((n) => n.code === 'Cave')!.id)
+    // A caption is drawn only for an edge touching the selection.
+    store.select(id)
+    await nextTick()
+    expect(host.querySelector('.missing')).not.toBeNull()
+    expect(host.querySelector('.edge-label')).not.toBeNull()
+
+    setPref('hideCardText', true)
+    await nextTick()
+    expect(host.querySelector('.missing')).toBeNull()
+    expect(host.querySelector('.edge-label')).toBeNull()
+    // The dashed card is still drawn; only its words are gone.
+    expect(host.querySelectorAll('.card.phantom')).toHaveLength(1)
+    expect(problems).toEqual([])
+  })
+})
+
 describe('editor settings', () => {
   const gear = () =>
     [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === '\u2699')!
@@ -962,8 +1081,11 @@ describe('editor settings', () => {
     await openSettings()
 
     expect(panel()).not.toBeNull()
-    expect(boxes()).toHaveLength(3)
-    expect(boxes().map((b) => b.checked)).toEqual([false, false, false])
+    // Inherit setting, inherit characters, show codes, developer mode. Counted
+    // rather than named because the count is the assertion: a row added without
+    // a default of `false` would move an author's editor on upgrade.
+    expect(boxes()).toHaveLength(4)
+    expect(boxes().map((b) => b.checked)).toEqual([false, false, false, false])
     expect(problems).toEqual([])
   })
 
@@ -1003,7 +1125,10 @@ describe('editor settings', () => {
     await openSettings()
     const id = store.state.doc.nodes[0]!.id
 
-    for (const box of boxes()) {
+    // The two inheritance boxes, by name rather than by sweeping the panel:
+    // this test is about inheritance, and ticking everything would also switch
+    // developer mode on and put a menu in the bar it never asked for.
+    for (const box of boxes().slice(0, 2)) {
       box.checked = true
       box.dispatchEvent(new Event('change'))
     }
@@ -1027,6 +1152,52 @@ describe('editor settings', () => {
     expect(host.querySelector('.inspector')!.textContent).toContain(
       'New passages linked from here start with this cast',
     )
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * The gate itself. `AppMenuBar` drops a group once nothing in it is visible,
+   * so the title is the thing to assert on: a row hidden by dimming or by
+   * omitting its binding would still leave "Developer" in the bar.
+   */
+  it('keeps the Developer menu out of the bar until the mode is on', async () => {
+    const titles = () =>
+      [...host.querySelectorAll('.menubar .title')].map((b) => b.textContent!.trim())
+
+    await openSettings()
+    expect(titles()).not.toContain('Developer')
+
+    // The last box in the panel, by the order the sections are written.
+    const dev = boxes()[boxes().length - 1]!
+    dev.checked = true
+    dev.dispatchEvent(new Event('change'))
+    await nextTick()
+    expect(titles()).toContain('Developer')
+
+    dev.checked = false
+    dev.dispatchEvent(new Event('change'))
+    await nextTick()
+    expect(titles()).not.toContain('Developer')
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * Leaving developer mode has to take its effects with it: the row that puts
+   * the text back is in the menu that just disappeared, so without this an
+   * author is left looking at blank cards with no way to fix them.
+   */
+  it('puts the card text back when the mode goes off', async () => {
+    mount()
+    store.newStory('Settings Check')
+    setPref('devMode', true)
+    setPref('hideCardText', true)
+    await nextTick()
+    expect(host.querySelector('.card .title')).toBeNull()
+
+    setPref('devMode', false)
+    await nextTick()
+    expect(prefs.hideCardText).toBe(false)
+    expect(host.querySelector('.card .title')).not.toBeNull()
     expect(problems).toEqual([])
   })
 
@@ -3118,6 +3289,9 @@ describe('the menu bar', () => {
    */
   it('binds every command it offers', async () => {
     await withStory()
+    // With developer mode off its two rows do not render, so the sweep would
+    // never see them and an unbound one would go unnoticed.
+    setPref('devMode', true)
     const id = store.state.doc.nodes[0]!.id
     store.makeStart(id)
     store.addPassage()
@@ -3130,7 +3304,7 @@ describe('the menu bar', () => {
     const live = new Set<string>()
 
     async function sweep() {
-      for (const group of ['File', 'Edit', 'View', 'Story', 'Help']) {
+      for (const group of ['File', 'Edit', 'View', 'Story', 'Help', 'Developer']) {
         title(group).click()
         await nextTick()
         expect(items().length).toBeGreaterThan(0)

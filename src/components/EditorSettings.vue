@@ -83,6 +83,28 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             </span>
           </label>
         </section>
+
+        <!-- Written out rather than added to `TOGGLES`, which is specifically
+             the New-passages pair and renders inside that section's `v-for`. -->
+        <section>
+          <h3>Developer</h3>
+          <label class="pref">
+            <input
+              type="checkbox"
+              :checked="prefs.devMode"
+              @change="setPref('devMode', ($event.target as HTMLInputElement).checked)"
+            />
+            <span class="text">
+              Developer mode
+              <span class="hint">
+                Adds a Developer menu to the bar, for reporting how the story is
+                <em>drawn</em> rather than writing it: an export of the structure with
+                none of your prose in it, and a way to strip the cards down to shape and
+                colour for a screenshot. Turning this off puts any of it back.
+              </span>
+            </span>
+          </label>
+        </section>
       </div>
 
       <footer>
