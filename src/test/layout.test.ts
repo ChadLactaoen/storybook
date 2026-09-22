@@ -4,9 +4,39 @@ import { deriveGraph } from '../lib/graph/derive'
 import { layoutStory } from '../lib/graph/layout'
 import { countPaths } from '../lib/graph/paths'
 import { orphanIds, reachableFrom, strandedBy } from '../lib/graph/reachability'
-import { NODE_GAP } from '../lib/graph/constants'
+import { COMPACT_CONFIG, DEFAULT_CONFIG, NODE_GAP } from '../lib/graph/constants'
 import { deleteNodes } from '../lib/doc/mutations'
 import { docFrom, minCardGap, shuffled } from './helpers'
+import { bigStory } from './fixtures/big-story'
+
+/** Deeper and wider trees, to prove the packing claim is not depth-specific. */
+const BINARY_4 = {
+  Root: ['L', 'R'],
+  L: ['LL', 'LR'],
+  R: ['RL', 'RR'],
+  LL: ['LLa', 'LLb'],
+  LR: ['LRa'],
+  RL: ['RLa'],
+  RR: ['RRa', 'RRb'],
+  LLa: [], LLb: [], LRa: [], RLa: [], RRa: [], RRb: [],
+}
+
+const WIDE_TREE = {
+  Start: ['A', 'B', 'C', 'D', 'E'],
+  A: ['A1', 'A2'], B: ['B1'], C: ['C1', 'C2', 'C3'], D: [], E: ['E1'],
+  A1: [], A2: [], B1: [], C1: [], C2: [], C3: [], E1: [],
+}
+
+/** Branch, merge and skip: the shape the packing setting is about. */
+const MERGING = {
+  Start: ['A', 'B', 'C', 'D'],
+  A: ['A1', 'A2'], B: ['B1', 'B2'], C: ['C1', 'C2', 'Merge'], D: ['D1', 'D2'],
+  A1: ['A1a'], A2: ['A2a'], B1: ['B1a', 'Merge'], B2: ['B2a'],
+  C1: ['C1a'], C2: ['C2a'], D1: ['D1a'], D2: ['D2a'],
+  A1a: ['Merge'], A2a: ['End1'], B1a: [], B2a: ['End2'],
+  C1a: ['End3'], C2a: [], D1a: ['End4'], D2a: [],
+  Merge: [], End1: [], End2: [], End3: [], End4: [],
+}
 
 const BINARY_3 = {
   Root: ['L', 'R'],
@@ -192,11 +222,10 @@ describe('geometry', () => {
     // behind: the branch's two endings stayed under an unrelated subtree, a
     // third of the drawing away from the passage they belong to.
     //
-    // Only the pushed-down branch is asserted, and deliberately so. The
-    // branches whose children `enforceOrder` pushed *right* are still 128 off
-    // their own midpoint, before this change and after it — a parent is never
-    // re-centred once its children move. That is a separate defect, noted in
-    // `tidy.ts`, and claiming it here would make this test a lie.
+    // Only the pushed-down branch is asserted here, and deliberately so. What
+    // this one pins is that a slid node keeps its own children; that its
+    // *ancestors* follow it is `recentre`'s job, and the test below is the one
+    // that holds it.
     const branches = ['A', 'B', 'C', 'D', 'E', 'F']
     const fan = (link: Record<string, string[]>) => {
       // Copied, not aliased: `fan` is called once per direction and a future
@@ -240,6 +269,118 @@ describe('geometry', () => {
     }
   })
 
+  it('re-centres every unrelated branch after a three-level merge slides one', () => {
+    // A passage reached from three levels at once — N-1, N-2 and N-3 — which is
+    // what an author gets from one ordinary link plus two skip links into the
+    // same place. The two long edges mint dummy chains across every layer
+    // between, `ordering` interleaves them with the real cards, and
+    // `enforceOrder` slides whatever it must to put that order back.
+    //
+    // Each slide carries a subtree. Nothing used to carry the *parents*, so a
+    // branch with no connection to the merge at all ended up sitting over one
+    // of its children instead of between them: `B` 59 out and `D` 128 out, on a
+    // story where neither links to `Merge`. Both directions showed on screen,
+    // because the mirrored candidate slides the other way and the two are
+    // averaged.
+    const base = (): Record<string, string[]> => ({
+      Start: ['A', 'B', 'C', 'D'],
+      A: ['A1', 'A2'],
+      B: ['B1', 'B2'],
+      C: ['C1', 'C2'],
+      D: ['D1', 'D2'],
+      A1: ['A1a'],
+      A2: ['A2a'],
+      // Level N-2: one dummy on the way down.
+      B1: ['B1a', 'Merge'],
+      B2: ['B2a'],
+      C1: ['C1a'],
+      C2: ['C2a'],
+      D1: ['D1a'],
+      D2: ['D2a'],
+      // Level N-1: no dummy at all.
+      A1a: ['Merge'],
+      A2a: ['End1'],
+      B1a: [],
+      B2a: ['End2'],
+      C1a: ['End3'],
+      C2a: [],
+      D1a: ['End4'],
+      D2a: [],
+      Merge: [],
+      End1: [],
+      End2: [],
+      End3: [],
+      End4: [],
+    })
+    // Level N-3: two dummies, crossing both layers between.
+    const three = () => ({ ...base(), C: ['C1', 'C2', 'Merge'] })
+
+    const cases: [string, Record<string, string[]>, Record<string, number>][] = [
+      // A control, and it earns its place by being the same story one link
+      // short: it slides nothing, `place` writes nothing, and it is
+      // byte-identical with `recentre` removed. Only the two below fail before
+      // the fix.
+      ['two parents', base(), {}],
+      ['three parents', three(), {}],
+      // Nudging any passage in the story down re-layers the chains under it.
+      // It is `D1` rather than `Merge` because nudging the merge itself happens
+      // to straighten this particular story out, leaving nothing conflicted to
+      // measure — the trap `workflow.test.ts`'s complete binary tree fell into,
+      // and that `perf.test.ts` was reshaped to avoid.
+      ['three parents, nudged', three(), { D1: 1 }],
+    ]
+
+    for (const [name, spec, offsets] of cases) {
+      const doc = docFrom(spec, { offsets })
+      const res = layoutStory(doc)
+      const at = (title: string) => res.nodes.find((n) => n.title === title)!
+      expect(at('Merge').level, name).toBeGreaterThanOrEqual(5)
+
+      for (const [parent, kids] of Object.entries(spec)) {
+        if (kids.length === 0) continue
+        // A passage linking straight into the merge is the one case the forest
+        // cannot honour — it hangs off a single parent, and the others keep
+        // whatever the slide left them. That is "exact for trees, best effort
+        // elsewhere", and claiming it here would make this test a lie.
+        if (kids.includes('Merge')) continue
+        const xs = kids.map((k) => at(k).x)
+        expect(at(parent).x, `${name}: ${parent}`).toBeCloseTo(
+          (Math.min(...xs) + Math.max(...xs)) / 2,
+          2,
+        )
+      }
+
+      // Centring must not be bought with an overlap, or with an edge drawn
+      // across a card — `minCardGap` sees only real cards, and what moves here
+      // is largely dummies.
+      expect(minCardGap(res.nodes), name).toBeGreaterThanOrEqual(NODE_GAP - 0.01)
+      for (const edge of res.edges) {
+        for (const p of edge.points.slice(1, -1)) {
+          for (const n of res.nodes) {
+            if (Math.abs(p.y - n.y) > n.height / 2) continue
+            expect(Math.abs(p.x - n.x), name).toBeGreaterThan(n.width / 2)
+          }
+        }
+      }
+
+      // `recentre` reads `childrenOf` and walks layers in order, so it needs
+      // the same shuffle-invariance as everything else in the pipeline.
+      for (let i = 0; i < 4; i++) {
+        expect(layoutStory({ ...doc, nodes: shuffled(doc.nodes, i + 9) }).stats.hash, name).toBe(
+          res.stats.hash,
+        )
+      }
+    }
+
+    // The two three-parent cases have to actually reach the code they are
+    // about. Crossings are not the test of that — `tidy.ts` records a
+    // zero-crossing story that still slides — but they are what makes *this*
+    // fixture conflicted, so losing them means it has been reshaped into
+    // something else.
+    expect(layoutStory(docFrom(three())).stats.crossings).toBeGreaterThan(0)
+    expect(layoutStory(docFrom(three(), { offsets: { D1: 1 } })).stats.crossings).toBeGreaterThan(0)
+  })
+
   it('keeps cards clear of one another on a wide uneven tree', () => {
     const res = layoutStory(
       docFrom({
@@ -252,6 +393,132 @@ describe('geometry', () => {
       }),
     )
     expect(minCardGap(res.nodes)).toBeGreaterThanOrEqual(NODE_GAP - 0.01)
+  })
+
+  it('holds the geometry invariants on a story-shaped story', () => {
+    // Everything else in this block is seven passages wide, and the invariants
+    // they assert are the ones that can never legitimately break: cards do not
+    // overlap, and a wire is never drawn across a card. Those held on every
+    // small fixture while a change to `tidy.ts` redrew a quarter of real
+    // stories. This is not a regression test for that change — it passes
+    // against the code before it too — it is the floor underneath the next one,
+    // on the only fixture in the repo shaped like a draft someone is actually
+    // writing, at the size where ordering sweeps, dummy chains, re-merges and
+    // back edges all run.
+    //
+    // Deliberately not a recorded hash. This drawing is *allowed* to change —
+    // it improves whenever layout does — so a golden number here would flag an
+    // improvement and a regression identically and be updated without being
+    // read. `compat.test.ts` pins a hash because its fixture guards the
+    // opposite claim, that nothing moved at all.
+    const doc = bigStory()
+    const res = layoutStory(doc)
+    expect(res.stats.crossings).toBeGreaterThan(0)
+    expect(res.stats.dummies).toBeGreaterThan(0)
+
+    // `NODE_GAP` is the floor only for two cards that are actually adjacent in
+    // their layer. `sep` charges `edgeGap` rather than `nodeGap` beside a
+    // dummy, so a wire threading between two cards buys them
+    // `2 * edgeGap` of clearance instead — narrower than a card gap, which is
+    // the intended trade and the reason a long edge can pass between two
+    // passages at all. At this size that case is everywhere. The bound is
+    // derived rather than observed — the fixture currently clears it by about
+    // twelve units, and sat exactly on it before `recentre` — so do not retune
+    // it to whatever the drawing happens to measure today.
+    const floor = Math.min(NODE_GAP, 2 * DEFAULT_CONFIG.edgeGap)
+    expect(minCardGap(res.nodes)).toBeGreaterThanOrEqual(floor - 0.01)
+
+    // Collected rather than asserted in the loop: this is ~200k pairs, and a
+    // list names the offending edge instead of failing on an anonymous pair.
+    const across: string[] = []
+    for (const edge of res.edges) {
+      for (const p of edge.points.slice(1, -1)) {
+        for (const n of res.nodes) {
+          if (Math.abs(p.y - n.y) > n.height / 2) continue
+          if (Math.abs(p.x - n.x) > n.width / 2) continue
+          across.push(`${edge.edgeId} crosses ${n.title}`)
+        }
+      }
+    }
+    expect(across).toEqual([])
+  })
+
+  it('draws a story with no merges identically whichever packing is chosen', () => {
+    // The guarantee that makes this a safe setting to offer rather than a
+    // gamble: `place` only ever moves a node already off its children's
+    // midpoint, and in a tree none ever is. So the two strategies have nothing
+    // to disagree about, and a story that never merges cannot be affected by
+    // the choice at all. Asserted across depths because the shapes differ —
+    // a two-deep fan packs nothing like a four-deep one.
+    for (const spec of [BINARY_3, BINARY_4, WIDE_TREE]) {
+      const doc = docFrom(spec)
+      const balanced = layoutStory(doc, { packing: 'balanced' })
+      const aligned = layoutStory(doc, { packing: 'aligned' })
+      expect(aligned.stats.hash).toBe(balanced.stats.hash)
+      expect(aligned.bounds.maxX - aligned.bounds.minX).toBeCloseTo(
+        balanced.bounds.maxX - balanced.bounds.minX,
+        6,
+      )
+    }
+  })
+
+  it('does draw a merging story differently, or the setting would be inert', () => {
+    // The other half, and the reason the test above is not vacuous. Without
+    // this a packing that had quietly stopped doing anything would pass every
+    // assertion in the file.
+    const doc = docFrom(MERGING)
+    const balanced = layoutStory(doc, { packing: 'balanced' })
+    const aligned = layoutStory(doc, { packing: 'aligned' })
+    expect(aligned.stats.hash).not.toBe(balanced.stats.hash)
+    // Aligned reaches slack by shoving, so it can only ever be as wide or wider.
+    expect(aligned.bounds.maxX - aligned.bounds.minX).toBeGreaterThan(
+      balanced.bounds.maxX - balanced.bounds.minX,
+    )
+  })
+
+  it('draws compact narrower and shorter without crowding the cards', () => {
+    const doc = docFrom(MERGING)
+    const roomy = layoutStory(doc)
+    const tight = layoutStory(doc, COMPACT_CONFIG)
+    expect(tight.bounds.maxX - tight.bounds.minX).toBeLessThan(
+      roomy.bounds.maxX - roomy.bounds.minX,
+    )
+    // Height follows width down, because `layerSpacing` is recomputed from the
+    // new sibling spacing rather than kept. Drop that and a compact drawing
+    // would be a narrow story stretched tall, and the fan would stop being
+    // equilateral.
+    expect(tight.bounds.maxY - tight.bounds.minY).toBeLessThan(
+      roomy.bounds.maxY - roomy.bounds.minY,
+    )
+    // Separation is still honoured, at the floor the narrower cards imply —
+    // `sep` charges `edgeGap` beside a dummy, so that is the real bound.
+    // Read off the config being measured, not the default one. Compact scales
+    // `edgeGap` too, and a floor borrowed from the defaults would have hidden
+    // exactly the case that matters: a wire threading between two cards costs
+    // `2 * edgeGap`, so it only stays free while that is under `nodeGap`.
+    expect(2 * COMPACT_CONFIG.edgeGap!).toBeLessThanOrEqual(COMPACT_CONFIG.nodeGap!)
+    const floor = Math.min(COMPACT_CONFIG.nodeGap!, 2 * COMPACT_CONFIG.edgeGap!)
+    expect(minCardGap(tight.nodes)).toBeGreaterThanOrEqual(floor - 0.01)
+    for (const n of tight.nodes) expect(n.width).toBe(COMPACT_CONFIG.nodeWidth)
+  })
+
+  it('stays deterministic under every combination, not just the default', () => {
+    // Every other determinism test in this file exercises the defaults only, so
+    // a strategy that leaned on node order would go unnoticed in three of the
+    // four settings a reader can actually pick.
+    const doc = docFrom(MERGING)
+    for (const packing of ['balanced', 'aligned'] as const) {
+      for (const spacing of [{}, COMPACT_CONFIG]) {
+        const cfg = { ...spacing, packing }
+        const first = layoutStory(doc, cfg)
+        for (let i = 0; i < 4; i++) {
+          expect(
+            layoutStory({ ...doc, nodes: shuffled(doc.nodes, i + 21) }, cfg).stats.hash,
+            `${packing} ${spacing === COMPACT_CONFIG ? 'compact' : 'roomy'}`,
+          ).toBe(first.stats.hash)
+        }
+      }
+    }
   })
 
   it('places disconnected fragments side by side rather than interleaved', () => {

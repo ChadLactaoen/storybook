@@ -7,7 +7,7 @@ import type { SavedMeta } from '../lib/doc/storage'
 import { buildLink, parseLinks } from '../lib/harlowe/links'
 import { deriveGraph } from '../lib/graph/derive'
 import { fnv1a } from '../lib/graph/hash'
-import { isPhantomId } from '../lib/graph/constants'
+import { COMPACT_CONFIG, isPhantomId } from '../lib/graph/constants'
 import { layoutStory } from '../lib/graph/layout'
 import { gatesOf } from '../lib/graph/gates'
 import { marksAhead, runningSlugs as slugsOf } from '../lib/graph/slugs'
@@ -17,7 +17,7 @@ import { drawingOrder, planRecode } from '../lib/graph/recode'
 import type { RecodeEntry, RecodeOptions } from '../lib/graph/recode'
 import { reachableFrom, strandedBy } from '../lib/graph/reachability'
 import { readStoryMacros } from '../lib/harlowe/macros'
-import type { LayoutResult } from '../lib/graph/types'
+import type { LayoutConfig, LayoutResult } from '../lib/graph/types'
 import type {
   NodeState,
   SelectMode,
@@ -27,7 +27,7 @@ import type {
   TraitField,
 } from '../types/story'
 import { compareNodes, compareStr, emptyDoc, nodeLabel } from '../types/story'
-import { prefs } from './prefs'
+import { prefs, setPref } from './prefs'
 
 const HISTORY_LIMIT = 100
 
@@ -104,11 +104,39 @@ function syncHistory(): void {
 }
 
 /**
+ * The drawing settings, read from the author's preferences.
+ *
+ * Layout stays a pure function of `(doc, config)` — it always took a config,
+ * and this only decides which one. Nothing here is persisted in the story: two
+ * people opening the same file see the same passages drawn to their own taste,
+ * which is why these live in `prefs` and never in `StoryDoc`.
+ */
+function layoutConfig(): Partial<LayoutConfig> {
+  return {
+    packing: prefs.alignedView ? 'aligned' : 'balanced',
+    ...(prefs.compactSpacing ? COMPACT_CONFIG : null),
+  }
+}
+
+/**
+ * The part of the memo key these settings are responsible for.
+ *
+ * Without it a setting would move nothing: the key is built from the document,
+ * the document has not changed, and `setDoc` would return at its early exit
+ * having decided the drawing was still current. Two characters, and they are
+ * the difference between a toggle that works and one that appears to do
+ * nothing until the next edit.
+ */
+function configKey(): string {
+  return `${prefs.alignedView ? 'a' : 'b'}${prefs.compactSpacing ? 'c' : 'w'}`
+}
+
+/**
  * Layout lives in a shallowRef and is marked raw. Deep-proxying the thousands
  * of plain objects a large story produces costs considerably more than running
  * the layout itself, and nothing in the result is ever mutated in place.
  */
-const layout = shallowRef<LayoutResult>(markRaw(layoutStory(state.doc)))
+const layout = shallowRef<LayoutResult>(markRaw(layoutStory(state.doc, layoutConfig())))
 const layoutVersion = shallowRef(0)
 /**
  * Bumps when any passage body changes, whether or not the change moved a link.
@@ -237,12 +265,33 @@ function setDoc(next: StoryDoc, precomputed?: LayoutResult): void {
     bodyVersion.value++
   }
 
-  if (key === lastLayoutKey) return
-  lastLayoutKey = key
-  layout.value = markRaw(precomputed ?? layoutStory(next))
+  const full = key + configKey()
+  if (full === lastLayoutKey) return
+  lastLayoutKey = full
+  layout.value = markRaw(precomputed ?? layoutStory(next, layoutConfig()))
   // A stale-result guard from day one, so moving layout into a worker later is
   // a change of plumbing rather than a redesign.
   layoutVersion.value++
+}
+
+/**
+ * Change a drawing setting and redraw, in that order and in one turn.
+ *
+ * Deliberately not a `watch` on the preference, for the reason `setDoc` is not
+ * one either: a watcher flushes on the next tick, so `setPref` would return
+ * with `layout` still describing the previous drawing and anything reading it
+ * in the same turn — a zoom-to-fit chained onto the toggle, a test asserting
+ * what the toggle did — would see the old geometry. A module-level watch also
+ * has no owner to stop it, which is the objection `prefs.ts` records against
+ * creating one there.
+ *
+ * `setDoc` does the rest: `configKey` is part of the memo key, so the key has
+ * genuinely moved and the early exit lets this through.
+ */
+export function setDrawingPref(key: 'alignedView' | 'compactSpacing', value: boolean): void {
+  if (prefs[key] === value) return
+  setPref(key, value)
+  setDoc(state.doc)
 }
 
 /* ---------- autosave ---------- */
@@ -885,7 +934,7 @@ function settleRecode(options: RecodeOptions): SettledRecode {
 
     // Deliberately not `setDoc`: these are trial layouts for a document that may
     // never be installed, and touching the memo key would leave it describing one.
-    result = layoutStory(doc)
+    result = layoutStory(doc, layoutConfig())
     fresh = true
   }
 

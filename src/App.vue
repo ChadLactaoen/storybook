@@ -300,6 +300,20 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
     run: () => (showMinimap.value = !showMinimap.value),
     checked: showMinimap.value,
   },
+  // One boolean behind two rows, so the pair reads as a choice rather than as
+  // two independent switches that could both be off.
+  'view.packBalanced': {
+    run: () => store.setDrawingPref('alignedView', false),
+    checked: !prefs.alignedView,
+  },
+  'view.packAligned': {
+    run: () => store.setDrawingPref('alignedView', true),
+    checked: prefs.alignedView,
+  },
+  'view.compact': {
+    run: () => store.setDrawingPref('compactSpacing', !prefs.compactSpacing),
+    checked: prefs.compactSpacing,
+  },
 
   'story.play': { run: togglePlay, enabled: store.state.doc.startNodeId !== null },
   'story.stats': { run: () => (statsOpen.value = !statsOpen.value) },

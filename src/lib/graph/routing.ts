@@ -243,7 +243,12 @@ function selfLoopPath(
   const right = cx + cfg.nodeWidth / 2
   const top = cy - cfg.nodeHeight / 4
   const bottom = cy + cfg.nodeHeight / 4
-  const bulge = 44
+  // Sized from the gap it has to fit inside, not as a constant: the arc swings
+  // out past the card's own anchor box, and a compact drawing leaves far less
+  // room beside a card than the default does. `56 - 9 - 3` is exactly the 44
+  // this replaces, so the default drawing is unchanged to the pixel, while a
+  // narrower gap shrinks the loop instead of drawing it under the next card.
+  const bulge = Math.max(8, Math.min(44, cfg.nodeGap - ARROW_GAP - 3))
   const d =
     `M ${round(right, cfg.coordPrecision)} ${round(top, cfg.coordPrecision)}` +
     ` C ${round(right + bulge, cfg.coordPrecision)} ${round(top - bulge / 2, cfg.coordPrecision)}` +

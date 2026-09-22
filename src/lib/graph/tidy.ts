@@ -19,12 +19,16 @@ import type { LKey, LNode, LayeredGraph, LayoutConfig } from './types'
  * order `ordering.ts` chose. Merges are common in a story, so treat the rule as
  * "exact for trees, best effort elsewhere". What a slide costs is the slid
  * node's position relative to the parent it does *not* hang off; it carries its
- * own subtree, so nothing below it pays.
+ * own subtree, so nothing below it pays, and `recentre` walks back up so
+ * nothing above it pays either.
  *
- * A separate residue this does not address: `enforceOrder` slides a node
- * without re-centring the parents *above* it. A branch whose children were
- * pushed right ends up sitting over its left child rather than between the two.
- * Fixing that needs a bottom-up re-centring pass this module does not have.
+ * That last part is the whole reason `recentre` exists. A slide moves a node
+ * the placement walk had already centred its parent over, and the walk never
+ * revisits anyone — so before, an *unrelated* branch beside the merge ended up
+ * sitting over its left child rather than between the two, and the error
+ * climbed as far as the root. Both directions appear on screen because
+ * `tidyComponent` averages a normal and a mirrored pass, and the mirrored one
+ * pushes left in real space.
  */
 export function tidyComponent(lg: LayeredGraph, layers: LKey[][], cfg: LayoutConfig): void {
   const left = candidate(lg, layers, cfg, false)
@@ -183,6 +187,7 @@ function sweep(lg: LayeredGraph, layers: LKey[][], cfg: LayoutConfig, mirror: bo
   }
 
   enforceOrder(lg, layers, sep, childrenOf)
+  recentre(lg, layers, sep, childrenOf, cfg)
 }
 
 /**
@@ -235,6 +240,191 @@ function enforceOrder(
         shiftDescendants(lg, childrenOf, layer[i]!, dx)
       }
     }
+  }
+}
+
+/**
+ * Put every parent back on the midpoint of its outermost children, bottom up.
+ *
+ * `enforceOrder` moves a node and the subtree under it. It cannot move the
+ * node's *parent* — that parent sits on a layer already walked, and pushing it
+ * would break the separation just settled there. So the parent keeps the x the
+ * placement walk gave it, which was the midpoint of positions its children have
+ * since vacated. One slide near the bottom of a deep story therefore leaves
+ * every ancestor above it off-centre, and a branch with no connection to the
+ * merge that caused the slide drifts with it.
+ *
+ * Walking deepest layer first is what makes a single pass enough. Children
+ * always sit one layer down — segments only ever join adjacent layers — so by
+ * the time a layer is reached everything below it is final, and moving it
+ * cannot reach back down. The layer above is then read against final positions
+ * in its turn.
+ *
+ * It is a no-op wherever the drawing was already right, and the guarantee is
+ * per *layer*, not per story. Straight out of the placement walk a parent sits
+ * exactly on `(firstChild.x + lastChild.x) / 2`, so on any layer `enforceOrder`
+ * left alone every node already wants precisely where it is and `place` writes
+ * nothing at all — which is what keeps this off the drawings that never needed
+ * it, `compat.test.ts`'s recorded baseline among them.
+ *
+ * It is worth saying what that does *not* promise, because the stronger version
+ * is tempting and wrong: a story drawn without a single crossing can still
+ * slide. `enforceOrder` runs on every component — `orderComponent`'s early
+ * return skips the crossing sweeps, not this — and a zero-crossing seed need
+ * not agree with the forest anyway, since `spanningForest` hangs a node with
+ * two parents off its leftmost one while the seed puts it wherever DFS reached
+ * it first. `{ T0: ['T4'], T2: ['T3','T7'], T4: ['T1'], T5: ['T2','T1'] }`
+ * draws at zero crossings, slides twice, and is re-centred here.
+ *
+ * Forest children, not every child in the graph. The forest is the relation the
+ * placement walk positioned by, so this is the exact inverse of that walk's own
+ * error and nothing else. Reading `segsOut` instead would re-centre parents the
+ * walk never claimed to have centred — in a plain diamond it would drag both
+ * branches inward onto the merge point — which is a different drawing, not a
+ * repair of this one.
+ */
+function recentre(
+  lg: LayeredGraph,
+  layers: LKey[][],
+  sep: (a: LNode, b: LNode) => number,
+  childrenOf: Map<LKey, LKey[]>,
+  cfg: LayoutConfig,
+): void {
+  for (let l = layers.length - 1; l >= 0; l--) {
+    const layer = layers[l]!
+    if (layer.length === 0) continue
+
+    const want = new Array<number>(layer.length)
+    for (let i = 0; i < layer.length; i++) {
+      const key = layer[i]!
+      const kids = childrenOf.get(key)
+      if (kids === undefined || kids.length === 0) {
+        // Nothing below to centre on, so it wants to stay exactly where it is.
+        want[i] = lg.nodes.get(key)!.x
+        continue
+      }
+      // Seeded from the first child rather than from +/-Infinity: `x < lo` and
+      // `x > hi` are both false for a NaN, so sentinels would survive one and
+      // `(lo + hi) / 2` would be NaN — which nothing downstream throws on, and
+      // which would reach the canvas as `M NaN NaN`.
+      let lo = lg.nodes.get(kids[0]!)!.x
+      let hi = lo
+      for (const k of kids) {
+        const x = lg.nodes.get(k)!.x
+        if (x < lo) lo = x
+        if (x > hi) hi = x
+      }
+      // Centres, not extents: the placement walk centres on `offsets[last] / 2`,
+      // and `offsets` are centre offsets. Measuring the outermost *edges* here
+      // would fight it wherever a dummy, which has no width, is outermost.
+      want[i] = (lo + hi) / 2
+    }
+
+    place(lg, layer, want, sep, cfg)
+  }
+}
+
+/**
+ * Pull a layer toward `want`, as far as its own order and separations allow.
+ *
+ * Two strategies, and `LayoutConfig.packing` picks between them. They differ
+ * only in what a node may do when the neighbour ahead is in its way:
+ * `balanced` stops there, `aligned` shoves it along. Everything below describes
+ * `balanced`, which is the default and the one whose guarantees hold; the
+ * `aligned` branch at the top of the function states where it departs from
+ * them, and it departs from most of them.
+ *
+ * `balanced`: one sweep, right to left, moving a node only rightward and never past its
+ * target. Right to left so that each node is clamped against the neighbour it
+ * could collide with *after* that neighbour has been handled, which lets a run
+ * of nodes all wanting the same way clear its own path. No epsilon is involved
+ * and nothing needs rechecking afterwards: moving a node right can only widen
+ * the gap to the neighbour on its left.
+ *
+ * Rightward only, and that is structural rather than lucky. `enforceOrder`
+ * pushes right and carries the whole forest subtree, so a slid parent and its
+ * children move by one delta and the parent's target moves with it; a child
+ * gains ground on its parent only by being slid again at its own layer, which
+ * moves the target further right still. `recentre` then only ever moves nodes
+ * right itself, so the property survives as it climbs. A left sweep was written
+ * for symmetry and instrumented: it was wanted 0 times in some 10,500
+ * opportunities across the 224-passage fixture and 400 random stories, so it
+ * was deleted rather than left as a path no test could reach. Teach
+ * `enforceOrder` a leftward push — the obvious answer to the width it costs —
+ * and this needs one back, clamped against `i - 1` instead.
+ *
+ * The restriction is the point, and it is why this is not a least-squares
+ * projection of the whole layer. Projecting minimises the layer's *total* error
+ * and will happily drag a node that was sitting exactly on its children's
+ * midpoint several units off it to buy a larger correction next door. But the
+ * rule being kept is per-parent, not aggregate: a card that was right and is
+ * now wrong is a new defect, however small, and trading one for another is not
+ * a repair. Here a node is touched only when it is already off its target, and
+ * never moved past that target.
+ *
+ * Which is a claim about one layer against fixed children, and not one about
+ * the drawing — do not read it as the stronger thing. Re-centring a layer moves
+ * the children the layer above is measured against, so a parent `enforceOrder`
+ * happened to leave on its old midpoint can find the midpoint has moved out
+ * from under it, and be blocked from following. Worse, `tidyComponent` averages
+ * two candidates whose forests disagree — `spanningForest` hangs a two-parent
+ * node off its leftmost parent one way round and its rightmost the other — so
+ * each candidate is re-centred against a different relation and the average is
+ * a fixed point of neither.
+ *
+ * So this is a quality trade, not a pure win, and the numbers only mean
+ * anything with the metric named. Counting passages on the 224-passage fixture
+ * whose children *all* have exactly one parent — the only ones for which the
+ * forest and the graph agree, so the only ones where "off its midpoint" is
+ * unambiguous — the worst improves from 384 units to 256 while the count of
+ * them rises from seven to eight. Sampling the drawn curves rather than the
+ * waypoints, wires passing through a card they do not belong to go from 31 to
+ * 35. Both are worth paying here: what they buy is that no branch *unrelated*
+ * to a merge drifts any more, which is the defect authors actually see and
+ * report. The leftovers are held by a neighbour with nowhere to go, which is
+ * why one pass is already a fixed point — running it four times is
+ * byte-identical — and why no iteration budget would buy anything.
+ *
+ * Pulling one way is a bias, and the same one the rest of this module has: the
+ * mirrored candidate runs over a reversed layer, so "right" there is left in
+ * real space and `tidyComponent` averages the disagreement, exactly as it does
+ * for the merge point of a diamond.
+ */
+function place(
+  lg: LayeredGraph,
+  layer: readonly LKey[],
+  want: readonly number[],
+  sep: (a: LNode, b: LNode) => number,
+  cfg: LayoutConfig,
+): void {
+  const n = layer.length
+
+  // `aligned`: a node takes the further of its own target and whatever the
+  // neighbour behind it now demands, so it shoves the run ahead rather than
+  // stopping at it. See the note above `place` for what that costs.
+  if (cfg.packing === 'aligned') {
+    for (let i = 0; i < n; i++) {
+      const node = lg.nodes.get(layer[i]!)!
+      let target = want[i]!
+      if (i > 0) {
+        const left = lg.nodes.get(layer[i - 1]!)!
+        const floor = left.x + sep(left, node)
+        if (floor > target) target = floor
+      }
+      if (target > node.x) node.x = target
+    }
+    return
+  }
+
+  for (let i = n - 1; i >= 0; i--) {
+    const node = lg.nodes.get(layer[i]!)!
+    if (want[i]! <= node.x) continue
+    if (i === n - 1) {
+      node.x = want[i]!
+      continue
+    }
+    const right = lg.nodes.get(layer[i + 1]!)!
+    node.x = Math.min(want[i]!, right.x - sep(node, right))
   }
 }
 

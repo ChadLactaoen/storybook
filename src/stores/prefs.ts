@@ -23,6 +23,17 @@ export interface Prefs {
   inheritCharacters: boolean
   /** Draw each passage's code in the gap above its card. */
   showCodes: boolean
+  /**
+   * Keep a parent over its children even where that means shoving the cards
+   * beside it along — `LayoutConfig.packing`, which explains the trade.
+   *
+   * A preference rather than a fix because it is not one: it helps a story that
+   * merges heavily and costs width on one that does not, and it draws a story
+   * with no merges at all identically either way.
+   */
+  alignedView: boolean
+  /** Tighter cards and gaps, to fit more of the story on screen. */
+  compactSpacing: boolean
 }
 
 /**
@@ -33,6 +44,13 @@ const DEFAULTS: Prefs = {
   inheritSetting: false,
   inheritCharacters: false,
   showCodes: false,
+  // Both layout settings ship off, so that upgrading redraws nobody's story.
+  // Nothing enforces that: `compat.test.ts` pins a recorded drawing but calls
+  // `layoutStory(doc)` with no config, so it reads `DEFAULT_CONFIG` and cannot
+  // see this file. Flipping either default would leave it green while moving
+  // every existing author's canvas — so the check is here, in the reading.
+  alignedView: false,
+  compactSpacing: false,
 }
 
 /**

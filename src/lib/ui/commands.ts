@@ -271,6 +271,44 @@ export const COMMANDS: readonly CommandSpec[] = [
     hint: 'Show or hide the minimap',
   },
 
+  /*
+   * Two ticked rows over one boolean, the way `edit.state*` spells one-of-N.
+   * A menu here has dividers and no headings, so the labels carry the whole
+   * meaning and both say "view" — a bare "Balanced" in a View menu could be
+   * about anything.
+   *
+   * Chordless on purpose. These are settings, reached once and left alone, and
+   * a chordless row enrols nothing in `commands.test.ts` and adds no row to the
+   * help sheet — which is right, since there is no key to press.
+   */
+  {
+    id: 'view.packBalanced',
+    label: 'Balanced view',
+    group: 'view',
+    section: 3,
+    scope: 'global',
+    toggle: true,
+    hint: 'Draw as narrowly as the story allows',
+  },
+  {
+    id: 'view.packAligned',
+    label: 'Aligned view',
+    group: 'view',
+    section: 3,
+    scope: 'global',
+    toggle: true,
+    hint: 'Free up room for parents crowded by a merge, by shifting the cards beside them. Draws wider',
+  },
+  {
+    id: 'view.compact',
+    label: 'Compact spacing',
+    group: 'view',
+    section: 4,
+    scope: 'global',
+    toggle: true,
+    hint: 'Smaller cards and tighter gaps, to fit more on screen',
+  },
+
   // Story
   {
     id: 'story.play',
