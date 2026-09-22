@@ -1,4 +1,6 @@
 import { reactive } from 'vue'
+import { isPackingMode } from '../lib/graph/types'
+import type { PackingMode } from '../lib/graph/types'
 
 /**
  * Editor preferences: how the app behaves, not what the story says.
@@ -24,14 +26,17 @@ export interface Prefs {
   /** Draw each passage's code in the gap above its card. */
   showCodes: boolean
   /**
-   * Keep a parent over its children even where that means shoving the cards
-   * beside it along — `LayoutConfig.packing`, which explains the trade.
+   * Which x-coordinate assignment draws the canvas — `LayoutConfig.packing`,
+   * which explains what each one is.
    *
-   * A preference rather than a fix because it is not one: it helps a story that
-   * merges heavily and costs width on one that does not, and it draws a story
-   * with no merges at all identically either way.
+   * A preference rather than a fix because none of the three is one. The first
+   * two trade width for how near a merged passage sits to its parents, and draw
+   * a story with no merges identically. The third answers a different question
+   * altogether — a card under one parent rather than between several — which
+   * moves a plain fan too. Which trade suits depends on the story, so the
+   * author picks.
    */
-  alignedView: boolean
+  packing: PackingMode
   /** Tighter cards and gaps, to fit more of the story on screen. */
   compactSpacing: boolean
   /**
@@ -63,12 +68,13 @@ const DEFAULTS: Prefs = {
   inheritSetting: false,
   inheritCharacters: false,
   showCodes: false,
-  // Both layout settings ship off, so that upgrading redraws nobody's story.
-  // Nothing enforces that: `compat.test.ts` pins a recorded drawing but calls
-  // `layoutStory(doc)` with no config, so it reads `DEFAULT_CONFIG` and cannot
-  // see this file. Flipping either default would leave it green while moving
-  // every existing author's canvas — so the check is here, in the reading.
-  alignedView: false,
+  // Both layout settings ship at their old values, so that upgrading redraws
+  // nobody's story. Nothing enforces that: `compat.test.ts` pins a recorded
+  // drawing but calls `layoutStory(doc)` with no config, so it reads
+  // `DEFAULT_CONFIG` and cannot see this file. Changing either default would
+  // leave it green while moving every existing author's canvas — so the check
+  // is here, in the reading.
+  packing: 'balanced',
   compactSpacing: false,
   // And the developer tools, for the plainer reason that an author did not ask
   // for them.
@@ -77,7 +83,27 @@ const DEFAULTS: Prefs = {
 }
 
 /**
- * Anything but a boolean is ignored rather than rejected, and a missing or
+ * Every preference that is a plain switch — which is all of them but `packing`.
+ *
+ * Exported because a checkbox is only valid over one of these: `EditorSettings`
+ * builds its rows from a list of keys, and a list typed `keyof Prefs` would let
+ * a three-way setting into a two-state control, where it would read as ticked
+ * for any mode at all.
+ */
+export type SwitchPref = { [K in keyof Prefs]: Prefs[K] extends boolean ? K : never }[keyof Prefs]
+
+/**
+ * Read off `DEFAULTS` rather than written out, so a new switch is picked up
+ * with no edit here and a new field of some other type cannot be read as one by
+ * accident. The predicate and the filter are the same test, so the list and its
+ * type cannot drift apart.
+ */
+const SWITCHES = (Object.keys(DEFAULTS) as (keyof Prefs)[]).filter(
+  (k): k is SwitchPref => typeof DEFAULTS[k] === 'boolean',
+)
+
+/**
+ * A value of the wrong type is ignored rather than rejected, and a missing or
  * unreadable store simply yields the defaults.
  *
  * The try/catch is not only about private browsing: every test file except
@@ -89,9 +115,10 @@ function load(): Prefs {
   try {
     const raw = localStorage.getItem(KEY)
     if (!raw) return out
-    const parsed = JSON.parse(raw) as Partial<Record<keyof Prefs, unknown>>
-    for (const key of Object.keys(out) as (keyof Prefs)[]) {
-      if (typeof parsed?.[key] === 'boolean') out[key] = parsed[key] as boolean
+    const parsed = JSON.parse(raw) as Partial<Record<keyof Prefs | 'alignedView', unknown>>
+    for (const key of SWITCHES) {
+      const value = parsed?.[key]
+      if (typeof value === 'boolean') out[key] = value
     }
     // The same cascade `setPref` applies, because a stored pair can disagree —
     // a hand-edited store, or a build where this rule did not exist yet. Left
@@ -99,6 +126,27 @@ function load(): Prefs {
     // with no Developer menu to fix them, and `setPref('devMode', false)` could
     // not rescue it either: its no-op guard fires first.
     if (!out.devMode) out.hideCardText = false
+
+    // The one field that is not a switch, so the loop above does not cover it.
+    // Checked against `PACKING_MODES` rather than cast, because this store is
+    // hand-editable and survives a downgrade: an unrecognised mode would reach
+    // `assignX`, hit its default and draw as `tidy.ts` while the menu ticked a
+    // row that was doing nothing.
+    if (isPackingMode(parsed?.packing)) {
+      out.packing = parsed.packing
+    } else if (parsed?.alignedView === true) {
+      // It was a boolean until a third mode existed. An author who had ticked
+      // Aligned keeps it; one who had not was on `balanced`, which is the
+      // default, so there is nothing to carry.
+      //
+      // Idempotent rather than once-and-done: `load` deliberately does not
+      // write, so a store holding only the old key keeps holding it and this
+      // branch runs again on every launch until some other preference is set
+      // and `persist` rewrites the whole object in the new shape. That is fine
+      // — it lands on the same answer every time — but it is not the "migrated
+      // once" it looks like.
+      out.packing = 'aligned'
+    }
   } catch {
     // Unreadable or hand-edited: the defaults are a fine answer.
   }

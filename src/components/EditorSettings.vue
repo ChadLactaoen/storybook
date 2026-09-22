@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted } from 'vue'
 import { prefs, setPref } from '../stores/prefs'
-import type { Prefs } from '../stores/prefs'
+import type { SwitchPref } from '../stores/prefs'
 
 /**
  * How the editor behaves, as against what the story says.
@@ -13,7 +13,7 @@ import type { Prefs } from '../stores/prefs'
 
 const emit = defineEmits<{ close: [] }>()
 
-const TOGGLES: { key: keyof Prefs; label: string; hint: string }[] = [
+const TOGGLES: { key: SwitchPref; label: string; hint: string }[] = [
   {
     key: 'inheritSetting',
     label: 'Inherit the parent passage’s Setting',

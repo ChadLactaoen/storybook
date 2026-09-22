@@ -1318,9 +1318,9 @@ describe('marking endings', () => {
 describe('the drawing settings', () => {
   beforeEach(() => {
     resetPrefs()
-    // A passage reached from three levels at once, which is what makes the two
-    // packings disagree. A tree draws identically under either, so a fixture
-    // without a merge could not tell a working toggle from a dead one.
+    // A passage reached from three levels at once, which is what makes the
+    // packings disagree. `balanced` and `aligned` draw a tree identically, so a
+    // fixture without a merge could not tell either of those from a dead one.
     store.newStory('Settings')
     store.loadStory(
       serializeDoc(
@@ -1339,7 +1339,7 @@ describe('the drawing settings', () => {
           D1: ['D1a'],
           D2: ['D2a'],
           A1a: ['Merge'],
-          // The endings matter: without a populated layer below them the two
+          // The endings matter: without a populated layer below them the
           // packings have nothing to disagree about and this suite would pass
           // against a toggle that did nothing at all.
           A2a: ['End1'],
@@ -1363,11 +1363,25 @@ describe('the drawing settings', () => {
 
   it('redraws when a setting changes, in the same turn', () => {
     const before = store.layout.value.stats.hash
-    store.setDrawingPref('alignedView', true)
+    store.setDrawingPref('packing', 'aligned')
     // Synchronously, deliberately: a watcher would flush a tick late and leave
     // anything reading `layout` in this turn looking at the previous drawing.
     expect(store.layout.value.stats.hash).not.toBe(before)
     expect(store.layout.value.nodes).toHaveLength(store.state.doc.nodes.length)
+  })
+
+  it('gives each packing its own drawing, so no two rows are the same row', () => {
+    const seen = new Map<string, string>()
+    for (const packing of ['balanced', 'aligned', 'straight'] as const) {
+      store.setDrawingPref('packing', packing)
+      const hash = store.layout.value.stats.hash
+      // Every mode must move something on a fixture built to make them
+      // disagree. Two that matched would be one menu row doing nothing, which
+      // is exactly what `configKey` collapsing would look like from here.
+      expect(seen.get(hash), `${packing} draws the same as ${seen.get(hash)}`).toBeUndefined()
+      seen.set(hash, packing)
+      expect(store.layout.value.nodes).toHaveLength(store.state.doc.nodes.length)
+    }
   })
 
   it('draws narrower on compact, and puts it back on the way out', () => {
@@ -1380,20 +1394,20 @@ describe('the drawing settings', () => {
   })
 
   it('persists the choice, so a reload draws what was left on screen', () => {
-    store.setDrawingPref('alignedView', true)
-    const aligned = store.layout.value.stats.hash
+    store.setDrawingPref('packing', 'straight')
+    const straight = store.layout.value.stats.hash
     // What a reload restores is the preference, not the drawing: nothing
     // positional is ever saved, so the same preference has to reproduce it.
-    expect(prefs.alignedView).toBe(true)
-    store.setDrawingPref('alignedView', false)
-    store.setDrawingPref('alignedView', true)
-    expect(store.layout.value.stats.hash).toBe(aligned)
+    expect(prefs.packing).toBe('straight')
+    store.setDrawingPref('packing', 'balanced')
+    store.setDrawingPref('packing', 'straight')
+    expect(store.layout.value.stats.hash).toBe(straight)
   })
 
   it('is a no-op when the setting is already what it is', () => {
-    store.setDrawingPref('alignedView', true)
+    store.setDrawingPref('packing', 'aligned')
     const version = store.layoutVersion.value
-    store.setDrawingPref('alignedView', true)
+    store.setDrawingPref('packing', 'aligned')
     expect(store.layoutVersion.value).toBe(version)
   })
 })
