@@ -60,6 +60,16 @@ const cards = computed(() =>
  */
 const collapsed = ref<Set<string>>(new Set())
 
+/**
+ * Which whole cards are folded to their name, keyed by character.
+ *
+ * A separate set rather than another `collapsed` key, so folding a card away
+ * and bringing it back leaves the subsections inside it exactly as they were
+ * — a card is a lid over the groups, not a fourth group. Collapsed is the
+ * stored side here too.
+ */
+const folded = ref<Set<string>>(new Set())
+
 function isOpen(name: string, group: string) {
   return !collapsed.value.has(`${name}/${group}`)
 }
@@ -72,11 +82,46 @@ function fold(name: string, group: string) {
   collapsed.value = next
 }
 
+function cardOpen(name: string) {
+  return !folded.value.has(name)
+}
+
+function foldCard(name: string) {
+  const next = new Set(folded.value)
+  if (next.has(name)) next.delete(name)
+  else next.add(name)
+  folded.value = next
+}
+
+/**
+ * Which way the header's one button goes.
+ *
+ * A single button rather than a pair, and the mixed case resolves towards
+ * shutting: while anything is still open the useful move is to clear it away,
+ * and only once every card is folded does the button become the way back.
+ * Read off `cards` rather than off the set's size, so a name left in `folded`
+ * by a character since dropped from the cast cannot make a panel that is
+ * plainly open claim otherwise.
+ */
+const allFolded = computed(
+  () => cards.value.length > 0 && cards.value.every((c) => folded.value.has(c.name)),
+)
+
+// Cards only. A card is a lid over the groups, not a fourth group, so shutting
+// everything and opening it again leaves each character's subsections as they
+// were — the same reason the two folds are separate sets.
+function foldAll() {
+  folded.value = allFolded.value ? new Set() : new Set(cards.value.map((c) => c.name))
+}
+
 // Keyed on the id, not the node: every mutation re-clones it, so watching the
 // object would wipe the folds on each keystroke in the body editor.
 watch(
   () => node.value?.id,
-  () => (collapsed.value = new Set()),
+  () => {
+    collapsed.value = new Set()
+    folded.value = new Set()
+  },
 )
 </script>
 
@@ -84,7 +129,21 @@ watch(
   <aside class="cheat">
     <header>
       <span class="eyebrow">Cheat sheet</span>
-      <button class="btn btn-ghost btn-icon" title="Close" @click="emit('close')">&times;</button>
+      <div class="actions">
+        <button
+          v-if="cards.length > 0"
+          class="fold-all"
+          :title="
+            allFolded
+              ? 'Open every card again'
+              : 'Fold every card to its name, to read one character at a time'
+          "
+          @click="foldAll"
+        >
+          {{ allFolded ? 'Expand all' : 'Collapse all' }}
+        </button>
+        <button class="btn btn-ghost btn-icon" title="Close" @click="emit('close')">&times;</button>
+      </div>
     </header>
 
     <div class="scroll">
@@ -93,8 +152,21 @@ watch(
       </p>
 
       <article v-for="card in cards" :key="card.name" class="member">
+        <!-- The name is the lid. A cast of six is a long scroll, and folding
+             the five you are not writing this line for is what makes the panel
+             usable beside the editor. Edit stays on the same row and outside
+             the fold button, so it is reachable whether the card is open or
+             shut. -->
         <div class="head">
-          <span class="name">{{ card.name }}</span>
+          <button
+            class="head-fold"
+            :aria-expanded="cardOpen(card.name)"
+            :title="cardOpen(card.name) ? `Collapse ${card.name}` : `Expand ${card.name}`"
+            @click="foldCard(card.name)"
+          >
+            <span class="caret" :class="{ open: cardOpen(card.name) }">&rsaquo;</span>
+            <span class="name">{{ card.name }}</span>
+          </button>
           <button
             class="link"
             :title="`Open ${card.name}'s character sheet`"
@@ -104,46 +176,48 @@ watch(
           </button>
         </div>
 
-        <p v-if="card.sceneNote" class="scene-note">In this scene: {{ card.sceneNote }}</p>
+        <template v-if="cardOpen(card.name)">
+          <p v-if="card.sceneNote" class="scene-note">In this scene: {{ card.sceneNote }}</p>
 
-        <div v-if="card.bio" class="group">
-          <button class="group-label" @click="fold(card.name, 'bio')">
-            <span class="caret" :class="{ open: isOpen(card.name, 'bio') }">&rsaquo;</span>
-            Description
-          </button>
-          <p v-if="isOpen(card.name, 'bio')" class="bio">{{ card.bio }}</p>
-        </div>
+          <div v-if="card.bio" class="group">
+            <button class="group-label" @click="fold(card.name, 'bio')">
+              <span class="caret" :class="{ open: isOpen(card.name, 'bio') }">&rsaquo;</span>
+              Description
+            </button>
+            <p v-if="isOpen(card.name, 'bio')" class="bio">{{ card.bio }}</p>
+          </div>
 
-        <div v-for="group in card.groups" :key="group.key" class="group">
-          <button class="group-label" @click="fold(card.name, group.key)">
-            <span class="caret" :class="{ open: isOpen(card.name, group.key) }">&rsaquo;</span>
-            {{ group.label }}
-          </button>
-          <ul v-if="isOpen(card.name, group.key)" class="bullets">
-            <li v-for="(point, i) in group.points" :key="i">{{ point }}</li>
-          </ul>
-        </div>
+          <div v-for="group in card.groups" :key="group.key" class="group">
+            <button class="group-label" @click="fold(card.name, group.key)">
+              <span class="caret" :class="{ open: isOpen(card.name, group.key) }">&rsaquo;</span>
+              {{ group.label }}
+            </button>
+            <ul v-if="isOpen(card.name, group.key)" class="bullets">
+              <li v-for="(point, i) in group.points" :key="i">{{ point }}</li>
+            </ul>
+          </div>
 
-        <!-- Relations are one-directional: this is only how the character
-             regards others, never how they are regarded. Only relations toward
-             the rest of this passage's cast appear — the panel is a reference
-             for the scene being written, not the whole roster. -->
-        <div v-if="card.relations.length > 0" class="group">
-          <button class="group-label" @click="fold(card.name, 'relations')">
-            <span class="caret" :class="{ open: isOpen(card.name, 'relations') }">&rsaquo;</span>
-            Relations
-          </button>
-          <template v-if="isOpen(card.name, 'relations')">
-            <div v-for="relation in card.relations" :key="relation.to" class="relation">
-              <span class="toward">&rarr; {{ relation.to }}</span>
-              <ul class="bullets">
-                <li v-for="(point, i) in relation.points" :key="i">{{ point }}</li>
-              </ul>
-            </div>
-          </template>
-        </div>
+          <!-- Relations are one-directional: this is only how the character
+               regards others, never how they are regarded. Only relations toward
+               the rest of this passage's cast appear — the panel is a reference
+               for the scene being written, not the whole roster. -->
+          <div v-if="card.relations.length > 0" class="group">
+            <button class="group-label" @click="fold(card.name, 'relations')">
+              <span class="caret" :class="{ open: isOpen(card.name, 'relations') }">&rsaquo;</span>
+              Relations
+            </button>
+            <template v-if="isOpen(card.name, 'relations')">
+              <div v-for="relation in card.relations" :key="relation.to" class="relation">
+                <span class="toward">&rarr; {{ relation.to }}</span>
+                <ul class="bullets">
+                  <li v-for="(point, i) in relation.points" :key="i">{{ point }}</li>
+                </ul>
+              </div>
+            </template>
+          </div>
 
-        <p v-if="card.empty" class="nothing">No direction written yet.</p>
+          <p v-if="card.empty" class="nothing">No direction written yet.</p>
+        </template>
       </article>
 
       <p v-if="cards.length === 0" class="empty">
@@ -174,6 +248,12 @@ header {
   padding: 0 8px 0 14px;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .eyebrow {
@@ -214,11 +294,29 @@ header {
   gap: 6px;
 }
 
+/* Takes the row's spare width so a long name ellipses rather than pushing Edit
+   off the card; `min-width: 0` is what lets a flex child shrink that far. */
+.head-fold {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
 .name {
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.head-fold:hover .name {
+  color: var(--accent);
 }
 
 .scene-note {
@@ -294,7 +392,11 @@ header {
   color: var(--text-faint);
 }
 
-.link {
+/* The per-card Edit link and the header's fold toggle read the same, but they
+   are not the same control: a selector that caught both would reach the header
+   when it meant a card. Two names, one look. */
+.link,
+.fold-all {
   padding: 0;
   border: 0;
   background: none;
@@ -302,7 +404,8 @@ header {
   color: var(--accent);
 }
 
-.link:hover {
+.link:hover,
+.fold-all:hover {
   text-decoration: underline;
 }
 

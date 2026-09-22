@@ -320,6 +320,16 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
   'story.tags': { run: () => (tagsOpen.value = !tagsOpen.value) },
   'story.characters': { run: () => (castOpen.value = !castOpen.value) },
   'story.index': { run: toggleIndex, checked: leftPanel.value === 'index' },
+  // `toggleCheatSheet` itself rather than a second copy of it, so the row and
+  // Cmd K cannot drift: same refusal without a passage, same forced sidebar.
+  // `selected` is null for a phantom anchor as well as for nothing at all,
+  // which is exactly when that function returns early — so the dim states what
+  // the key would do.
+  'passage.cheatSheet': {
+    run: toggleCheatSheet,
+    enabled: store.selected.value !== null,
+    checked: leftPanel.value === 'cheat',
+  },
   'story.notes': { run: toggleNotes, checked: notesOpen.value },
 
   'help.about': { run: openHelp },

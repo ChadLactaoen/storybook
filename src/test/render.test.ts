@@ -46,6 +46,30 @@ async function runCommand(label: string) {
   await nextTick()
 }
 
+/**
+ * What a Story menu row looks like right now — dimmed, ticked — with the menu
+ * opened to read it and closed again, so nothing is left standing in front of
+ * the canvas for the assertions that follow.
+ */
+async function storyRow(label: string) {
+  const title = [...host.querySelectorAll<HTMLButtonElement>('.menubar .title')].find(
+    (b) => b.textContent!.trim() === 'Story',
+  )!
+  title.click()
+  await nextTick()
+  const row = [...host.querySelectorAll<HTMLButtonElement>('.menu-item')].find(
+    (b) => b.querySelector('.menu-label')!.textContent!.trim() === label,
+  )
+  if (!row) throw new Error(`No item "${label}" in the Story menu`)
+  const read = {
+    disabled: row.disabled,
+    tick: row.querySelector('.menu-check')!.textContent!.trim(),
+  }
+  title.click()
+  await nextTick()
+  return read
+}
+
 beforeEach(() => {
   problems = []
   vi.spyOn(console, 'warn').mockImplementation((...args) => {
@@ -1128,11 +1152,130 @@ describe('the character cheat sheet', () => {
     expect(problems).toEqual([])
   })
 
+  it('folds a whole card down to its name, leaving the rest of the cast open', async () => {
+    await openOnCast()
+
+    const card = (name: string) =>
+      [...host.querySelectorAll<HTMLElement>('.cheat .member')].find(
+        (el) => el.querySelector('.name')!.textContent!.trim() === name,
+      )!
+
+    expect(card('Mira').textContent).toContain('Guarded')
+
+    card('Mira').querySelector<HTMLButtonElement>('.head-fold')!.click()
+    await nextTick()
+
+    // The name and the way to the character sheet are what survive: the point
+    // of the fold is a row you can still click, not a card that disappears.
+    const shut = card('Mira')
+    expect(shut.querySelector('.link')!.textContent!.trim()).toBe('Edit')
+    expect(shut.querySelector('.group')).toBeNull()
+    expect(shut.textContent).not.toContain('Guarded')
+    expect(shut.textContent).not.toContain("The innkeeper's daughter")
+    expect(shut.textContent).not.toContain('In this scene: Furious.')
+
+    // Nobody else moved.
+    expect(card('Tam').textContent).toContain('No direction written yet.')
+
+    card('Mira').querySelector<HTMLButtonElement>('.head-fold')!.click()
+    await nextTick()
+    expect(card('Mira').textContent).toContain('Guarded')
+    expect(problems).toEqual([])
+  })
+
+  it('shuts and reopens the whole cast from one header button', async () => {
+    await openOnCast()
+
+    const foldAll = () => host.querySelector<HTMLButtonElement>('.cheat .fold-all')!
+    const open = () => host.querySelectorAll('.cheat .member .group').length
+
+    expect(foldAll().textContent!.trim()).toBe('Collapse all')
+    expect(open()).toBeGreaterThan(0)
+
+    foldAll().click()
+    await nextTick()
+    // Every card is down to its name, and the button is now the way back.
+    expect(open()).toBe(0)
+    expect(host.querySelectorAll('.cheat .member .name')).toHaveLength(2)
+    expect(foldAll().textContent!.trim()).toBe('Expand all')
+
+    foldAll().click()
+    await nextTick()
+    expect(open()).toBeGreaterThan(0)
+    expect(foldAll().textContent!.trim()).toBe('Collapse all')
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * The mixed case resolves towards shutting: one card already folded is not
+   * "all folded", so the button still offers to clear away the rest rather
+   * than undoing the fold the author just made.
+   */
+  it('still offers to collapse while only some cards are folded', async () => {
+    await openOnCast()
+    host.querySelector<HTMLButtonElement>('.cheat .member .head-fold')!.click()
+    await nextTick()
+
+    const foldAll = () => host.querySelector<HTMLButtonElement>('.cheat .fold-all')!
+    expect(foldAll().textContent!.trim()).toBe('Collapse all')
+
+    foldAll().click()
+    await nextTick()
+    expect(host.querySelectorAll('.cheat .member .group')).toHaveLength(0)
+    expect(problems).toEqual([])
+  })
+
+  it('offers nothing to collapse on a passage with no cast', async () => {
+    mount()
+    store.newStory('Cheat Check')
+    store.select(store.state.doc.nodes[0]!.id)
+    await nextTick()
+    await runCommand('Character cheat sheet')
+
+    expect(host.querySelector('.cheat .fold-all')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * The two folds are separate sets on purpose: a card is a lid over the
+   * groups, not a fourth group. Shutting one and opening it again must leave
+   * the subsections exactly as they were, or the lid would silently undo the
+   * folding underneath it.
+   */
+  it('leaves the subsection folds alone through a card fold', async () => {
+    await openOnCast()
+    groupLabel('Personality').click()
+    await nextTick()
+    expect(groupLabel('Personality').nextElementSibling).toBeNull()
+
+    const head = () => host.querySelector<HTMLButtonElement>('.cheat .member .head-fold')!
+    head().click()
+    await nextTick()
+    head().click()
+    await nextTick()
+
+    // And through the header's button, which folds the same set.
+    const foldAll = () => host.querySelector<HTMLButtonElement>('.cheat .fold-all')!
+    foldAll().click()
+    await nextTick()
+    foldAll().click()
+    await nextTick()
+
+    expect(groupLabel('Personality').nextElementSibling).toBeNull()
+    expect(groupLabel('Dialogue characteristics').nextElementSibling!.textContent).toContain(
+      'Clipped sentences',
+    )
+    expect(problems).toEqual([])
+  })
+
   it('follows the selection, and forgets the folds with it', async () => {
     const id = await openOnCast()
     groupLabel('Personality').click()
     await nextTick()
     expect(groupLabel('Personality').nextElementSibling).toBeNull()
+
+    host.querySelector<HTMLButtonElement>('.cheat .member .head-fold')!.click()
+    await nextTick()
 
     writeBody(id, '[[Two]]')
     const two = store.state.doc.nodes.find((n) => n.title === 'Two')!.id
@@ -1143,6 +1286,8 @@ describe('the character cheat sheet', () => {
     const panel = host.querySelector('.cheat')!
     expect(panel).not.toBeNull()
     expect(panel.textContent).toContain('Cast of P2 · Two')
+    // Both folds, the card's and the subsection's, come back open.
+    expect(panel.querySelector('.member .group')).not.toBeNull()
     expect(groupLabel('Personality').nextElementSibling!.textContent).toContain('Guarded')
     expect(problems).toEqual([])
   })
@@ -1235,13 +1380,52 @@ describe('the character cheat sheet', () => {
     expect(problems).toEqual([])
   })
 
-  it('offers no way in from a passage with no cast', async () => {
+  /**
+   * The inspector's link is behind the cast it sits under, so on a passage
+   * nobody is cast in yet the menu row is the only way in — which is why the
+   * command has a menu home where `passage.expand` beside it has none.
+   */
+  it('opens from the Story menu on a passage with no cast', async () => {
     mount()
     store.newStory('Cheat Check')
     store.select(store.state.doc.nodes[0]!.id)
     await nextTick()
-
     expect(host.querySelector('.inspector .cheat-link')).toBeNull()
+
+    await runCommand('Character cheat sheet')
+    expect(host.querySelector('.cheat')!.textContent).toContain('No cast in this passage yet')
+    expect((await storyRow('Character cheat sheet')).tick).toBe('✓')
+
+    // The same row closes it again, the way the chord does.
+    await runCommand('Character cheat sheet')
+    expect(host.querySelector('.cheat')).toBeNull()
+    expect((await storyRow('Character cheat sheet')).tick).toBe('')
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * The panel is bound to the selection, so with none the row dims rather than
+   * opening a sheet about nothing — the same refusal `toggleCheatSheet` makes
+   * for the chord. A phantom is the case that forces it: it is a selectable
+   * card with no passage behind it, so `selected` is null there too.
+   */
+  it('dims its menu row with nothing selected, and on a phantom', async () => {
+    mount()
+    store.newStory('Cheat Check')
+    const id = store.state.doc.nodes[0]!.id
+    writeBody(id, '[[Cave]]')
+    store.select(null)
+    await nextTick()
+    expect((await storyRow('Character cheat sheet')).disabled).toBe(true)
+
+    store.removePassage(store.state.doc.nodes.find((n) => n.title === 'Cave')!.id)
+    store.select(store.layout.value.nodes.find((n) => n.isPhantom)!.id)
+    await nextTick()
+    expect((await storyRow('Character cheat sheet')).disabled).toBe(true)
+
+    store.select(id)
+    await nextTick()
+    expect((await storyRow('Character cheat sheet')).disabled).toBe(false)
     expect(problems).toEqual([])
   })
 })

@@ -360,6 +360,27 @@ export const COMMANDS: readonly CommandSpec[] = [
     chord: { mod: true, key: ';' },
     hint: 'Every character and setting, with passage counts',
   },
+  /*
+   * The one per-passage command with a menu home, where `passage.expand` beside
+   * it has none. The reason is the pointer: the cheat sheet's only other way in
+   * is the link under the inspector's cast list, which is itself behind a cast
+   * — so on a passage nobody is cast in yet there was no visible way to reach
+   * it at all, and nothing anywhere saying ⌘K existed. Dimmed without a
+   * selection, like Delete and Mark as Ending, rather than absent.
+   *
+   * Section 2 because it is a left-gutter panel: `leftPanel` makes it and Cast &
+   * Settings structurally exclusive, and Story notes shares the column.
+   */
+  {
+    id: 'passage.cheatSheet',
+    label: 'Character cheat sheet',
+    group: 'story',
+    section: 2,
+    scope: 'global',
+    toggle: true,
+    chord: { mod: true, key: 'k' },
+    hint: "Every cast member's traits and relations for the selected passage, side by side",
+  },
   {
     id: 'story.notes',
     label: 'Story notes',
@@ -401,12 +422,6 @@ export const COMMANDS: readonly CommandSpec[] = [
     label: 'Expand the selected passage’s body editor',
     scope: 'global',
     chord: { mod: true, key: 'e' },
-  },
-  {
-    id: 'passage.cheatSheet',
-    label: 'Character cheat sheet for the selected passage',
-    scope: 'global',
-    chord: { mod: true, key: 'k' },
   },
 
   // The editor's own, handled in `HarloweEditor` and never seen by the window.
