@@ -22,7 +22,7 @@ import type { CommandBinding } from './lib/ui/commands'
 import { useViewport } from './composables/useViewport'
 import { isPhantomId } from './lib/graph/constants'
 import * as play from './stores/play'
-import { prefs } from './stores/prefs'
+import { prefs, setPref } from './stores/prefs'
 import * as store from './stores/story'
 import { NODE_STATES } from './types/story'
 
@@ -334,6 +334,17 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
 
   'help.about': { run: openHelp },
   'help.settings': { run: () => (settingsOpen.value = true) },
+
+  // The whole Developer menu hangs off `visible`: with the mode off neither row
+  // renders, and `AppMenuBar` then drops the title too. `setPref` rather than
+  // `setDrawingPref` — text moves no card, so there is nothing to lay out again
+  // and nothing for `configKey` to say.
+  'dev.exportSkeleton': { run: store.saveSkeletonToFile, visible: prefs.devMode },
+  'dev.hideText': {
+    run: () => setPref('hideCardText', !prefs.hideCardText),
+    checked: prefs.hideCardText,
+    visible: prefs.devMode,
+  },
 }))
 
 useShortcuts({
@@ -446,6 +457,7 @@ function dismissNotices() {
           :tag-colors="store.tagColors.value"
           :show-levels="showLevels"
           :show-codes="prefs.showCodes"
+        :textless="prefs.hideCardText"
           :run-of="store.cardSlugs.value"
           :is-ending-of="isEndingOf"
           @select="store.applySelect"

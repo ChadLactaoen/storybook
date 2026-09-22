@@ -33,6 +33,12 @@ const props = defineProps<{
   /** Draw each passage's code above its card. */
   showCodes: boolean
   /**
+   * Draw the whole canvas as shape and colour: no card text, no codes above
+   * them, no captions on the wires and no level tags in the gutter. The
+   * Developer menu's screenshot mode.
+   */
+  textless: boolean
+  /**
    * The running slug per passage, straight from the store's memoized map.
    * A passage that is absent has no route to it and shows nothing.
    */
@@ -53,7 +59,7 @@ const CODE_GAP = 13
 const codeLabels = computed(() => {
   // Both halves of the template guard: at a zoomed-out view nothing is drawn,
   // and building the list anyway would allocate per node on every relayout.
-  if (!props.detailed || !props.showCodes) return []
+  if (!props.detailed || !props.showCodes || props.textless) return []
   return props.layout.nodes.map((node) => ({
     id: node.id,
     x: node.x - node.width / 2,
@@ -167,7 +173,9 @@ const levelLabels = computed(() =>
           </g>
         </g>
 
-        <g v-if="detailed" class="labels">
+        <!-- A wire's caption is a glyph on the drawing like any other, so it
+             goes with the rest under `textless`. -->
+        <g v-if="detailed && !textless" class="labels">
           <template v-for="edge in layout.edges" :key="edge.edgeId">
             <g
               v-if="edge.label && edge.labelPoint && edgeLabelled(edge)"
@@ -207,13 +215,16 @@ const levelLabels = computed(() =>
         :dimmed="dimmed(node)"
         :detailed="detailed"
         :path-count="null"
+        :textless="textless"
         @select="(id, mode) => emit('select', id, mode)"
         @open="emit('open', $event)"
         @create="emit('create', $event)"
       />
     </div>
 
-    <div v-if="showLevels && detailed" class="gutter" :style="{ transform }">
+    <!-- The gutter's "Level 3" is a glyph on the drawing like any other, and it
+         was the last one left in a screenshot taken with the bands on. -->
+    <div v-if="showLevels && detailed && !textless" class="gutter" :style="{ transform }">
       <div
         v-for="band in levelLabels"
         :key="band.level"

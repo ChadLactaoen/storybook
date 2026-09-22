@@ -34,6 +34,25 @@ export interface Prefs {
   alignedView: boolean
   /** Tighter cards and gaps, to fit more of the story on screen. */
   compactSpacing: boolean
+  /**
+   * Reveal the Developer menu, which holds the tools for reporting a drawing
+   * rather than writing a story.
+   *
+   * A settings checkbox rather than a menu row of its own, because the thing it
+   * governs *is* a menu: a row that revealed its own menu would have to live
+   * somewhere else in the bar, and then the bar has a developer tool in it
+   * whether or not anyone asked for one.
+   */
+  devMode: boolean
+  /**
+   * Draw the cards as shape and colour with no glyph on them, for a screenshot
+   * that shows the structure rather than a wall of titles.
+   *
+   * Only reachable while `devMode` is on, and cleared when it goes off — the
+   * row that puts the text back would vanish with the menu, leaving an author
+   * looking at blank cards with no way to fix them.
+   */
+  hideCardText: boolean
 }
 
 /**
@@ -51,6 +70,10 @@ const DEFAULTS: Prefs = {
   // every existing author's canvas — so the check is here, in the reading.
   alignedView: false,
   compactSpacing: false,
+  // And the developer tools, for the plainer reason that an author did not ask
+  // for them.
+  devMode: false,
+  hideCardText: false,
 }
 
 /**
@@ -70,6 +93,12 @@ function load(): Prefs {
     for (const key of Object.keys(out) as (keyof Prefs)[]) {
       if (typeof parsed?.[key] === 'boolean') out[key] = parsed[key] as boolean
     }
+    // The same cascade `setPref` applies, because a stored pair can disagree —
+    // a hand-edited store, or a build where this rule did not exist yet. Left
+    // alone, `{ devMode: false, hideCardText: true }` comes back as blank cards
+    // with no Developer menu to fix them, and `setPref('devMode', false)` could
+    // not rescue it either: its no-op guard fires first.
+    if (!out.devMode) out.hideCardText = false
   } catch {
     // Unreadable or hand-edited: the defaults are a fine answer.
   }
@@ -95,10 +124,26 @@ export const prefs = reactive<Prefs>(load())
 export function setPref<K extends keyof Prefs>(key: K, value: Prefs[K]): void {
   if (prefs[key] === value) return
   prefs[key] = value
+  // Leaving developer mode takes its tools with it, so anything one of them
+  // turned on has to come off here. `hideCardText` is the case that matters:
+  // the row that would put the text back is in the menu that just disappeared.
+  if (key === 'devMode' && value === false) prefs.hideCardText = false
   persist()
 }
 
 /** Back to defaults. Exists because the store is a singleton across a test file. */
+/**
+ * Re-read the store into the live object.
+ *
+ * Its reason for existing is `load`'s repair pass: `prefs` is built once at
+ * module load, so without this nothing can assert that a stored pair which
+ * disagrees comes back repaired rather than as written. Sits beside
+ * `resetPrefs`, which is here for the same kind of reason.
+ */
+export function reloadPrefs(): void {
+  Object.assign(prefs, load())
+}
+
 export function resetPrefs(): void {
   Object.assign(prefs, DEFAULTS)
   try {

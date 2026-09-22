@@ -49,17 +49,35 @@ const switchedTo = ref<CommandGroup | null>(null)
 
 watch(open, (g) => emit('openChange', g !== null))
 
+/**
+ * Absent means shown, matching how an absent `enabled` means enabled — and a
+ * command with no binding at all stays visible, so an unbound row is still
+ * drawn (dimmed) for `render.test.ts` to catch rather than quietly vanishing.
+ */
+function isVisible(id: string): boolean {
+  return props.bindings[id]?.visible !== false
+}
+
 /** Only the groups that actually hold something, so an empty menu never shows. */
-const groups = computed(() => GROUPS.filter((g) => commandsIn(g).length > 0))
+const groups = computed(() =>
+  GROUPS.filter((g) => commandsIn(g).some((c) => isVisible(c.id))),
+)
 
 type Row = { kind: 'divider' } | { kind: 'item'; id: string }
 
-/** The rows of the open menu, with a divider wherever the section changes. */
+/**
+ * The rows of the open menu, with a divider wherever the section changes.
+ *
+ * Hidden rows are filtered out *before* the loop rather than skipped inside it,
+ * and that is what keeps the dividers right: a section whose rows are all
+ * hidden disappears along with its divider, and no leading or doubled divider
+ * can appear. Skipping inside would still advance `section` and emit both.
+ */
 const rows = computed<Row[]>(() => {
   if (open.value === null) return []
   const items: Row[] = []
   let section: number | undefined
-  for (const c of commandsIn(open.value)) {
+  for (const c of commandsIn(open.value).filter((c) => isVisible(c.id))) {
     if (section !== undefined && c.section !== section) items.push({ kind: 'divider' })
     section = c.section
     items.push({ kind: 'item', id: c.id })

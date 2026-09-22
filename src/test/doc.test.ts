@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { linkSyntaxIn, parseLinks, retargetLinks } from '../lib/harlowe/links'
 import {
+  danglingTargetsWithArrows,
+  docFromSkeleton,
+  serializeSkeleton,
+  skeletonOf,
+} from '../lib/doc/skeleton'
+import { layoutStory } from '../lib/graph/layout'
+import { bigStory } from './fixtures/big-story'
+import {
   addTag,
   createNode,
   deleteNode,
@@ -992,4 +1000,101 @@ describe('no mutation writes to the document it was given', () => {
       expect(serializeDoc(doc)).toBe(before)
     })
   }
+})
+
+describe('a skeleton', () => {
+  /**
+   * The promise the Developer menu's export makes: enough to reproduce the
+   * drawing, and nothing anybody wrote. Both halves are asserted, because
+   * either one alone is easy to keep by accident — a file that carried the
+   * whole document would redraw perfectly, and an empty one would leak nothing.
+   */
+  it('redraws the story it came from, in either packing', () => {
+    const doc = bigStory()
+    const back = docFromSkeleton(JSON.parse(serializeSkeleton(skeletonOf(doc))))
+    for (const packing of ['balanced', 'aligned'] as const) {
+      expect(layoutStory(back, { packing }).stats.hash).toBe(
+        layoutStory(doc, { packing }).stats.hash,
+      )
+    }
+  })
+
+  it('carries no prose, no titles and no tags', () => {
+    const doc = bigStory()
+    const text = serializeSkeleton(skeletonOf(doc))
+    // The fixture's bodies are seeded lorem; its titles are `L<level>N<index>`.
+    const first = doc.nodes[0]!
+    expect(first.body.length).toBeGreaterThan(100)
+    expect(text).not.toContain(first.body.slice(0, 40))
+    expect(text).not.toContain(first.title)
+    for (const key of ['"title"', '"body"', '"tags"', '"state"', '"note"', '"characters"']) {
+      expect(text).not.toContain(key)
+    }
+    // Small enough to paste into a bug report: the fixture is ~260 KB.
+    expect(text.length).toBeLessThan(JSON.stringify(doc).length / 10)
+  })
+
+  /**
+   * Ids are `String(nextId)` and deleting an early passage leaves the run
+   * sparse, so counting the nodes instead of reading the largest id hands the
+   * next `addPassage` an id a live node already holds.
+   */
+  it('leaves room past the largest id, not past the count', () => {
+    const doc = docFrom({ One: ['Two', 'Three'], Two: [], Three: [] })
+    const pruned = deleteNodes(doc, [doc.nodes.find((n) => n.title === 'Two')!.id])
+    // Sparse: the run skips the id the deleted passage held.
+    expect(pruned.nodes.map((n) => n.id)).toEqual(['1', '3'])
+
+    const back = docFromSkeleton(skeletonOf(pruned))
+    // Counting the nodes would say 3, which "P3" already holds.
+    expect(back.nextId).toBe(4)
+    const ids = createNode(back, {}).doc.nodes.map((n) => n.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  /**
+   * A resolved target is a code and `setCode` bans link syntax from one, but a
+   * dangling target is whatever the author typed — and dangling links are what
+   * this file exists to reproduce. The arrow is read before the bar, so
+   * `Chapter 2|draft` is a real target; re-emitted bare it would come back as
+   * `draft`, and the skeleton would redraw a phantom the story does not have.
+   */
+  it('round-trips a dangling target that contains link syntax', () => {
+    for (const target of ['Chapter 2|draft', 'Scene<-two', 'plain']) {
+      const doc = docFrom({ One: [] })
+      const written = setBody(doc, doc.nodes[0]!.id, `[[Onward->${target}]]`)
+      expect(parseLinks(written.nodes[0]!.body)[0]!.target).toBe(target)
+
+      const skeleton = skeletonOf(written)
+      expect(skeleton.nodes[0]!.links).toEqual([target])
+      const back = docFromSkeleton(skeleton)
+      expect(parseLinks(back.nodes[0]!.body)[0]!.target).toBe(target)
+    }
+  })
+
+  it('names the one target shape it cannot reproduce', () => {
+    const doc = docFrom({ One: [] })
+    const written = setBody(doc, doc.nodes[0]!.id, '[[Onward->a->b]]')
+    // The parse takes the *last* arrow, so the target is `b` and there is
+    // nothing to report. A target that genuinely holds one would be listed.
+    expect(parseLinks(written.nodes[0]!.body)[0]!.target).toBe('b')
+    expect(danglingTargetsWithArrows(skeletonOf(written))).toEqual([])
+    expect(
+      danglingTargetsWithArrows({
+        kind: 'storybook.skeleton.v1',
+        startNodeId: '1',
+        nodes: [{ id: '1', code: 'P1', links: ['a->b'] }],
+      }),
+    ).toEqual(['a->b'])
+  })
+
+  it('keeps the links of a body in order, duplicates and dangling targets included', () => {
+    const doc = docFrom({ One: ['Two', 'Three', 'Two'], Two: [], Three: ['Nowhere'] })
+    const byCode = new Map(skeletonOf(doc).nodes.map((n) => [n.code, n.links]))
+    // Two links to one passage are two edges that cross independently, and
+    // `deriveGraph` numbers edges by their ordinal within the body.
+    expect(byCode.get('P1')).toEqual(['P2', 'P3', 'P2'])
+    // An unresolved target is named verbatim; it becomes a phantom on redraw.
+    expect(byCode.get('P3')).toEqual(['Nowhere'])
+  })
 })

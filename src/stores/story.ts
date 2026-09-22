@@ -1,5 +1,6 @@
 import { computed, markRaw, reactive, ref, shallowRef, watch } from 'vue'
 import { exportDoc, importDoc } from '../lib/doc/file'
+import { exportSkeleton } from '../lib/doc/skeleton'
 import * as M from '../lib/doc/mutations'
 import { serializeDoc } from '../lib/doc/serialize'
 import { clearLocal, loadLocal, localMeta, saveLocal } from '../lib/doc/storage'
@@ -483,6 +484,11 @@ export function loadStory(json: string): void {
 
 export function saveToFile(): void {
   exportDoc(state.doc)
+}
+
+/** The Developer menu's structure-only export. See `lib/doc/skeleton.ts`. */
+export function saveSkeletonToFile(): void {
+  exportSkeleton(state.doc)
 }
 
 export function discardStory(): void {
