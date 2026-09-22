@@ -79,6 +79,8 @@ export interface LevelingResult {
 
 export type LNodeKind = 'real' | 'dummy'
 
+export type PackingMode = 'balanced' | 'aligned'
+
 export interface LNode {
   key: LKey
   kind: LNodeKind
@@ -211,6 +213,17 @@ export interface LayoutResult {
 }
 
 export interface LayoutConfig {
+  /**
+   * How `tidy.ts` resolves a parent that cannot reach its children's midpoint.
+   *
+   * `balanced` takes only the slack already in the layer, so a card sitting on
+   * its midpoint is never moved off it. `aligned` shoves the run ahead instead,
+   * which reaches space the first cannot at the cost of disturbing cards that
+   * were already right, and of drawing wider. A story with no merges is drawn
+   * identically either way — nothing is ever off its midpoint in a tree, so
+   * there is nothing for either strategy to do.
+   */
+  packing: PackingMode
   nodeWidth: number
   nodeHeight: number
   nodeGap: number

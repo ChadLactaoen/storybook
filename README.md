@@ -159,7 +159,7 @@ canonical JSON; **Import** reads it back.
 | `layered` | insert dummy nodes so multi-level edges route through inter-node gaps instead of across cards |
 | `ordering` / `crossings` | DFS seed, weighted-median sweeps, Barth–Jünger–Mutzel crossing counts |
 | `xcoord` | lay each component out, then pack them left to right |
-| `tidy` | bottom-up rigid-subtree placement: parents land on the midpoint of their outermost children — exactly so for a tree, best effort once a passage has two parents |
+| `tidy` | bottom-up rigid-subtree placement: parents land on the midpoint of their outermost children — exactly so for a tree, best effort once a passage has two parents. A slide that restores the within-layer order carries the subtree under it, and `recentre` pulls the ancestors above it back toward their midpoints as far as the layer has room for. How it reaches that room is the View menu's **Balanced** / **Aligned** setting (`LayoutConfig.packing`): balanced takes only the slack already there, aligned shoves the run ahead and draws wider. A story with no merges is drawn identically either way |
 | `routing` | C1-smooth cubics, straight-run collapse, arrowheads clipped to card boundaries |
 | `paths` | distinct path counts as BigInt (they grow exponentially), forwards from a passage, backwards to one, forwards while avoiding a set of passages, and forwards split by how many marked passages a route goes through; also the one definition of an edge a route can take |
 | `stats` | word count, the routes reaching each ending, and the draft-health lint |

@@ -19,6 +19,7 @@ export const EQUILATERAL_FACTOR = 0.8660254037844386
 export const LAYER_SPACING = Math.round(EQUILATERAL_FACTOR * SIBLING_SPACING) // 222
 
 export const DEFAULT_CONFIG: LayoutConfig = {
+  packing: 'balanced',
   nodeWidth: NODE_W,
   nodeHeight: NODE_H,
   nodeGap: NODE_GAP,
@@ -29,6 +30,42 @@ export const DEFAULT_CONFIG: LayoutConfig = {
   orderingSweeps: 8,
   transposeMaxLayerWidth: 200,
   coordPrecision: 2,
+}
+
+/**
+ * Tighter cards and gaps, for fitting more of a story on screen.
+ *
+ * Only the three numbers that decide how much room a card takes: the packing
+ * strategy is a separate setting, because how much fits on screen and where a
+ * parent sits are different questions, and one of them does nothing at all to a
+ * story with no merges.
+ *
+ * `layerSpacing` is recomputed rather than kept, or the drawing would keep its
+ * full height while narrowing and a fan would stop being equilateral — the
+ * property `EQUILATERAL_FACTOR` exists to hold. Height follows width down.
+ *
+ * Card text is unaffected by this and must stay that way: the title clamps to
+ * two lines and chips clip, so nothing here can change geometry by being long.
+ */
+export const COMPACT_W = 150
+export const COMPACT_GAP = 24
+/**
+ * Scaled with the rest, and it has to be. `sep` charges `edgeGap` beside a
+ * dummy, so two cards with a wire threading between them cost
+ * `nodeWidth + 2 * edgeGap` against `nodeWidth + nodeGap` for two that are
+ * simply adjacent. The wire is only free to pass while `2 * edgeGap <= nodeGap`
+ * — true at the defaults (36 against 56) and the whole reason a long edge can
+ * go between two passages rather than around them. Left at 18 here it would be
+ * 36 against 24, so every long edge would *widen* a compact drawing instead of
+ * fitting inside a gap it already had.
+ */
+export const COMPACT_EDGE_GAP = 10
+
+export const COMPACT_CONFIG: Omit<Partial<LayoutConfig>, 'packing'> = {
+  nodeWidth: COMPACT_W,
+  nodeGap: COMPACT_GAP,
+  edgeGap: COMPACT_EDGE_GAP,
+  layerSpacing: Math.round(EQUILATERAL_FACTOR * (COMPACT_W + COMPACT_GAP)),
 }
 
 export const PHANTOM_PREFIX = 'phantom:'

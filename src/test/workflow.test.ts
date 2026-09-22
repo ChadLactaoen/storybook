@@ -1,10 +1,12 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { serializeDoc } from '../lib/doc/serialize'
 import { deriveGraph } from '../lib/graph/derive'
 import { layoutStory } from '../lib/graph/layout'
 import { planRecode } from '../lib/graph/recode'
 import type { RecodeOptions } from '../lib/graph/recode'
 import * as store from '../stores/story'
+import { prefs, resetPrefs } from '../stores/prefs'
+import { docFrom } from './helpers'
 
 /**
  * Walks the scenarios from the spec through the real store, exercising the same
@@ -1299,5 +1301,99 @@ describe('marking endings', () => {
     expect(store.pathsFrom(idOf('Start'))).toBe(2n)
     expect(store.pathsFrom(idOf('Four'))).toBe(1n)
     expect(store.layout.value.stats.hash).toBe(hash)
+  })
+})
+
+/**
+ * The drawing settings, through the store rather than through `layoutStory`.
+ *
+ * `layout.test.ts` covers what each setting does to a drawing by passing a
+ * config straight in. What it cannot see is the wiring: `configKey` is what
+ * puts the settings in the memo key, and without it `setDoc` would return at
+ * its early exit — the document has not changed — leaving the menu's rows
+ * silently doing nothing until the next structural edit. These commands are
+ * chordless, so `commands.test.ts` enrols none of them either, which would
+ * leave that drift with nothing watching for it at all.
+ */
+describe('the drawing settings', () => {
+  beforeEach(() => {
+    resetPrefs()
+    // A passage reached from three levels at once, which is what makes the two
+    // packings disagree. A tree draws identically under either, so a fixture
+    // without a merge could not tell a working toggle from a dead one.
+    store.newStory('Settings')
+    store.loadStory(
+      serializeDoc(
+        docFrom({
+          Start: ['A', 'B', 'C', 'D'],
+          A: ['A1', 'A2'],
+          B: ['B1', 'B2'],
+          C: ['C1', 'C2', 'Merge'],
+          D: ['D1', 'D2'],
+          A1: ['A1a'],
+          A2: ['A2a'],
+          B1: ['B1a', 'Merge'],
+          B2: ['B2a'],
+          C1: ['C1a'],
+          C2: ['C2a'],
+          D1: ['D1a'],
+          D2: ['D2a'],
+          A1a: ['Merge'],
+          // The endings matter: without a populated layer below them the two
+          // packings have nothing to disagree about and this suite would pass
+          // against a toggle that did nothing at all.
+          A2a: ['End1'],
+          B1a: [],
+          B2a: ['End2'],
+          C1a: ['End3'],
+          C2a: [],
+          D1a: ['End4'],
+          D2a: [],
+          Merge: [],
+          End1: [],
+          End2: [],
+          End3: [],
+          End4: [],
+        }),
+      ),
+    )
+  })
+
+  afterEach(() => resetPrefs())
+
+  it('redraws when a setting changes, in the same turn', () => {
+    const before = store.layout.value.stats.hash
+    store.setDrawingPref('alignedView', true)
+    // Synchronously, deliberately: a watcher would flush a tick late and leave
+    // anything reading `layout` in this turn looking at the previous drawing.
+    expect(store.layout.value.stats.hash).not.toBe(before)
+    expect(store.layout.value.nodes).toHaveLength(store.state.doc.nodes.length)
+  })
+
+  it('draws narrower on compact, and puts it back on the way out', () => {
+    const width = () => store.layout.value.bounds.maxX - store.layout.value.bounds.minX
+    const roomy = width()
+    store.setDrawingPref('compactSpacing', true)
+    expect(width()).toBeLessThan(roomy)
+    store.setDrawingPref('compactSpacing', false)
+    expect(width()).toBe(roomy)
+  })
+
+  it('persists the choice, so a reload draws what was left on screen', () => {
+    store.setDrawingPref('alignedView', true)
+    const aligned = store.layout.value.stats.hash
+    // What a reload restores is the preference, not the drawing: nothing
+    // positional is ever saved, so the same preference has to reproduce it.
+    expect(prefs.alignedView).toBe(true)
+    store.setDrawingPref('alignedView', false)
+    store.setDrawingPref('alignedView', true)
+    expect(store.layout.value.stats.hash).toBe(aligned)
+  })
+
+  it('is a no-op when the setting is already what it is', () => {
+    store.setDrawingPref('alignedView', true)
+    const version = store.layoutVersion.value
+    store.setDrawingPref('alignedView', true)
+    expect(store.layoutVersion.value).toBe(version)
   })
 })
