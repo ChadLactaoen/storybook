@@ -300,15 +300,21 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
     run: () => (showMinimap.value = !showMinimap.value),
     checked: showMinimap.value,
   },
-  // One boolean behind two rows, so the pair reads as a choice rather than as
-  // two independent switches that could both be off.
+  // One setting behind three rows, so the group reads as a choice rather than
+  // as independent switches that could all be off. Each row sets its own mode
+  // outright — none of them toggles, so clicking the ticked one is a no-op
+  // rather than a way to end up with no packing chosen at all.
   'view.packBalanced': {
-    run: () => store.setDrawingPref('alignedView', false),
-    checked: !prefs.alignedView,
+    run: () => store.setDrawingPref('packing', 'balanced'),
+    checked: prefs.packing === 'balanced',
   },
   'view.packAligned': {
-    run: () => store.setDrawingPref('alignedView', true),
-    checked: prefs.alignedView,
+    run: () => store.setDrawingPref('packing', 'aligned'),
+    checked: prefs.packing === 'aligned',
+  },
+  'view.packStraight': {
+    run: () => store.setDrawingPref('packing', 'straight'),
+    checked: prefs.packing === 'straight',
   },
   'view.compact': {
     run: () => store.setDrawingPref('compactSpacing', !prefs.compactSpacing),

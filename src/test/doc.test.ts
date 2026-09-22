@@ -1009,10 +1009,10 @@ describe('a skeleton', () => {
    * either one alone is easy to keep by accident — a file that carried the
    * whole document would redraw perfectly, and an empty one would leak nothing.
    */
-  it('redraws the story it came from, in either packing', () => {
+  it('redraws the story it came from, in every packing', () => {
     const doc = bigStory()
     const back = docFromSkeleton(JSON.parse(serializeSkeleton(skeletonOf(doc))))
-    for (const packing of ['balanced', 'aligned'] as const) {
+    for (const packing of ['balanced', 'aligned', 'straight'] as const) {
       expect(layoutStory(back, { packing }).stats.hash).toBe(
         layoutStory(doc, { packing }).stats.hash,
       )

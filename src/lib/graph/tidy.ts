@@ -1,3 +1,5 @@
+import { alignCandidates } from './candidates'
+import { separation } from './constants'
 import type { LKey, LNode, LayeredGraph, LayoutConfig } from './types'
 
 /**
@@ -41,32 +43,20 @@ export function tidyComponent(lg: LayeredGraph, layers: LKey[][], cfg: LayoutCon
   // agree on which child is outermost, so a parent centred in both stays exactly
   // centred in the average; only the nodes the two passes disagree about move,
   // and they split the difference.
-  const span = (xs: Map<LKey, number>) => {
-    let min = Infinity
-    let max = -Infinity
-    for (const layer of layers) {
-      for (const k of layer) {
-        const n = lg.nodes.get(k)!
-        const x = xs.get(k)!
-        min = Math.min(min, x - n.width / 2)
-        max = Math.max(max, x + n.width / 2)
-      }
-    }
-    return { min, max, width: max - min }
-  }
-  const l = span(left)
-  const r = span(right)
-  if (!Number.isFinite(l.min) || !Number.isFinite(r.min)) return
-  // Anchor on the narrower candidate, the way Brandes–Köpf balances its own.
-  const narrow = l.width <= r.width ? l : r
-  const dl = narrow.min - l.min
-  const dr = narrow.max - r.max
+  //
+  // The lining-up is `candidates.ts`, shared with `straight.ts`, which runs
+  // four passes and takes the middle two instead of averaging. The measuring
+  // and the anchoring are identical in both and the feasibility argument above
+  // is what rests on them, so they are defined once.
+  const keys: LKey[] = []
+  for (const layer of layers) for (const k of layer) keys.push(k)
+  const aligned = alignCandidates(lg, keys, [
+    { xs: left, anchor: 'min' },
+    { xs: right, anchor: 'max' },
+  ])
+  if (!aligned) return
 
-  for (const layer of layers) {
-    for (const k of layer) {
-      lg.nodes.get(k)!.x = (left.get(k)! + dl + (right.get(k)! + dr)) / 2
-    }
-  }
+  for (const k of keys) lg.nodes.get(k)!.x = (left.get(k)! + right.get(k)!) / 2
 }
 
 /**
@@ -94,8 +84,7 @@ function candidate(
 }
 
 function sweep(lg: LayeredGraph, layers: LKey[][], cfg: LayoutConfig, mirror: boolean): void {
-  const sep = (a: LNode, b: LNode) =>
-    a.width / 2 + b.width / 2 + (a.kind === 'real' && b.kind === 'real' ? cfg.nodeGap : cfg.edgeGap)
+  const sep = separation(cfg)
 
   const { roots, childrenOf } = spanningForest(lg, layers)
   // Root subtrees are packed in the order they are found, so the mirrored pass

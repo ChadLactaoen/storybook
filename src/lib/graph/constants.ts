@@ -1,4 +1,4 @@
-import type { LayoutConfig } from './types'
+import type { LNode, LayoutConfig } from './types'
 
 export const NODE_W = 200
 export const NODE_H = 96
@@ -66,6 +66,25 @@ export const COMPACT_CONFIG: Omit<Partial<LayoutConfig>, 'packing'> = {
   nodeGap: COMPACT_GAP,
   edgeGap: COMPACT_EDGE_GAP,
   layerSpacing: Math.round(EQUILATERAL_FACTOR * (COMPACT_W + COMPACT_GAP)),
+}
+
+/**
+ * How far apart two things in the same layer must sit, centre to centre.
+ *
+ * The one definition, because there are now two modules placing cards and a
+ * separation both of them agree on is the whole of what "no overlap" means. Two
+ * copies of this is the drift `forwardTargets` documents in CLAUDE.md — change
+ * how a card beside a dummy is charged in one and the other keeps the old rule,
+ * and only the packing mode that happened to be tested draws correctly.
+ *
+ * A dummy has no width and is charged `edgeGap` rather than `nodeGap`, which is
+ * what lets a long link pass *between* two cards instead of around them — see
+ * `COMPACT_EDGE_GAP` for the `2 * edgeGap <= nodeGap` invariant that keeps it
+ * free.
+ */
+export function separation(cfg: LayoutConfig): (a: LNode, b: LNode) => number {
+  return (a, b) =>
+    a.width / 2 + b.width / 2 + (a.kind === 'real' && b.kind === 'real' ? cfg.nodeGap : cfg.edgeGap)
 }
 
 export const PHANTOM_PREFIX = 'phantom:'

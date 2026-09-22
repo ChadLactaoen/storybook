@@ -149,7 +149,7 @@ dangling on purpose, so it must be captured when the editor takes focus, not re-
 | `src/components/`, `src/composables/` | Presentation; viewport pan/zoom and global shortcuts |
 
 The graph pipeline runs `derive → acyclic → layering → components → layered → ordering /
-crossings → xcoord / tidy → routing` (each a module of that name). Alongside it sit the
+crossings → xcoord / (tidy | straight) → routing` (each a module of that name). Alongside it sit the
 analyses the pipeline never calls: `paths.ts` counts distinct paths as `BigInt` (both
 forwards from a passage and backwards to one) and owns the one definition of a route edge,
 `gates.ts` reads what the story's `(if:)` macros say about which routes exist, `slugs.ts`

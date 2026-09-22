@@ -6,6 +6,7 @@ import { countPaths } from '../lib/graph/paths'
 import { orphanIds, reachableFrom, strandedBy } from '../lib/graph/reachability'
 import { COMPACT_CONFIG, DEFAULT_CONFIG, NODE_GAP } from '../lib/graph/constants'
 import { deleteNodes } from '../lib/doc/mutations'
+import type { LayoutResult, PackingMode } from '../lib/graph/types'
 import { docFrom, minCardGap, shuffled } from './helpers'
 import { bigStory } from './fixtures/big-story'
 
@@ -450,6 +451,10 @@ describe('geometry', () => {
     // to disagree about, and a story that never merges cannot be affected by
     // the choice at all. Asserted across depths because the shapes differ —
     // a two-deep fan packs nothing like a four-deep one.
+    //
+    // `straight` is deliberately not in here. It is a different rule rather
+    // than a second way of reaching this one, and the test below is what says
+    // so — see `straight.ts`, and do not "fix" this by adding it.
     for (const spec of [BINARY_3, BINARY_4, WIDE_TREE]) {
       const doc = docFrom(spec)
       const balanced = layoutStory(doc, { packing: 'balanced' })
@@ -462,18 +467,149 @@ describe('geometry', () => {
     }
   })
 
+  it('puts a fan’s parent on its median child in straight, not on the midpoint', () => {
+    // The cost of `straight`, pinned as precisely as the gain below it, because
+    // it is the easier of the two to ship by accident. `tidy.ts` holds "a
+    // parent sits between its outermost children"; this holds "a parent sits
+    // over one of them". On an even fan the two agree and nothing here would
+    // show it, so the fixture is lopsided on purpose: `Start` has five
+    // children and the third of them, `C`, carries a wider subtree than the
+    // first, so the median child and the midpoint of the outermost are not the
+    // same place.
+    const doc = docFrom(WIDE_TREE)
+    const xs = (packing: PackingMode) => {
+      const r = layoutStory(doc, { packing })
+      const at = (title: string) => r.nodes.find((n) => n.title === title)!.x
+      return { at, kids: ['A', 'B', 'C', 'D', 'E'].map(at) }
+    }
+
+    const straight = xs('straight')
+    const balanced = xs('balanced')
+    const middle = (straight.kids[0]! + straight.kids[4]!) / 2
+
+    // The two answers genuinely differ on this shape, or neither assertion
+    // below would be saying anything.
+    expect(straight.kids[2]).not.toBeCloseTo(middle, 1)
+
+    expect(straight.at('Start')).toBeCloseTo(straight.kids[2]!, 6)
+    expect(balanced.at('Start')).toBeCloseTo(
+      (balanced.kids[0]! + balanced.kids[4]!) / 2,
+      6,
+    )
+  })
+
   it('does draw a merging story differently, or the setting would be inert', () => {
     // The other half, and the reason the test above is not vacuous. Without
     // this a packing that had quietly stopped doing anything would pass every
-    // assertion in the file.
+    // assertion in the file. Pairwise rather than against `balanced` alone: two
+    // rows in the View menu that agreed with each other would be the same bug
+    // one step along.
     const doc = docFrom(MERGING)
-    const balanced = layoutStory(doc, { packing: 'balanced' })
-    const aligned = layoutStory(doc, { packing: 'aligned' })
-    expect(aligned.stats.hash).not.toBe(balanced.stats.hash)
-    // Aligned reaches slack by shoving, so it can only ever be as wide or wider.
-    expect(aligned.bounds.maxX - aligned.bounds.minX).toBeGreaterThan(
-      balanced.bounds.maxX - balanced.bounds.minX,
-    )
+    const drawn = new Map<PackingMode, LayoutResult>()
+    const seen = new Map<string, PackingMode>()
+    for (const packing of ['balanced', 'aligned', 'straight'] as const) {
+      const res = layoutStory(doc, { packing })
+      expect(seen.get(res.stats.hash), `${packing} draws the same as ${seen.get(res.stats.hash)}`)
+        .toBeUndefined()
+      seen.set(res.stats.hash, packing)
+      drawn.set(packing, res)
+    }
+    // Aligned reaches slack by shoving, so it can only ever be as wide or
+    // wider. Only that pair: `straight` is a different algorithm and its width
+    // against `aligned` depends on the story — see the note in `commands.ts`.
+    expect(drawn.get('aligned')!.bounds.width).toBeGreaterThan(drawn.get('balanced')!.bounds.width)
+  })
+
+  it('keeps a merged passage between its parents more often than either other packing', () => {
+    // What `straight` is for, stated as the thing an author actually sees: a
+    // passage reached from several others should sit among them and not off to
+    // one side of the lot, which is what puts a long diagonal on the canvas.
+    //
+    // Measured as a rate rather than asserted outright, because none of the
+    // three can promise it. A passage's own descendants pull too, the layer
+    // order is fixed by then, and both are allowed to win. What is being pinned
+    // is the ordering of the three, which is the reason the setting exists.
+    //
+    // Against `bigStory` because it has to be a story shape: branch, re-merge
+    // and skip. A tree has no multi-parent passage at all and would divide by
+    // zero here.
+    const doc = bigStory()
+    const stray = (packing: PackingMode) => {
+      const r = layoutStory(doc, { packing })
+      const parents = new Map<string, number[]>()
+      for (const e of r.edges) {
+        if (e.kind !== 'normal') continue
+        const from = r.nodeById.get(e.sourceId)
+        if (from === undefined) continue
+        const seen = parents.get(e.targetId)
+        if (seen) seen.push(from.x)
+        else parents.set(e.targetId, [from.x])
+      }
+      let outside = 0
+      let merges = 0
+      for (const [id, xs] of parents) {
+        if (xs.length < 2) continue
+        merges++
+        const x = r.nodeById.get(id)!.x
+        if (x < Math.min(...xs) - 0.01 || x > Math.max(...xs) + 0.01) outside++
+      }
+      expect(merges).toBeGreaterThan(20)
+      return outside / merges
+    }
+    // 5.4% against 12.5% and 36.6% at the time of writing. Compared rather than
+    // pinned: the fixture is allowed to grow, and the claim is about the
+    // algorithms rather than about those three numbers. Held in a local because
+    // each call is a full layout of a 224-passage story.
+    const straight = stray('straight')
+    expect(straight).toBeLessThan(stray('balanced'))
+    expect(straight).toBeLessThan(stray('aligned'))
+  })
+
+  it('never overlaps a card, with another card or with a link passing it', () => {
+    // `straight.ts` claims this outright — it packs whole blocks by longest
+    // path, so every separation holds by construction, and its four passes are
+    // combined by a per-node median, which order statistics say preserves them.
+    // A claim that strong is worth a test that would catch it being wrong,
+    // since the symptom is two things drawn on top of each other.
+    //
+    // Both halves, because `minCardGap` alone cannot see the one that matters.
+    // It reads `LayoutResult.nodes` — passages and phantoms — and most of the
+    // separations `compact` enforces have a *dummy* on one side of them. Break
+    // the widest-constraint branch so a card beside a dummy is charged
+    // `edgeGap` where `nodeGap` was due and a long link draws straight through
+    // a passage: no two cards have moved, and a card-only check passes a
+    // visibly wrong drawing. So the waypoints are checked too.
+    for (const doc of [docFrom(MERGING), bigStory()]) {
+      for (const packing of ['balanced', 'aligned', 'straight'] as const) {
+        for (const spacing of [{}, COMPACT_CONFIG]) {
+          const cfg = { ...spacing, packing }
+          const edgeGap = cfg.edgeGap ?? DEFAULT_CONFIG.edgeGap
+          const where = `${packing} ${spacing === COMPACT_CONFIG ? 'compact' : 'roomy'}`
+          const res = layoutStory(doc, cfg)
+
+          expect(
+            minCardGap(res.nodes),
+            where,
+          ).toBeGreaterThanOrEqual(Math.min(cfg.nodeGap ?? NODE_GAP, 2 * edgeGap) - 0.01)
+
+          // Interior waypoints only: a polyline's first and last points are
+          // anchors *on* the source and target cards, so they are meant to
+          // touch. Everything between them is a dummy, and a dummy is charged
+          // `edgeGap` from the card beside it.
+          let closest = Infinity
+          for (const edge of res.edges) {
+            for (let i = 1; i < edge.points.length - 1; i++) {
+              const p = edge.points[i]!
+              for (const n of res.nodes) {
+                if (Math.abs(p.y - n.y) > 1) continue
+                closest = Math.min(closest, Math.abs(p.x - n.x) - n.width / 2)
+              }
+            }
+          }
+          if (Number.isFinite(closest)) expect(closest, where).toBeGreaterThanOrEqual(edgeGap - 0.01)
+        }
+      }
+    }
   })
 
   it('draws compact narrower and shorter without crowding the cards', () => {
@@ -504,10 +640,10 @@ describe('geometry', () => {
 
   it('stays deterministic under every combination, not just the default', () => {
     // Every other determinism test in this file exercises the defaults only, so
-    // a strategy that leaned on node order would go unnoticed in three of the
-    // four settings a reader can actually pick.
+    // a strategy that leaned on node order would go unnoticed in five of the
+    // six settings a reader can actually pick.
     const doc = docFrom(MERGING)
-    for (const packing of ['balanced', 'aligned'] as const) {
+    for (const packing of ['balanced', 'aligned', 'straight'] as const) {
       for (const spacing of [{}, COMPACT_CONFIG]) {
         const cfg = { ...spacing, packing }
         const first = layoutStory(doc, cfg)

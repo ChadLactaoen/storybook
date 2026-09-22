@@ -285,10 +285,18 @@ export const COMMANDS: readonly CommandSpec[] = [
   },
 
   /*
-   * Two ticked rows over one boolean, the way `edit.state*` spells one-of-N.
+   * Three ticked rows over one setting, the way `edit.state*` spells one-of-N.
    * A menu here has dividers and no headings, so the labels carry the whole
-   * meaning and both say "view" — a bare "Balanced" in a View menu could be
-   * about anything.
+   * meaning and all three say "view" — a bare "Balanced" in a View menu could
+   * be about anything.
+   *
+   * Ordered as two and one: the pair that are strategies of the same placement
+   * first, then the one that is a different algorithm. Not by width — which is
+   * the obvious ordering and is not stable enough to sort by. `balanced` is
+   * narrowest on nearly every story, but which of the other two is widest
+   * depends on the shape: across 300 generated stories `aligned` was widest on
+   * 224 and `straight` on 73, and on a real 233-passage draft `straight` was
+   * the widest of the three.
    *
    * Chordless on purpose. These are settings, reached once and left alone, and
    * a chordless row enrols nothing in `commands.test.ts` and adds no row to the
@@ -311,6 +319,15 @@ export const COMMANDS: readonly CommandSpec[] = [
     scope: 'global',
     toggle: true,
     hint: 'Free up room for parents crowded by a merge, by shifting the cards beside them. Draws wider',
+  },
+  {
+    id: 'view.packStraight',
+    label: 'Straight view',
+    group: 'view',
+    section: 3,
+    scope: 'global',
+    toggle: true,
+    hint: 'Sit each passage directly under one of its parents and straighten the long links. Draws wider than Balanced, and moves a lopsided fan off centre',
   },
   {
     id: 'view.compact',

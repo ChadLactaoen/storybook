@@ -3145,6 +3145,43 @@ describe('the menu bar', () => {
     expect(problems).toEqual([])
   })
 
+  /**
+   * Three rows over one setting, which is a radio group spelled as ticks. The
+   * thing that can go wrong is not that a row fails to work — `binds every
+   * command it offers` already covers that — but that the group stops being
+   * one-of-three: two ticks at once, or none, from a `checked` that compares
+   * against the wrong value. Neither is visible to any test that only presses
+   * the row and reads the layout back.
+   */
+  it('ticks exactly one packing row, and moves the tick when another is picked', async () => {
+    await withStory()
+    const PACKINGS = ['Balanced view', 'Aligned view', 'Straight view']
+    const ticked = () =>
+      PACKINGS.filter((l) => labelled(l)!.querySelector('.menu-check')!.textContent!.trim() === '✓')
+
+    title('View').click()
+    await nextTick()
+    for (const label of PACKINGS) expect(labelled(label), label).toBeDefined()
+    expect(ticked()).toEqual(['Balanced view'])
+
+    labelled('Straight view')!.click()
+    await nextTick()
+    expect(prefs.packing).toBe('straight')
+
+    title('View').click()
+    await nextTick()
+    expect(ticked()).toEqual(['Straight view'])
+
+    // Clicking the row that is already on is a no-op, not a way to end up with
+    // no packing at all: these rows set their mode outright rather than toggle.
+    labelled('Straight view')!.click()
+    await nextTick()
+    title('View').click()
+    await nextTick()
+    expect(ticked()).toEqual(['Straight view'])
+    expect(problems).toEqual([])
+  })
+
   it('walks its items with the arrow keys', async () => {
     await withStory()
     title('View').click()
@@ -3361,5 +3398,51 @@ describe('Cast & Settings from the keyboard', () => {
     await nextTick()
     expect(host.querySelector('.index')).toBeNull()
     expect(problems).toEqual([])
+  })
+})
+
+/**
+ * What a stored preference does on upgrade, which is a `prefs.ts` question
+ * rather than a component one — it is in this file only because `localStorage`
+ * is, and every other test file runs in vitest's `node` environment.
+ */
+describe('a preference store written by an older build', () => {
+  beforeEach(() => resetPrefs())
+  afterEach(() => resetPrefs())
+
+  /**
+   * `packing` was the boolean `alignedView` until a third mode existed, so an
+   * author who had ticked Aligned has the old key in their store and nothing
+   * else. Without the carry-over their canvas silently reverts to Balanced on
+   * upgrade — quiet, and indistinguishable from the setting having been
+   * forgotten, which is the reason it is worth a test rather than a comment.
+   */
+  it('carries a stored alignedView over to the packing it named', () => {
+    localStorage.setItem('storybook.prefs.v1', JSON.stringify({ alignedView: true }))
+    reloadPrefs()
+    expect(prefs.packing).toBe('aligned')
+
+    // The author who never ticked it was on `balanced` already, so there is
+    // nothing to carry and the default stands.
+    localStorage.setItem('storybook.prefs.v1', JSON.stringify({ alignedView: false }))
+    reloadPrefs()
+    expect(prefs.packing).toBe('balanced')
+
+    // A real `packing` wins over the old key, so a store written by this build
+    // is never reinterpreted through the previous one.
+    localStorage.setItem(
+      'storybook.prefs.v1',
+      JSON.stringify({ alignedView: true, packing: 'straight' }),
+    )
+    reloadPrefs()
+    expect(prefs.packing).toBe('straight')
+
+    // And a mode this build does not know is refused rather than cast. It
+    // would reach `assignX`, where the exhaustive switch throws — so the
+    // canvas would not render at all, on a value a hand-edited store or a
+    // downgrade can produce.
+    localStorage.setItem('storybook.prefs.v1', JSON.stringify({ packing: 'diagonal' }))
+    reloadPrefs()
+    expect(prefs.packing).toBe('balanced')
   })
 })

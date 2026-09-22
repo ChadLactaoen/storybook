@@ -79,7 +79,23 @@ export interface LevelingResult {
 
 export type LNodeKind = 'real' | 'dummy'
 
-export type PackingMode = 'balanced' | 'aligned'
+/**
+ * The x-coordinate assignments, as one list.
+ *
+ * A tuple with the union read off it, rather than a union with the list written
+ * out again beside it. `prefs.ts` has to check a stored mode at runtime — the
+ * store is hand-editable and survives a downgrade — and a hand-written check
+ * would compile perfectly against a fourth mode and then silently revert every
+ * author who picked it. Same reasoning as `SWITCHES` in that file: the list and
+ * its type are one thing, so they cannot drift.
+ */
+export const PACKING_MODES = ['balanced', 'aligned', 'straight'] as const
+
+export type PackingMode = (typeof PACKING_MODES)[number]
+
+export function isPackingMode(v: unknown): v is PackingMode {
+  return PACKING_MODES.includes(v as PackingMode)
+}
 
 export interface LNode {
   key: LKey
@@ -214,14 +230,28 @@ export interface LayoutResult {
 
 export interface LayoutConfig {
   /**
-   * How `tidy.ts` resolves a parent that cannot reach its children's midpoint.
+   * Which x-coordinate assignment to run. The first two are `tidy.ts`, the
+   * third is a different algorithm in `straight.ts`.
    *
-   * `balanced` takes only the slack already in the layer, so a card sitting on
-   * its midpoint is never moved off it. `aligned` shoves the run ahead instead,
-   * which reaches space the first cannot at the cost of disturbing cards that
-   * were already right, and of drawing wider. A story with no merges is drawn
-   * identically either way — nothing is ever off its midpoint in a tree, so
-   * there is nothing for either strategy to do.
+   * `balanced` and `aligned` differ only in how `tidy.ts` resolves a parent
+   * that cannot reach its children's midpoint: `balanced` takes only the slack
+   * already in the layer, so a card sitting on its midpoint is never moved off
+   * it, while `aligned` shoves the run ahead instead — reaching space the first
+   * cannot, at the cost of disturbing cards that were already right, and of
+   * drawing wider.
+   *
+   * `straight` replaces the whole approach with Brandes–Köpf: a card sits
+   * directly under one of its parents rather than near an average of several,
+   * long edges come out straight, and neither side of the drawing is favoured
+   * over the other. It draws wider than `balanced`, and it swaps the rule the
+   * other two hold — parent on the midpoint of its outermost children — for
+   * parent on its *median* child, which moves a lopsided fan. `straight.ts`
+   * has the argument, and says why no assignment gives both.
+   *
+   * `balanced` and `aligned` draw a story with no merges identically, since
+   * nothing is ever off its midpoint in a tree and neither has anything to do.
+   * `straight` does not join that: it is a different rule, not a repair of the
+   * same one.
    */
   packing: PackingMode
   nodeWidth: number

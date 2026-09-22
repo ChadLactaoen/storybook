@@ -28,6 +28,7 @@ import type {
   TraitField,
 } from '../types/story'
 import { compareNodes, compareStr, emptyDoc, nodeLabel } from '../types/story'
+import type { Prefs } from './prefs'
 import { prefs, setPref } from './prefs'
 
 const HISTORY_LIMIT = 100
@@ -114,7 +115,7 @@ function syncHistory(): void {
  */
 function layoutConfig(): Partial<LayoutConfig> {
   return {
-    packing: prefs.alignedView ? 'aligned' : 'balanced',
+    packing: prefs.packing,
     ...(prefs.compactSpacing ? COMPACT_CONFIG : null),
   }
 }
@@ -127,9 +128,13 @@ function layoutConfig(): Partial<LayoutConfig> {
  * having decided the drawing was still current. Two characters, and they are
  * the difference between a toggle that works and one that appears to do
  * nothing until the next edit.
+ *
+ * The packing mode is spelled out rather than abbreviated to its initial. The
+ * three begin `b`, `a` and `s` today and a fourth need not, and a key that
+ * collided would be this bug back again — read as unchanged, so not redrawn.
  */
 function configKey(): string {
-  return `${prefs.alignedView ? 'a' : 'b'}${prefs.compactSpacing ? 'c' : 'w'}`
+  return `${prefs.packing}:${prefs.compactSpacing ? 'c' : 'w'}`
 }
 
 /**
@@ -289,7 +294,10 @@ function setDoc(next: StoryDoc, precomputed?: LayoutResult): void {
  * `setDoc` does the rest: `configKey` is part of the memo key, so the key has
  * genuinely moved and the early exit lets this through.
  */
-export function setDrawingPref(key: 'alignedView' | 'compactSpacing', value: boolean): void {
+export function setDrawingPref<K extends 'packing' | 'compactSpacing'>(
+  key: K,
+  value: Prefs[K],
+): void {
   if (prefs[key] === value) return
   setPref(key, value)
   setDoc(state.doc)
