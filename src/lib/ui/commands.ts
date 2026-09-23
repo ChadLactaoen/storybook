@@ -104,6 +104,17 @@ export const COMMANDS: readonly CommandSpec[] = [
     scope: 'global',
     hint: 'Download the story as JSON',
   },
+  {
+    id: 'file.publish',
+    label: 'Publish\u2026',
+    group: 'file',
+    // Its own section: Import and Export move the story between copies of this
+    // editor, while Publish produces something for a reader. Chordless, like
+    // the rest of this menu - see `commands.test.ts` on what a chord would owe.
+    section: 2,
+    scope: 'global',
+    hint: 'Save a standalone playable web page of the story',
+  },
 
   // Edit
   {
@@ -347,7 +358,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     section: 1,
     scope: 'global',
     chord: { mod: true, key: 'p' },
-    hint: 'Read the story back, a choice at a time',
+    hint: 'Open the story in a new tab, in the player theme from Editor settings',
   },
   {
     id: 'story.stats',

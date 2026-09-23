@@ -144,6 +144,7 @@ dangling on purpose, so it must be captured when the editor takes focus, not re-
 | `src/lib/doc/` | `mutations.ts` (all document edits), `serialize.ts` (canonical JSON + repairing parse), `storage.ts` (localStorage), `file.ts` (import/export) |
 | `src/lib/graph/` | Deterministic Sugiyama pipeline; `layoutStory` in `layout.ts` is the only entry point the UI touches. `paths.ts`, `gates.ts`, `coverage.ts` and `stats.ts` are analyses over the derived graph, called by the store and the panels rather than by `layoutStory` |
 | `src/lib/harlowe/` | `links.ts` (parse/retarget), `highlight.ts` (macros are highlighted, never executed), `macros.ts` (macros are *read* — spans and names — still never executed), `run.ts` (the reader's evaluator: the one place a macro is acted on, in a sandbox that feeds nothing above it) |
+| `src/lib/publish/` | The standalone demo: `payload.ts` (the key graph), `crypto.ts` (the six primitives, one place), `html.ts` (assembly), `styles.ts` (the four themes' stylesheet), `themes.ts` (their names and fonts — pure data, read by both the editor's prefs and the bundle), `sample.ts` (the story a theme preview plays), `publish.ts` (orchestration: to a file, or to a tab) and `player/` (the bundled runtime, built by `vite/plugins/player-bundle.ts`) |
 | `src/lib/ui/` | `commands.ts` (the one description of every command — label, group, chord, hint) and `platform.ts` (the one answer to what this keyboard's modifier is called). Pure data: no Vue import, so it tests in `node` |
 | `src/stores/story.ts` | Module-level singleton store: a `reactive` state object plus exported functions and computeds. Not Pinia |
 | `src/components/`, `src/composables/` | Presentation; viewport pan/zoom and global shortcuts |
@@ -432,7 +433,7 @@ stands the *unmodified* keys down. It stops there: a menu is not a veil, and `Cm
 the zoom keys still belong to the canvas under it. `AppMenuBar` handles Escape, the arrows
 and Enter on `document` rather than on `window`, because `useShortcuts` means nothing by
 any of them; every other key closes the menu and travels on, which is what keeps `Cmd P`
-from opening the reader underneath a panel that is still up — every other key *except* a
+from opening a Play tab while a panel is still up — every other key *except* a
 lone `Shift`, `Meta`, `Control` or `Alt`, since every chord begins with one of those
 arriving on its own and closing there would dismiss the menu before the second key was
 pressed. It listens on `document`, and focuses the title on open, because Safari and
@@ -515,6 +516,86 @@ The memo is about the parse, not about render identity: `gates` reaches no card 
 `selectedGate` and the inspector read it. It exists so that an edit reaching no macro (a
 tag, a state, a note, the story's scratchpad) does not re-scan every body in the story.
 
+**A published demo carries the evaluator, and unlocks as it is read.** Publish writes one
+self-contained `.html` file: `run.ts` bundled as an IIFE, plus every reachable passage
+gzipped and AES-GCM-encrypted under its own random key. Each key is wrapped once per
+*inbound link* under a key derived from the link's source, so a passage opens only for
+someone who has walked a real route to it. Four things about that are load-bearing:
+
+- **Keys are per node, wrapped per edge.** Keying by route is the obvious reading of
+  invariant 3 and it is exponential — `paths.ts` counts routes as `BigInt` for a reason.
+  Per node is linear in edges and gives the property actually wanted: you need *some*
+  predecessor, which inductively means some full route from the start.
+- **A dangling edge must not be wrapped.** `deriveGraph` emits an edge for every parsed
+  link, including ones whose target is a phantom with no passage and so no blob. Wrapping
+  one hands the player a key that opens nothing — a crash where the design calls for a
+  disabled choice. Its *absence* is how the player learns the link is dangling, which is
+  why no code map ships.
+- **Compress, then pad, then encrypt.** Padding before compression is worse than not
+  padding: zeros compress away, so the output would track content length exactly while
+  looking hidden.
+- **The player builds DOM, never HTML strings.** `run.ts` escapes nothing because Vue
+  escapes unconditionally, and that property does not travel into a published file. Nodes
+  and `textContent` make the escaping bug impossible rather than merely avoided.
+
+What it buys is that reading ahead costs *writing a program* rather than pressing Ctrl+F.
+It does not stop a mechanical walk of the graph, and no single file could — everything
+needed to play is in it. Hardening the derivation would not help either, since a player
+pays per step taken while an attacker pays per edge once. Do not describe it as more than
+this, in the UI or anywhere else.
+
+**Play is the published page in a tab, not a second reader.** `publishStory` and
+`openInTab` both go through `buildPage`, and the only thing Play adds is `payload.author`,
+which switches on a console under the page. There is no in-editor reader any more: a
+second one would drift from the file readers actually get, the way the Vue reader and the
+player had already started to. Four things hold it together:
+
+- **The tab opens before the first `await`.** A popup blocker allows `window.open` only
+  while the click or key press is still being handled, and encrypting a story outlives
+  that. So `openInTab` opens a blank tab synchronously, then sends it to a Blob URL once
+  the page exists, and `playInTab` is not `async`. Put an `await` in front of
+  `window.open` and Play works on a small story and is silently blocked on a large one.
+- **The Blob URL is released when the tab closes, not when it loads.** A reload of the
+  tab asks for it again.
+- **A reader's saved theme yields to a new author default.** The player remembers `Aa`
+  choices under `storyboard.reader.v1` together with the theme they overrode (`over`), and
+  applies a saved theme only while that is still the author's. Play tabs share the
+  editor's origin, so without `over` one click on `Aa` would outrank every theme the author
+  picked after it.
+- **The envelope carries the code and the mark, never the payload beside it.** The
+  meta row shows `c` and the trail joins `s`, and both are sealed with the prose, because
+  a list of codes in the clear is the story's shape. The trail is the literal marks of the
+  route walked, not `runningSlugs`: one route cannot disagree with itself, so it never
+  needs a `*`. It sits in a footer below the choices, not in the meta row: it grows with
+  every passage, and in the top row a long one wrapped and pushed the title down. The meta
+  row is the code alone and identical on every passage, which is what keeps an ending from
+  showing itself early; an ending has no footer, since "Your trail" already shows it all.
+
+A theme is CSS only (`styles.ts`); every theme styles the same markup, switched by
+`data-theme` on `.reader` and `<html>`. No theme may transform the trail's text — it is
+case-sensitive, and the shared rules pin `text-transform` and `font-variant` on it with
+`!important` for exactly that reason.
+
+**The player is bundled by a Vite plugin, and `configFile: false` is why it terminates.**
+`virtual:player-bundle` is served by a nested `vite.build()` in lib/IIFE mode. Without
+`configFile: false` the inner build re-applies the plugin and recurses — it hangs rather
+than erroring, hence the tripwire in `configResolved`, which throws if the plugin ever finds
+itself resolving the player's own lib build. It is not a busy flag: two loads at once are
+normal (Vitest's jsdom and node graphs load the module separately), so they share one
+`inFlight` build instead. Three more constraints: lib mode
+returns an *array* of outputs, so it is `result[0].output[0].code`; the format must be
+`iife` and the published page a classic `<script>`, because a module script is CORS-blocked
+over `file://`, which is the whole delivery model; and the player's styles live in a
+template literal, since a CSS import would arrive as a second output and be dropped in
+silence. `publish.ts` reaches the virtual module through a **dynamic** import — a static one
+would drag it into the module graph of every test that touches the store, and it keeps the
+24 KB bundle out of the editor's initial chunk. `vitest.config.ts` carries the plugin too,
+so what the tests mount is what the editor ships.
+
+**Publishing is deliberately not deterministic.** Keys and nonces are random, so two
+publishes of one document differ in every byte. Only the plaintext is deterministic. Do not
+add a golden-hash test; `publish.test.ts` says so where someone would think to.
+
 ### Tests
 
 `src/test/helpers.ts` builds documents from a compact adjacency spec: `docFrom({ One:
@@ -529,7 +610,10 @@ combinations of several, each against its own brute-force walk of every route �
 oracles rather than one shared helper, since an oracle that agreed with the code under
 test by construction proves nothing),
 `stats` (endings, word counts, the lint, and the line between an authored link and a
-route edge) and `compat` (save files that predate a field),
+route edge), `publish` (the key graph, the progressive-unlock property, and that no prose is
+legible in the generated file), `player` (the reader view in jsdom, over a real payload —
+the meta row and trail, endings, keys, themes, and the author console), and `compat` (save
+files that predate a field),
 `recode` (numbering read off the layout, in both modes),
 `macros` (reading `(set:)` and `(if:)` out of a body, and the spans and chains an
 evaluator needs), `run` (the reader's evaluator — what renders, what is hidden, and what

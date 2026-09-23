@@ -898,13 +898,17 @@ function applySetting() {
       <template v-else>
         <section>
           <span class="label">Read</span>
-          <button class="btn" title="Open the reader on this passage" @click="emit('play', node.id)">
+          <button
+            class="btn"
+            title="Open the story in a new tab, starting at this passage"
+            @click="emit('play', node.id)"
+          >
             Play from here
           </button>
           <p class="hint">
-            Starts with every variable unset, because nothing before this passage has run. A
-            condition that depends on an earlier <code>(set:)</code> will not fire, and the
-            reader says so while the session is open.
+            Opens a new tab with every variable unset, because nothing before this passage has
+            run. A condition that depends on an earlier <code>(set:)</code> will not fire, and the
+            tab’s author console says so.
           </p>
         </section>
 

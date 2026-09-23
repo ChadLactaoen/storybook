@@ -204,8 +204,8 @@ function sibling(delta: number) {
  * still untouched: none of Escape, the arrows or Enter mean anything to it.
  *
  * Anything else closes the menu and is left to travel on. That is what keeps
- * ⌘P from opening the reader underneath a panel that is still up, without
- * teaching the `mod` branch about menus.
+ * ⌘P from opening a Play tab while a panel is still up, without teaching the
+ * `mod` branch about menus.
  */
 function onKeyDown(e: KeyboardEvent) {
   if (open.value === null) return

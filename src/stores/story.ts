@@ -1,6 +1,8 @@
 import { computed, markRaw, reactive, ref, shallowRef, watch } from 'vue'
 import { exportDoc, importDoc } from '../lib/doc/file'
 import { exportSkeleton } from '../lib/doc/skeleton'
+import { openInTab, publishStory } from '../lib/publish/publish'
+import type { Excluded } from '../lib/publish/payload'
 import * as M from '../lib/doc/mutations'
 import { serializeDoc } from '../lib/doc/serialize'
 import { clearLocal, loadLocal, localMeta, saveLocal } from '../lib/doc/storage'
@@ -20,6 +22,7 @@ import { reachableFrom, strandedBy } from '../lib/graph/reachability'
 import { readStoryMacros } from '../lib/harlowe/macros'
 import type { LayoutConfig, LayoutResult } from '../lib/graph/types'
 import type {
+  NodeId,
   NodeState,
   SelectMode,
   StoryDoc,
@@ -153,8 +156,6 @@ const layoutVersion = shallowRef(0)
  */
 const bodyVersion = shallowRef(0)
 let lastBodyKey = ''
-/** Bumps when a whole document is installed: new, load, import, discard. */
-const generation = shallowRef(0)
 
 /**
  * Memoize on the inputs layout actually depends on. Editing a tag or a state is
@@ -438,11 +439,6 @@ function resetViewState(): void {
   state.openCharacter = null
   state.warnings = []
   clearFilters()
-  // A different document, not an edit to this one. Node ids are `String(nextId)`
-  // from 1 up, so they collide across stories: anything holding a reference to
-  // one — a play session, say — cannot tell a swap from an edit by id alone, and
-  // would carry on reading a story that is no longer open.
-  generation.value++
 }
 
 /**
@@ -497,6 +493,73 @@ export function saveToFile(): void {
 /** The Developer menu's structure-only export. See `lib/doc/skeleton.ts`. */
 export function saveSkeletonToFile(): void {
   exportSkeleton(state.doc)
+}
+
+/** True while a publish is building, so the menu row can say so. */
+export const publishing = ref(false)
+
+/**
+ * Write a standalone playable copy of the story to disk.
+ *
+ * Async and slow — it encrypts and compresses every passage — so it reports
+ * through the notice banner rather than returning anything. What it must report
+ * is the passage count, because the published file contains only what a reader
+ * can reach: a passage stranded behind a broken link is silently absent from
+ * the demo, and finding that out when someone else opens it is too late.
+ */
+export async function publishToFile(): Promise<void> {
+  if (publishing.value) return
+  publishing.value = true
+  try {
+    const result = await publishStory(state.doc, prefs.playerTheme)
+    if (!result.saved) return
+    const notes = [
+      `Published ${result.shipped} ${result.shipped === 1 ? 'passage' : 'passages'} (${formatBytes(result.size)}).`,
+    ]
+    const left = (reason: Excluded['reason'], why: string) => {
+      const nodes = result.excluded.filter((e) => e.reason === reason).map((e) => e.node)
+      if (nodes.length === 0) return
+      const names = nodes.slice(0, 3).map((n) => nodeLabel(n.code, n.title))
+      const rest = nodes.length - names.length
+      notes.push(
+        `${nodes.length} ${nodes.length === 1 ? 'passage is' : 'passages are'} ${why} and ${nodes.length === 1 ? 'was' : 'were'} left out: ${names.join(', ')}${rest > 0 ? `, and ${rest} more` : ''}.`,
+      )
+    }
+    left('unreachable', 'unreachable from the start')
+    // The player stops at an ending, so nothing past one can be read.
+    left('past-ending', 'reachable only through an ending')
+    state.warnings = notes
+  } catch (e) {
+    state.warnings = [e instanceof Error ? e.message : 'Could not publish this story.']
+  } finally {
+    publishing.value = false
+  }
+}
+
+/**
+ * Open the story in a new tab, in the published player, from the start or from
+ * `nodeId`.
+ *
+ * The same page Publish writes, with the author console switched on, so what
+ * the author tests is what a reader gets. The tab is a snapshot: it holds the
+ * story as it stood at the click, and an edit afterwards needs another Play.
+ *
+ * Not async on purpose. `openInTab` opens the tab before its first `await`, so
+ * calling it straight from the click or key press keeps the browser's user
+ * activation, which is what a popup blocker checks.
+ */
+export function playInTab(nodeId?: NodeId): void {
+  openInTab(state.doc, {
+    theme: prefs.playerTheme,
+    start: nodeId ?? state.doc.startNodeId,
+    author: true,
+  }).catch((e: unknown) => {
+    state.warnings = [e instanceof Error ? e.message : 'Could not open the story.']
+  })
+}
+
+function formatBytes(n: number): string {
+  return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`
 }
 
 export function discardStory(): void {
@@ -1179,8 +1242,6 @@ export function castSetNote(id: string, name: string, note: string): void {
 
 /* ---------- derived ---------- */
 
-export const doc = computed(() => state.doc)
-
 export const selected = computed(
   () => state.doc.nodes.find((n) => n.id === state.selectedId) ?? null,
 )
@@ -1693,5 +1754,5 @@ export const storyJson = computed(() => serializeDoc(state.doc))
 export const canUndo = computed(() => undoDepth.value > 0)
 export const canRedo = computed(() => redoDepth.value > 0)
 
-export { state, layout, layoutVersion, bodyVersion, generation }
+export { state, layout, layoutVersion, bodyVersion }
 export type { SavedMeta }

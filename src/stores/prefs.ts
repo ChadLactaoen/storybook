@@ -1,6 +1,8 @@
 import { reactive } from 'vue'
 import { isPackingMode } from '../lib/graph/types'
 import type { PackingMode } from '../lib/graph/types'
+import { DEFAULT_THEME, isPlayerTheme } from '../lib/publish/themes'
+import type { PlayerTheme } from '../lib/publish/themes'
 
 /**
  * Editor preferences: how the app behaves, not what the story says.
@@ -58,6 +60,16 @@ export interface Prefs {
    * looking at blank cards with no way to fix them.
    */
   hideCardText: boolean
+  /**
+   * How Play and Publish draw the story, until a reader picks otherwise from
+   * the player's own `Aa` popover.
+   *
+   * A preference and not a document field, although it reaches the published
+   * file. A save file carried to another machine should open looking the way
+   * that author reads, and the theme is written into each published page
+   * anyway, so nothing downstream needs the document to remember it.
+   */
+  playerTheme: PlayerTheme
 }
 
 /**
@@ -80,10 +92,12 @@ const DEFAULTS: Prefs = {
   // for them.
   devMode: false,
   hideCardText: false,
+  playerTheme: DEFAULT_THEME,
 }
 
 /**
- * Every preference that is a plain switch — which is all of them but `packing`.
+ * Every preference that is a plain switch — which is all of them but `packing`
+ * and `playerTheme`.
  *
  * Exported because a checkbox is only valid over one of these: `EditorSettings`
  * builds its rows from a list of keys, and a list typed `keyof Prefs` would let
@@ -147,6 +161,11 @@ function load(): Prefs {
       // once" it looks like.
       out.packing = 'aligned'
     }
+
+    // Checked against the theme list for the reason `packing` is: a theme a
+    // later build removed would reach the player as a `data-theme` no rule
+    // matches, and the page would render unstyled.
+    if (isPlayerTheme(parsed?.playerTheme)) out.playerTheme = parsed.playerTheme
   } catch {
     // Unreadable or hand-edited: the defaults are a fine answer.
   }

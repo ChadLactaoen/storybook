@@ -264,7 +264,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 <style scoped>
 /* Ladder: body 92, sheet 94, help 95, settings 96, recode 97, stats 98,
-   tags 99, reader 100, startup 101. */
+   tags 99, startup 101. */
 .veil {
   position: fixed;
   inset: 0;

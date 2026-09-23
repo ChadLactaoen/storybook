@@ -61,7 +61,8 @@ choice a passage is locked behind, or that no route reaches it at all.
 | Story index | **Story** → **Cast & Settings** (`Cmd ;`): every setting and character with a passage count. Click a row to filter the tree; rename from here to update every passage at once. The cast lists in roster order, reordered with the ▲▼ arrows on each row or alphabetized with **Sort A–Z** |
 | State | TODO / Draft / Done, shown as a coloured badge on each card. `1`, `2` and `3` set it — left to right across the sidebar's control — on one passage or a whole selection, as one undo step |
 | Endings | Tick **Mark as Ending** in the sidebar, or press `E`, and the card gets a teal underline and an **END** flag. Works on a whole selection at once, as one undo step. Never guessed for you &mdash; a passage with no links yet is indistinguishable from one you meant to finish. Routes stop at an ending, so the endings divide the story's routes between them rather than overlapping, and anything linked *past* one is unreachable (Story stats says so) |
-| Reader | **Story** &rarr; **Play**, the toolbar button, or `Cmd P`: read the draft back a choice at a time, as a book page. Conditions actually run, so you can watch which branch fires; a console shows the variables you are carrying, which passage set each, the route so far as `P1->P3->P7`, and the marks collected along it &mdash; where a card has to write `A*D` because the routes disagree, the console says which one you took, `ABD`. **Sidebar &rarr; Advanced &rarr; Play from here** starts anywhere, with everything unset and a note saying so. Read-only &mdash; a session never changes the story |
+| Reader | **Story** &rarr; **Play**, the toolbar button, or `Cmd P`: opens the story in a new tab, in the same player a published file uses, so what you test is what a reader gets. Conditions actually run, so you can watch which branch fires. Each passage shows its code at the top and, below the choices, the *trail*: the marks collected so far run together &mdash; where a card has to write `A*D` because the routes disagree, the trail says which way you went, `ABD`. Keys 1&ndash;9 take a choice; an ending adds the trail with a Copy button, the choices taken, and Restart. There is no Back. An author console under the page shows the variables you are carrying, which passage set each, and the route as `P1->P3->P7`. **Sidebar &rarr; Advanced &rarr; Play from here** starts anywhere, with everything unset and the console saying so. The tab is a snapshot: edit the story and press Play again |
+| Player themes | **Marquee**, **Folio**, **Phosphor** and **Daylight** restyle the same page. Pick the one Play and Publish use in **Editor settings &rarr; Player** (Folio until you do), where each has a **Preview** that opens a sample story in it. A reader can still switch theme and text size from the player's `Aa` button, and that choice is remembered in their browser |
 | Tags | **Story** &rarr; **Tags**, or `Cmd G`: every tag with the passages carrying it and the share of routes that run through at least one of them. Tick several and it answers the harder question &mdash; how many routes collect *all* of them somewhere along the way, in any order, across any passages &mdash; and how many collect none. Click a count to break the tag down by level &mdash; how many passages carry it at each depth and what share of that level they are &mdash; with the passages listed underneath; click a level to narrow that list to it. **Filter** shows them on the tree instead. A tag no passage carries offers **Remove** instead, which clears it from the story and from the filter chips; a tag still in use is refused rather than stripped off the passages carrying it |
 | Story stats | **Story** &rarr; **Stats**, the routes pill, or `Cmd /`. Word count, every ending with the share of routes reaching it, and a draft-health list &mdash; broken links, unreachable passages, dead ends you never marked. Click any row to jump to the passage. Computed when you open it, not as you type |
 | Levels | Assigned automatically. A passage can be nudged down exactly one level; moving up is structurally impossible and the inspector says which parent pins it. Works on a whole selection at once, as one undo step, but only while they all agree about where they sit &mdash; a mixed set moves together or not at all. A selected passage under another selected one lands further than one level down, because its floor moves with its parent |
@@ -146,6 +147,24 @@ which the button says out loud before it is pressed.
 Work auto-saves to `localStorage` on a short debounce. **Export** downloads the
 canonical JSON; **Import** reads it back.
 
+**Publish** is the other direction: it writes a single self-contained `.html`
+file that plays the story, for handing to someone who is not using this editor.
+It carries the real evaluator rather than a copy of it, needs no server, and
+opens by double-clicking. Only what a reader can reach from the start passage is
+included — a reader stops at an ending, so a passage reachable only through one
+is left out too — and anything left out is named after the save. It is drawn in the theme
+chosen in Editor settings; its fonts come from Google Fonts, and a file opened
+offline falls back to each theme's system fonts.
+
+The prose inside is not merely minified &mdash; each passage is compressed and
+encrypted under its own key, and that key is wrapped once per inbound link, so a
+passage can only be opened by someone who has walked a real route to it. What
+that buys is that reading ahead costs writing a program rather than searching the
+page source for a word. It does not stop someone who writes a script to walk the
+graph mechanically, and nothing served as a single file could: everything needed
+to play is in the file. See
+`lib/publish/payload.ts`, which says so at more length.
+
 ## Layout engine
 
 `src/lib/graph/` is a deterministic Sugiyama pipeline:
@@ -172,6 +191,7 @@ canonical JSON; **Import** reads it back.
 | `characters` | the same for the cast &mdash; how many routes meet each character, and which routes bring several of them together |
 | `macros` *(in `lib/harlowe/`)* | reads `(set:)` and `(if:)` as text, so a guarded link can narrow a trail |
 | `run` *(in `lib/harlowe/`)* | the reader's evaluator: a passage's prose, choices and variables, as typed nodes &mdash; a sandbox that feeds nothing above |
+| `reachability` | which passages the start can actually get to &mdash; reader semantics, so loops and back edges count |
 
 `layoutStory(doc)` is the only entry point the UI touches: pure, synchronous and
 clone-friendly, so it can move into a Web Worker without a redesign. `paths` and `gates`
