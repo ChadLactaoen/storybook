@@ -140,7 +140,7 @@ dangling on purpose, so it must be captured when the editor takes focus, not re-
 
 | Path | Role |
 |---|---|
-| `src/types/story.ts` | The document model, its canonical comparators (`compareStr`, `compareNodes`, `compareByName`) and `emptyCharacter` / `emptyDoc` constructors |
+| `src/types/story.ts` | The document model, its canonical comparators (`compareStr`, `compareNodes`, `compareByName`), the display-order views over them (`castInRosterOrder`, `tagsInPaletteOrder` — storage stays sorted for byte-stability, the screen order is derived) and `emptyCharacter` / `emptyDoc` constructors |
 | `src/lib/doc/` | `mutations.ts` (all document edits), `serialize.ts` (canonical JSON + repairing parse), `storage.ts` (localStorage), `file.ts` (import/export) |
 | `src/lib/graph/` | Deterministic Sugiyama pipeline; `layoutStory` in `layout.ts` is the only entry point the UI touches. `paths.ts`, `gates.ts`, `coverage.ts` and `stats.ts` are analyses over the derived graph, called by the store and the panels rather than by `layoutStory` |
 | `src/lib/harlowe/` | `links.ts` (parse/retarget), `highlight.ts` (macros are highlighted, never executed), `macros.ts` (macros are *read* — spans and names — still never executed), `run.ts` (the reader's evaluator: the one place a macro is acted on, in a sandbox that feeds nothing above it) |

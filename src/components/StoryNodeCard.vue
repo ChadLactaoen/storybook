@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { NodeLayout } from '../lib/graph/types'
-import { TAG_COLORS, nodeLabel } from '../types/story'
+import { TAG_COLORS, nodeLabel, tagsInPaletteOrder } from '../types/story'
 import type { NodeState, SelectMode, TagColor } from '../types/story'
 
 const props = defineProps<{
@@ -95,6 +95,16 @@ const stripes = computed(() => {
   )
 })
 
+/**
+ * The same order the stripe above is drawn in, so the two agree: coloured tags
+ * grouped by palette position, uncoloured last, alphabetical within a colour.
+ * Computed here rather than in the store because `cardTags` hands every card
+ * the passage's own `tags` array, and `stable` keeps that map's identity by
+ * comparing those arrays by reference — sorting there would mint a fresh one
+ * per node per rebuild and re-render the whole canvas on every keystroke.
+ */
+const ordered = computed(() => tagsInPaletteOrder(props.tags, props.tagColors))
+
 const style = computed(() => ({
   left: `${props.node.x - props.node.width / 2}px`,
   top: `${props.node.y - props.node.height / 2}px`,
@@ -149,7 +159,7 @@ const style = computed(() => ({
           <div v-if="node.isPhantom" class="missing">No such passage &mdash; double-click to create</div>
           <div v-else-if="tags.length > 0" class="chips">
             <span
-              v-for="tag in tags"
+              v-for="tag in ordered"
               :key="tag"
               class="chip"
               :style="{

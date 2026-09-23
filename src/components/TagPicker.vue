@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { TagColor } from '../types/story'
-import { TAG_COLORS } from '../types/story'
+import { TAG_COLORS, tagsInPaletteOrder } from '../types/story'
 
 const props = defineProps<{
   tags: string[]
@@ -20,15 +20,27 @@ const open = ref(false)
 const editing = ref<string | null>(null)
 
 /**
+ * This passage's tags in palette order, matching the card's stripe rather than
+ * the alphabetical order they are stored in.
+ */
+const ordered = computed(() => tagsInPaletteOrder(props.tags, props.colors))
+
+/**
  * Tags are story-global, so anything used anywhere is offered here. That is the
  * whole point of the registry: type "exposition" once, pick it from the list
  * everywhere after.
+ *
+ * Grouped by colour like the chips above, so the list you pick from reads the
+ * same way as the row it adds to. `allTags` arrives alphabetical and a filter
+ * only preserves that, so the ordering has to happen here — which also means
+ * the inspector goes on passing the story's plain tag vocabulary.
  */
 const available = computed(() => {
   const mine = new Set(props.tags)
   const q = draft.value.trim().toLowerCase()
-  return props.allTags.filter(
-    (t) => !mine.has(t) && (q.length === 0 || t.toLowerCase().includes(q)),
+  return tagsInPaletteOrder(
+    props.allTags.filter((t) => !mine.has(t) && (q.length === 0 || t.toLowerCase().includes(q))),
+    props.colors,
   )
 })
 
@@ -53,7 +65,7 @@ function commitDraft() {
   <div class="picker">
     <div v-if="tags.length > 0" class="chips">
       <span
-        v-for="tag in tags"
+        v-for="tag in ordered"
         :key="tag"
         class="chip"
         :style="{ '--chip': `var(--tag-${colors.get(tag) ?? 'none'})` }"

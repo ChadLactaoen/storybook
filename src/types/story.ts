@@ -335,6 +335,39 @@ export function castInRosterOrder(
   return [...cast].sort((a, b) => at(a.name) - at(b.name) || compareStr(a.name, b.name))
 }
 
+/**
+ * A tag list in the palette order the card's stripe already draws.
+ *
+ * Storage stays alphabetical — `addTag` sorts and `serializeDoc` re-sorts —
+ * because that is what keeps the save file byte-stable, and a `StoryNode`
+ * cannot see the colour registry anyway. Palette order is a view over it,
+ * derived at render time, so one recolour reorders every passage's chips at
+ * once without touching the document.
+ *
+ * It exists so the chips agree with the stripe above them. `stripes` in
+ * `StoryNodeCard` walks `TAG_COLORS` rather than the tags, so red has always
+ * sat left of purple on every card in the story; the chips underneath were
+ * listing the same tags by name, which said a different thing about which tag
+ * was which colour.
+ *
+ * `'none'` is `TAG_COLORS[0]`, so its index is the one that cannot be used:
+ * an uncoloured tag earns no stripe, and sorting it first would put the tags
+ * the stripe drops in front of the ones it draws. It ranks last instead, and a
+ * tag missing from the map ranks with it — the `?? 'none'` every call site
+ * already reads it as. The name tiebreak is what keeps the comparator total,
+ * so this never leans on sort stability.
+ */
+export function tagsInPaletteOrder(
+  tags: readonly string[],
+  colors: ReadonlyMap<string, TagColor>,
+): string[] {
+  const at = (tag: string) => {
+    const i = TAG_COLORS.indexOf(colors.get(tag) ?? 'none')
+    return i <= 0 ? TAG_COLORS.length : i
+  }
+  return [...tags].sort((a, b) => at(a) - at(b) || compareStr(a, b))
+}
+
 export function emptyDoc(storyTitle = 'Untitled Story'): StoryDoc {
   return {
     version: DOC_VERSION,

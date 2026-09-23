@@ -3,11 +3,18 @@ import { computed, ref } from 'vue'
 import { chordLabel } from '../lib/ui/commands'
 import * as store from '../stores/story'
 import type { NodeState } from '../types/story'
-import { NODE_STATES } from '../types/story'
+import { NODE_STATES, tagsInPaletteOrder } from '../types/story'
 
 const input = ref<HTMLInputElement | null>(null)
 
 const matchCount = computed(() => store.matches.value?.size ?? null)
+
+/**
+ * The filter chips in palette order, the same way a card's chips are grouped.
+ * `store.tags` stays alphabetical — it is the story's tag vocabulary, not a
+ * row of chips — so the ordering is a view taken here.
+ */
+const orderedTags = computed(() => tagsInPaletteOrder(store.tags.value, store.tagColors.value))
 
 function toggleTag(tag: string) {
   store.toggleFilter('tagFilter', tag)
@@ -76,7 +83,7 @@ const searchTip = `Search titles, notes, codes and prose…  (${chordLabel({ mod
       <span v-if="store.tags.value.length > 0" class="sep" />
 
       <button
-        v-for="tag in store.tags.value"
+        v-for="tag in orderedTags"
         :key="tag"
         class="chip tag"
         :class="{ on: store.state.tagFilter.includes(tag) }"
