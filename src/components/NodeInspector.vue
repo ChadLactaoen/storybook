@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { SLUG_MAX } from '../lib/doc/mutations'
 import { authoredIn, authoredOut, forwardTargets, formatCount, share } from '../lib/graph/paths'
+import { wordCount } from '../lib/graph/stats'
 import { prefs } from '../stores/prefs'
 import * as store from '../stores/story'
 import type { NodeState, TagColor } from '../types/story'
@@ -336,6 +337,19 @@ const linksOut = computed(() =>
 const linksIn = computed(() =>
   node.value ? authoredIn(store.layout.value.graph, node.value.id) : 0,
 )
+
+/**
+ * The passage's own words, by the story's one definition of a word.
+ *
+ * `wordCount` from `stats.ts` rather than a split written here: the tile and
+ * the Story Stats panel must not disagree about one passage, and the counting
+ * rule — whitespace tokens of the raw Harlowe source, link and macro syntax
+ * included — is documented there and explained beside both readouts. This is
+ * the whole of the arithmetic: no share of the story's total, which would
+ * re-split every body in the document on every keystroke to move a number the
+ * author is not watching while they type.
+ */
+const words = computed(() => (node.value ? wordCount(node.value.body) : 0))
 
 const isStart = computed(() => node.value?.id === store.state.doc.startNodeId)
 
@@ -1074,6 +1088,10 @@ function applySetting() {
           <span class="label">Metrics</span>
           <div class="stats">
             <div class="stat">
+              <span class="muted">Words</span>
+              <strong>{{ words.toLocaleString('en-US') }}</strong>
+            </div>
+            <div class="stat">
               <span class="muted">Routes from here</span>
               <strong>{{ pathCount }}</strong>
             </div>
@@ -1122,6 +1140,10 @@ function applySetting() {
             A route runs from the start until nothing leads on &mdash; a dead end, or an
             Ending you marked. Links are what you wrote, counted as written, so the two
             disagree wherever a link loops back or leaves an Ending.
+          </p>
+          <p class="hint">
+            Words come from the raw body, so link and macro syntax counts too &mdash; the
+            same count Story Stats totals.
           </p>
         </section>
       </template>
