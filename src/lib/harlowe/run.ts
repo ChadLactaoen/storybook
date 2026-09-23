@@ -34,6 +34,17 @@
  * `> ` quoting, `<!-- -->`, hooks and links. Harlowe also accepts `**strong**`
  * and `*em*`; those are deliberately unread, because `format.ts` never writes
  * them and reading them would turn an author's literal asterisk into markup.
+ *
+ * **A `(prompt:)` halts the walk, and the caller replays it.** Harlowe 3 shows
+ * the prompt as a dialog and freezes the passage's stack frame until it is
+ * answered, queueing the answer (`blockedValues`) for the macro to read on
+ * resume. A pure function cannot wait, so this stops at the first prompt it has
+ * no answer for, reports it as `pending`, and returns what came before it. The
+ * caller asks the reader and renders again from the top with one more answer.
+ * That is the frozen frame made pure: the render up to the k-th prompt depends
+ * only on the variables carried in and the k-1 answers before it, so the k-th
+ * prompt reached is the same prompt on every pass, and nothing is resumed that
+ * could have drifted from the source.
  */
 
 import type { ParsedLink } from './links'
@@ -116,11 +127,42 @@ export interface RunChoice {
   uncertain: boolean
 }
 
-/** A reader-input macro, reported rather than answered. */
+/** A reader-input macro this passage ran into. */
 export interface Ask {
-  variable: string
+  /**
+   * `prompt` is `(prompt:)`, which the caller answers through `renderPassage`'s
+   * `answers`. `bind` is an `(input-box:)`-style binding: a live control this
+   * evaluator does not model, reported and never answered.
+   */
+  kind: 'prompt' | 'bind'
+  /**
+   * Where the answer goes. Null for a `(prompt:)` whose answer goes nowhere
+   * this can name — inside `(print:)` or a condition, or standing alone in the
+   * prose — which is reported only so the author learns it is never asked.
+   */
+  variable: string | null
   message: string
   default: string | null
+  /** What the reader answered. Null where nothing did, or nothing could. */
+  answer: string | null
+}
+
+/**
+ * The `(prompt:)` a render stopped at, waiting for the reader.
+ *
+ * The argument order is Harlowe's, and easy to get backwards: `(prompt:
+ * message, default, cancel, confirm)`. Cancel returns `default` whatever was
+ * typed — the rule since Harlowe 3.1 — which is why a prompt whose default
+ * cannot be read is never asked at all.
+ */
+export interface PendingPrompt {
+  variable: string
+  /** The literal's text, or the argument's source when it is not a literal. */
+  message: string
+  default: string
+  /** The Cancel button's text, or null where the author hid it with `""`. */
+  cancel: string | null
+  confirm: string
 }
 
 /**
@@ -145,10 +187,21 @@ export interface RunResult {
   vars: Vars
   /** What this passage wrote, for the debug console. Temps included. */
   assigned: { variable: string; value: string | null }[]
-  /** Input this passage asks the reader for, which nothing here answers. */
+  /**
+   * Input this passage asked the reader for, in the order it was reached. A
+   * prompt still `pending` is not among them.
+   */
   asks: Ask[]
   /** Distinct macro names this evaluator could not run, in codepoint order. */
   unsupported: string[]
+  /**
+   * The prompt this render halted at, or null when it ran to the end.
+   *
+   * While it is set the passage is half-run: `blocks` hold only what came
+   * before the prompt, and `choices` and `vars` describe that much and no more.
+   * Nothing may be acted on until it is answered and the passage rendered again.
+   */
+  pending: PendingPrompt | null
 }
 
 /** Macros that write a variable in a shape this evaluator refuses to read. */
@@ -187,10 +240,22 @@ function outsideStrings(text: string): string {
   }
   return out
 }
-/** `$v to "x"` / `$v into "x"` — anchored, the way `macros.ts`'s ASSIGN is. */
-const SET_PART = /^([$_][A-Za-z_][A-Za-z0-9_-]*)\s+(?:to|into)\s+([\s\S]+)$/
-/** `"x" into $v` — reversed operands, anchored on the tail so a string may hold `into`. */
-const PUT_PART = /^([\s\S]+?)\s+into\s+([$_][A-Za-z_][A-Za-z0-9_-]*)\s*$/
+/**
+ * `$v to "x"` / `$v into "x"` — anchored, the way `macros.ts`'s ASSIGN is.
+ *
+ * No space is needed after the operator, because Harlowe's lexer ends `to` at
+ * a word boundary: `$v to(prompt: …)` is a set. The lookahead is what keeps
+ * `$v tomato` from reading as one.
+ */
+const SET_PART = /^([$_][A-Za-z_][A-Za-z0-9_-]*)\s+(?:to|into)(?=[\s("'])\s*([\s\S]+)$/
+/**
+ * `"x" into $v` — reversed operands, anchored on the tail so a string may hold
+ * `into`. A closing paren, quote or bracket ends the left side as well as a
+ * space does, for the same word-boundary reason.
+ */
+const PUT_PART = /^([\s\S]+?)(?:\s+|(?<=[)"'\]]))into\s+([$_][A-Za-z_][A-Za-z0-9_-]*)\s*$/
+/** A `(prompt:)` call, to be matched only against text with its strings blanked. */
+const PROMPT_CALL = /\(\s*prompt\s*:/i
 /** `(input-box: bind $v, …)`, and Harlowe 3's two-way `2bind`. */
 const BIND = /\b2?bind\s+([$_][A-Za-z_][A-Za-z0-9_-]*)/
 
@@ -215,6 +280,12 @@ interface Ctx {
   assigned: { variable: string; value: string | null }[]
   asks: Ask[]
   unsupported: Set<string>
+  /** The reader's answers to this passage's prompts, in the order they were reached. */
+  answers: readonly string[]
+  /** How many of `answers` the walk has used so far. */
+  answered: number
+  /** Set when the walk reached a prompt with no answer left; the walk stops there. */
+  pending: PendingPrompt | null
   bold: boolean
   italic: boolean
   /** Greater than zero inside a region whose outcome could not be established. */
@@ -238,8 +309,16 @@ interface Ctx {
  * set are outside that guarantee, and are the caller's to seed.
  *
  * The map handed in is never mutated; the one handed back is fresh.
+ *
+ * `answers` are the reader's replies to the prompts this passage reaches, in
+ * order. Pass the same list again with one more reply to go past the prompt
+ * the last render stopped at; replies beyond the prompts reached are unused.
  */
-export function renderPassage(body: string, vars: Vars = new Map()): RunResult {
+export function renderPassage(
+  body: string,
+  vars: Vars = new Map(),
+  answers: readonly string[] = [],
+): RunResult {
   const macros = parseMacros(body)
   const ctx: Ctx = {
     body,
@@ -255,6 +334,9 @@ export function renderPassage(body: string, vars: Vars = new Map()): RunResult {
     assigned: [],
     asks: [],
     unsupported: new Set(),
+    answers,
+    answered: 0,
+    pending: null,
     bold: false,
     italic: false,
     speculative: 0,
@@ -276,6 +358,7 @@ export function renderPassage(body: string, vars: Vars = new Map()): RunResult {
     asks: ctx.asks,
     // Codepoint order, not `localeCompare` — this repo's determinism rule.
     unsupported: [...ctx.unsupported].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    pending: ctx.pending,
   }
 }
 
@@ -374,7 +457,10 @@ function evalSpan(ctx: Ctx, from: number, to: number): void {
   */
   let boundary = true
 
-  while (i < to) {
+  // A pending prompt ends the walk everywhere at once. Every region is walked
+  // by this loop, so no nested caller can emit past the prompt: what they do on
+  // the way back up is flush a buffer that already stopped short of it.
+  while (i < to && ctx.pending === null) {
     const c = src[i]!
 
     // A macro runs only when it starts *exactly* at the cursor, and running it
@@ -617,6 +703,7 @@ function runUnknown(ctx: Ctx, macro: RawMacro, to: number): number {
   // unreadable; it does not license overwriting a known value in the prose, or
   // reporting a write in the debug console that Harlowe would not perform.
   readBind(ctx, macro)
+  if (macro.name === 'prompt' || mentionsPrompt(macro.args)) unreadPrompt(ctx, null)
   chip(ctx, macro.name, source(ctx, macro))
 
   const body = attachmentOf(ctx.body, macro.end, to)
@@ -628,9 +715,8 @@ function runUnknown(ctx: Ctx, macro: RawMacro, to: number): number {
 
 function runPrint(ctx: Ctx, macro: RawMacro): void {
   const text = macro.args.trim()
-  SIGIL.lastIndex = 0
-  const name = SIGIL.exec(text)?.[0]
-  if (name !== undefined && name.length === text.length) {
+  const name = wholeVariable(text)
+  if (name !== null) {
     emitVariable(ctx, name)
     return
   }
@@ -639,7 +725,15 @@ function runPrint(ctx: Ctx, macro: RawMacro): void {
     pushValue(ctx, literal)
     return
   }
+  if (mentionsPrompt(text)) unreadPrompt(ctx, null)
   chip(ctx, macro.name, source(ctx, macro))
+}
+
+/** `text` as one variable name, sigil and all, or null if it is anything more. */
+function wholeVariable(text: string): string | null {
+  SIGIL.lastIndex = 0
+  const name = SIGIL.exec(text)?.[0]
+  return name !== undefined && name.length === text.length ? name : null
 }
 
 function runBranch(ctx: Ctx, macro: RawMacro, slot: ChainSlot, to: number): number {
@@ -663,6 +757,8 @@ function runBranch(ctx: Ctx, macro: RawMacro, slot: ChainSlot, to: number): numb
   if (body !== null && !body.certain) cond = null
 
   if (state.satisfied) return body ? body.after : macro.end
+  // Reached, so Harlowe would ask it — and this reads no macro in a condition.
+  if (slot.kind !== 'else' && mentionsPrompt(macro.args)) unreadPrompt(ctx, null)
 
   if (cond === false) {
     // The one place this evaluator hides what the author wrote — and the only
@@ -737,7 +833,13 @@ function darkenAll(ctx: Ctx, text: string): void {
  * is still shared: `stringValue` and `skipString` are the one escape rule.
  */
 function runAssign(ctx: Ctx, macro: RawMacro): void {
-  for (const part of splitArgs(macro.args)) {
+  const parts = splitArgs(macro.args)
+  // Harlowe evaluates every argument before it assigns any, so a prompt's
+  // default reads the variables as they stood when this macro began, not as the
+  // parts to its left have since written them. A lone part has nothing to its
+  // left, which spares the copy in the common case.
+  const before: Vars = parts.length > 1 ? new Map(ctx.vars) : ctx.vars
+  for (const part of parts) {
     const text = part.trim()
     if (text.length === 0) continue
 
@@ -748,12 +850,21 @@ function runAssign(ctx: Ctx, macro: RawMacro): void {
       // right-hand side dark for nothing.
       const dest = text.match(VARIABLE_RE)?.[0]
       if (dest !== undefined) darken(ctx, dest)
+      if (mentionsPrompt(text)) unreadPrompt(ctx, dest ?? null)
       continue
     }
 
     const variable = macro.name === 'set' ? m[1]! : m[2]!
     const valueText = (macro.name === 'set' ? m[2]! : m[1]!).trim()
-    readPrompt(ctx, variable, valueText)
+    const prompt = readPrompt(before, valueText)
+    if (prompt !== null) {
+      runPrompt(ctx, variable, prompt)
+      // Harlowe runs a whole `(set:)` only once its prompts are answered, so
+      // stopping mid-list leaves nothing it would have done undone for good:
+      // the next render starts over from the top.
+      if (ctx.pending !== null) return
+      continue
+    }
     const value = stringValue(valueText)
 
     // Speculative: this sits inside a branch whose condition could not be read,
@@ -762,19 +873,92 @@ function runAssign(ctx: Ctx, macro: RawMacro): void {
     // the *next* condition. Unreadable can only ever show.
     if (value === null || ctx.speculative > 0) darken(ctx, variable)
     else assign(ctx, variable, value)
+    // A prompt inside an expression this cannot evaluate — `(prompt: …) + "!"`.
+    // The reader is never asked, so the author has to be told.
+    if (value === null && mentionsPrompt(valueText)) unreadPrompt(ctx, variable)
   }
 }
 
-/** `(set: $name to (prompt: "Your name?", "Mira"))` — reported, never answered. */
-function readPrompt(ctx: Ctx, variable: string, valueText: string): void {
+/** A `(prompt:)` as written: `PendingPrompt` before it is known to be askable. */
+type PromptCall = Omit<PendingPrompt, 'variable' | 'default'> & { default: string | null }
+
+/**
+ * The right-hand side, when it is one `(prompt:)` call and nothing else.
+ *
+ * *Exactly* one: `(prompt: "a", "b") + "!"` is an expression this cannot
+ * evaluate, and taking the prompt out of it would assign the answer without
+ * the suffix — a confident value Harlowe would never produce.
+ */
+function readPrompt(vars: Vars, valueText: string): PromptCall | null {
+  // Most right-hand sides are literals, and a parse would be wasted on them.
+  if (valueText[0] !== '(') return null
   const call = parseMacros(valueText)[0]
-  if (call === undefined || call.name !== 'prompt' || call.start !== 0) return
-  const args = splitArgs(call.args)
-  ctx.asks.push({
-    variable,
-    message: stringValue((args[0] ?? '').trim()) ?? '',
-    default: stringValue((args[1] ?? '').trim()),
-  })
+  if (call === undefined || call.name !== 'prompt') return null
+  if (call.start !== 0 || call.end !== valueText.length) return null
+  const [message = '', fallback, cancel, confirm] = splitArgs(call.args).map((a) => a.trim())
+  const cancelLabel = cancel === undefined ? 'Cancel' : (stringValue(cancel) ?? 'Cancel')
+  return {
+    // Not a literal — a code hook, a variable, an expression — so show what
+    // was written rather than a blank question.
+    message: stringValue(message) ?? message,
+    default: readDefault(vars, fallback),
+    // `""` hides Cancel, Harlowe's own rule. A blank confirm is an error there,
+    // and "OK" is the label it would otherwise have had.
+    cancel: cancelLabel === '' ? null : cancelLabel,
+    confirm: (confirm === undefined ? null : stringValue(confirm)) || 'OK',
+  }
+}
+
+/**
+ * The default a prompt offers and Cancel returns: a literal, or a variable
+ * holding a known value. Null for anything else, since Cancel must return it.
+ */
+function readDefault(vars: Vars, text: string | undefined): string | null {
+  if (text === undefined) return null
+  const literal = stringValue(text)
+  if (literal !== null) return literal
+  const name = wholeVariable(text)
+  if (name === null) return null
+  // Absent is Harlowe's `0`, a number, which `(prompt:)` refuses as a default.
+  return vars.get(name) ?? null
+}
+
+/**
+ * `(set: $name to (prompt: "Your name?", "Mira"))` — answer it, or stop here.
+ *
+ * Two prompts are never asked. One in a region this could not establish, which
+ * Harlowe may never reach: asking would put a question to the reader that the
+ * story does not, and the write would be darkened anyway (`runAssign`). And one
+ * whose default cannot be read, because Cancel would have nothing to return.
+ * Both fall back to what any unreadable write does, which fails open.
+ */
+function runPrompt(ctx: Ctx, variable: string, call: PromptCall): void {
+  const { message, default: fallback, cancel, confirm } = call
+  if (ctx.speculative > 0 || fallback === null) {
+    darken(ctx, variable)
+    ctx.asks.push({ kind: 'prompt', variable, message, default: fallback, answer: null })
+    return
+  }
+  if (ctx.answered < ctx.answers.length) {
+    const answer = ctx.answers[ctx.answered++]!
+    assign(ctx, variable, answer)
+    ctx.asks.push({ kind: 'prompt', variable, message, default: fallback, answer })
+    return
+  }
+  ctx.pending = { variable, message, default: fallback, cancel, confirm }
+}
+
+/** Whether `text` calls `(prompt:)` anywhere outside its string literals. */
+function mentionsPrompt(text: string): boolean {
+  return PROMPT_CALL.test(outsideStrings(text))
+}
+
+/**
+ * A `(prompt:)` this cannot run: the reader is never asked it. Reported as an
+ * ask with no answer, which is what puts the author note on the page in Play.
+ */
+function unreadPrompt(ctx: Ctx, variable: string | null): void {
+  ctx.asks.push({ kind: 'prompt', variable, message: '', default: null, answer: null })
 }
 
 /**
@@ -793,7 +977,7 @@ function readBind(ctx: Ctx, macro: RawMacro): void {
   const bound = BIND.exec(outsideStrings(macro.args))
   if (bound === null) return
   darken(ctx, bound[1]!)
-  ctx.asks.push({ variable: bound[1]!, message: '', default: null })
+  ctx.asks.push({ kind: 'bind', variable: bound[1]!, message: '', default: null, answer: null })
 }
 
 // ---------------------------------------------------------------- conditions

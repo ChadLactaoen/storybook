@@ -392,18 +392,172 @@ describe('unsupported macros and asks', () => {
     expect(result.unsupported).toEqual(['alpha', 'zeta'])
   })
 
-  it('reports a prompt as an ask without answering it', () => {
-    const result = render('(set: $name to (prompt: "Your name?", "Mira"))Hello $name.')
-    expect(result.asks).toEqual([{ variable: '$name', message: 'Your name?', default: 'Mira' }])
-    expect(vars(result)).toEqual(['$name=?'])
-  })
-
   it('reports a bound input as an ask, without inventing a prompt', () => {
     // `(input-box:)`'s first string is its size pattern and `(dropdown:)`'s is
     // its first option, so a first-string heuristic would show the reader a
     // layout spec where a question belongs.
     const result = render('(input-box: bind $name, "=XX=", 3, "Who are you?")')
-    expect(result.asks).toEqual([{ variable: '$name', message: '', default: null }])
+    expect(result.asks).toEqual([
+      { kind: 'bind', variable: '$name', message: '', default: null, answer: null },
+    ])
+    expect(result.pending).toBeNull()
+  })
+})
+
+describe('prompts', () => {
+  const ask = (body: string, answers: string[] = [], carried?: [string, string | null][]) =>
+    renderPassage(body, new Map(carried ?? []), answers)
+
+  const NAME = '(set: $name to (prompt: "Your name?", "Daniel"))'
+
+  it('stops at an unanswered prompt, with only what came before it', () => {
+    const result = ask(`Before. [[Early|P1]]\n${NAME}Hello $name. (set: $after to "x")[[Late|P2]]`)
+    expect(result.pending).toEqual({
+      variable: '$name',
+      message: 'Your name?',
+      default: 'Daniel',
+      cancel: 'Cancel',
+      confirm: 'OK',
+    })
+    expect(text(result)).toBe('p:Before. [Early->P1]')
+    expect(result.choices.map((c) => c.target)).toEqual(['P1'])
+    // Nothing past the prompt ran — not the write, not the link.
+    expect(vars(result)).toEqual([])
+    // A pending prompt is not yet an ask; it has not been answered or refused.
+    expect(result.asks).toEqual([])
+  })
+
+  it('reads the example as written, with no spaces after the colons', () => {
+    const result = ask('(set:$myName to (prompt:"What is your name", "Daniel"))')
+    expect(result.pending).toMatchObject({ variable: '$myName', message: 'What is your name', default: 'Daniel' })
+  })
+
+  it('assigns the answer, prints it, and lets a condition read it', () => {
+    const body = `${NAME}Hello $name.(if: $name is "Daniel")[ Welcome back.](else:)[ Welcome.]`
+    const result = ask(body, ['Daniel'])
+    expect(result.pending).toBeNull()
+    expect(text(result)).toBe('p:Hello <$name=Daniel>. Welcome back.')
+    expect(vars(result)).toEqual(['$name=Daniel'])
+    expect(result.assigned).toEqual([{ variable: '$name', value: 'Daniel' }])
+    expect(result.asks).toEqual([
+      { kind: 'prompt', variable: '$name', message: 'Your name?', default: 'Daniel', answer: 'Daniel' },
+    ])
+    expect(text(ask(body, ['Mira']))).toBe('p:Hello <$name=Mira>. Welcome.')
+  })
+
+  it('takes an empty answer as an answer', () => {
+    expect(vars(ask(NAME, ['']))).toEqual(['$name='])
+  })
+
+  it('asks several prompts in the order they are reached', () => {
+    const body = '(set: $a to (prompt: "A?", "1"))$a (set: $b to (prompt: "B?", "2"), $c to (prompt: "C?", "3"))$b$c'
+    expect(ask(body).pending?.message).toBe('A?')
+    expect(ask(body, ['x']).pending?.message).toBe('B?')
+    expect(ask(body, ['x', 'y']).pending?.message).toBe('C?')
+    const done = ask(body, ['x', 'y', 'z', 'unused'])
+    expect(done.pending).toBeNull()
+    expect(text(done)).toBe('p:<$a=x> <$b=y><$c=z>')
+  })
+
+  it('reads the labels in Harlowe\'s order: cancel, then confirm', () => {
+    const labelled = ask('(set: $n to (prompt: "Q", "d", "Never mind", "Go"))').pending
+    expect(labelled).toMatchObject({ cancel: 'Never mind', confirm: 'Go' })
+    // `""` hides Cancel; a blank confirm is an error in Harlowe, so it keeps "OK".
+    const bare = ask('(set: $n to (prompt: "Q", "d", "", ""))').pending
+    expect(bare).toMatchObject({ cancel: null, confirm: 'OK' })
+  })
+
+  it('offers a known variable as the default', () => {
+    const carried: [string, string | null][] = [['$name', 'Mira']]
+    expect(ask('(set: $name to (prompt: "Again?", $name))', [], carried).pending?.default).toBe('Mira')
+  })
+
+  it('never asks a prompt whose default it cannot read, since Cancel must return it', () => {
+    for (const body of ['(set: $n to (prompt: "Q"))', '(set: $n to (prompt: "Q", $unset))', '(set: $n to (prompt: "Q", 3))']) {
+      const result = ask(body)
+      expect(result.pending).toBeNull()
+      expect(vars(result)).toEqual(['$n=?'])
+      expect(result.asks).toMatchObject([{ kind: 'prompt', variable: '$n', answer: null }])
+    }
+  })
+
+  it('never asks inside a false branch', () => {
+    const result = ask(`(if: $door is "open")[${NAME}]after`)
+    expect(result.pending).toBeNull()
+    expect(result.asks).toEqual([])
+    expect(text(result)).toBe('p:after')
+  })
+
+  it('asks inside a true branch, and resumes the chain from the top', () => {
+    const body = `(set: $door to "open")(if: $door is "open")[${NAME}$name](else:)[shut]`
+    expect(ask(body).pending?.variable).toBe('$name')
+    expect(text(ask(body, ['Mira']))).toBe('p:<$name=Mira>')
+  })
+
+  it('never asks inside an unreadable branch, and darkens what it would have set', () => {
+    // Harlowe may never reach it, so asking would put a question the story
+    // does not; and a speculative write is darkened regardless.
+    const result = ask(`(if: $n > 3)[${NAME}]after`)
+    expect(result.pending).toBeNull()
+    expect(vars(result)).toEqual(['$name=?'])
+    expect(result.asks).toMatchObject([{ kind: 'prompt', variable: '$name', answer: null }])
+    expect(text(result)).toBe('p:{if}after')
+  })
+
+  it('takes a prompt only when it is the whole right-hand side, and says so otherwise', () => {
+    // Taking the prompt out would assign the answer without the suffix. Not
+    // asking is the fail-open answer, and the ask is what tells the author.
+    const result = ask('(set: $n to (prompt: "Q", "d") + "!")')
+    expect(result.pending).toBeNull()
+    expect(vars(result)).toEqual(['$n=?'])
+    expect(result.asks).toEqual([
+      { kind: 'prompt', variable: '$n', message: '', default: null, answer: null },
+    ])
+  })
+
+  it('reports a prompt it cannot run even where its answer goes nowhere nameable', () => {
+    const unread = (body: string) => ask(body).asks.map((a) => `${a.kind}:${a.variable}:${a.answer}`)
+    expect(unread('(print: (prompt: "Q", "d"))')).toEqual(['prompt:null:null'])
+    expect(unread('Who? (prompt: "Q", "d") then')).toEqual(['prompt:null:null'])
+    expect(unread('(if: (prompt: "Q", "d") is "x")[yes]')).toEqual(['prompt:null:null'])
+    // An `(else-if:)` after a settled branch is never evaluated, so never asks.
+    expect(unread('(if: $u is not "z")[a](else-if: (prompt: "Q", "d") is "x")[b]')).toEqual([])
+    // A prompt in a string is prose, not a call.
+    expect(unread('(print: "(prompt: nothing)")')).toEqual([])
+  })
+
+  it('needs no space after to, as Harlowe does not', () => {
+    expect(ask('(set:$a to(prompt:"Q","d"))').pending?.variable).toBe('$a')
+    expect(vars(render('(set: $a to"x")'))).toEqual(['$a=x'])
+    // The lookahead is what keeps a word that merely starts with `to` out.
+    expect(vars(render('(set: $a tomato "x")'))).toEqual(['$a=?'])
+  })
+
+  it('offers the default as it stood before the set began', () => {
+    // Harlowe evaluates every argument before it assigns any, so the part to
+    // the prompt's left has not yet written `$a` when the default is read.
+    const body = '(set: $a to "x", $b to (prompt: "Q", $a))'
+    expect(ask(body, [], [['$a', 'old']]).pending?.default).toBe('old')
+    expect(vars(ask(body, ['typed'], [['$a', 'old']]))).toEqual(['$a=x', '$b=typed'])
+  })
+
+  it('reads put and temps the same way', () => {
+    expect(ask('(put: (prompt: "Q", "d") into $v)').pending?.variable).toBe('$v')
+    expect(ask('(put: (prompt: "Q", "d")into $v)').pending?.variable).toBe('$v')
+    expect(vars(render('(put: "x"into $v)'))).toEqual(['$v=x'])
+    const temp = ask('(set: _t to (prompt: "Q", "d"))_t', ['typed'])
+    expect(text(temp)).toBe('p:<_t=typed>')
+    // Temps stay in the passage.
+    expect(vars(temp)).toEqual([])
+  })
+
+  it('shows a message it cannot read as it was written', () => {
+    expect(ask('(set: $n to (prompt: [Who is there?], "d"))').pending?.message).toBe('[Who is there?]')
+  })
+
+  it('never prompts inside malformed source, where nothing runs', () => {
+    const result = ask(`(note: unclosed ${NAME}`)
+    expect(result.pending).toBeNull()
   })
 })
 
@@ -526,6 +680,7 @@ describe('safety and shape', () => {
       assigned: [],
       asks: [],
       unsupported: [],
+      pending: null,
     })
   })
 })

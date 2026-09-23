@@ -81,6 +81,11 @@ the graph, the layout, the gates or the stats — it imports nothing from them a
 nothing to them. Nothing is `eval`'d either: the evaluator reads a narrow slice of Harlowe
 and renders everything it cannot read, marked, rather than guessing at it.
 
+`(set: $name to (prompt: "What is your name", "Daniel"))` asks the reader, the way Harlowe 3
+does: a dialog over the page, the default in the box, OK and Cancel. The passage waits for
+the answer, and everything after the prompt sees it. Cancel gives the default; a third
+argument of `""` removes Cancel, and a fourth relabels OK.
+
 ## Interaction
 
 The bar groups its commands the way a desktop app does &mdash; **File**, **Edit**,
@@ -190,7 +195,7 @@ to play is in the file. See
 | `tags` | the tag vocabulary handed to `coverage`: which tags exist, how many may be combined, and what the buckets are called |
 | `characters` | the same for the cast &mdash; how many routes meet each character, and which routes bring several of them together |
 | `macros` *(in `lib/harlowe/`)* | reads `(set:)` and `(if:)` as text, so a guarded link can narrow a trail |
-| `run` *(in `lib/harlowe/`)* | the reader's evaluator: a passage's prose, choices and variables, as typed nodes &mdash; a sandbox that feeds nothing above |
+| `run` *(in `lib/harlowe/`)* | the reader's evaluator: a passage's prose, choices and variables, as typed nodes &mdash; a sandbox that feeds nothing above. Stops at an unanswered `(prompt:)` and is re-run with the reader's answers |
 | `reachability` | which passages the start can actually get to &mdash; reader semantics, so loops and back edges count |
 
 `layoutStory(doc)` is the only entry point the UI touches: pure, synchronous and

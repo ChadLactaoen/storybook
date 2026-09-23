@@ -571,6 +571,24 @@ player had already started to. Four things hold it together:
   row is the code alone and identical on every passage, which is what keeps an ending from
   showing itself early; an ending has no footer, since "Your trail" already shows it all.
 
+**A `(prompt:)` halts the render, and the player replays it.** Harlowe 3 freezes a
+passage's stack frame at a prompt and resumes it with the answer. `run.ts` cannot wait, so
+`renderPassage` stops at the first prompt it has no answer for, returns it as `pending`
+with only what came before, and the player asks in a modal `<dialog>` and renders the
+passage again from the top with one more entry in `Step.answers`. That is sound because a
+render up to the k-th prompt depends only on the variables carried in and the k-1 answers
+before it. Three details are Harlowe's and easy to get backwards: the labels are cancel
+*then* confirm, `""` hides Cancel, and Cancel returns the default whatever was typed — so
+a prompt whose default cannot be read is never asked. Nor is one inside a region `run.ts`
+could not establish: Harlowe may never reach it, and the write would be darkened anyway.
+A prompt `run.ts` cannot run at all — inside an expression, `(print:)` or a condition —
+is still reported, as an ask with no answer, because that ask is what puts the author note
+on the page; without it the reader is silently never asked. A default that names a
+variable reads it as it stood when the `(set:)` began, since Harlowe evaluates every
+argument before it assigns any. No link key is unwrapped while a prompt waits, since the answer can change which links
+render. `gates.ts` reads the same `(set:)` as an unreadable write and must go on doing so:
+a typed answer is exactly what no literal in the source predicts.
+
 A theme is CSS only (`styles.ts`); every theme styles the same markup, switched by
 `data-theme` on `.reader` and `<html>`. No theme may transform the trail's text — it is
 case-sensitive, and the shared rules pin `text-transform` and `font-variant` on it with

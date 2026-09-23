@@ -2,10 +2,12 @@
  * The story a theme preview plays: four passages, two routes, one ending.
  *
  * It is small, but it has to reach every part of the reader a theme styles. So
- * the first passage offers two choices, the second puts a link inside a sentence
- * and uses bold and italic, each passage carries a mark so the trail grows as you
+ * the first passage offers two choices, the second asks the reader's name with
+ * a `(prompt:)` — the one dialog a theme styles — then puts a link inside a
+ * sentence and uses bold and italic, each passage carries a mark so the trail grows as you
  * read, and both routes reach an ending. That ending is where "The End", the
- * trail box, "Your choices" and Restart appear.
+ * trail box, "Your choices" and Restart appear. The name is printed only in the
+ * passage that asks for it, since the other route never sets it.
  *
  * Built by hand rather than with `createNode`, so that a preview never depends on
  * a mutation's defaults, and never mints codes that would change with them.
@@ -58,7 +60,7 @@ const NODES: StoryNode[] = [
     [
       'A woman in an oilskin coat stands on the step, lantern in hand. Her boots are dry.',
       '',
-      '"The lamp is failing," she says. "You have until the tide turns." Before you can ask how she knows, she turns and walks toward the tower, and you could [[follow her up the stair|P4]] or let the door swing shut.',
+      '(set: $name to (prompt: "“Who keeps this light?” she asks.", "Keeper"))"The lamp is failing, $name," she says. "You have until the tide turns." Before you can ask how she knows, she turns and walks toward the tower, and you could [[follow her up the stair|P4]] or let the door swing shut.',
       '',
       "''Something about her lantern is wrong.'' Its flame does not move in the wind.",
       '',

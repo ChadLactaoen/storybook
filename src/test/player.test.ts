@@ -12,7 +12,7 @@
  * the whole of the computation, so a mark collected twice is shown twice.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildPayload, type Payload, type PayloadOptions } from '../lib/publish/payload'
 import { contentAddr, encodeText, fromBase64, toBase64 } from '../lib/publish/crypto'
 import { start } from '../lib/publish/player'
@@ -21,10 +21,48 @@ import { docFrom } from './helpers'
 
 const PREFS_KEY = 'storyboard.reader.v1'
 
+/** An answer that makes the evaluator throw — the one way to fail after a prompt. */
+const EVALUATOR_THROWS = '<<the evaluator throws>>'
+
+vi.mock('../lib/harlowe/run', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../lib/harlowe/run')>()
+  return {
+    ...real,
+    // Only that one answer reaches this seam, so every other test runs the real
+    // evaluator. `followLink` never throws, so nothing else can fail here.
+    renderPassage: (...args: Parameters<typeof real.renderPassage>) => {
+      if (args[2]?.includes('<<the evaluator throws>>')) throw new Error('evaluator failed')
+      return real.renderPassage(...args)
+    },
+  }
+})
+
 let mount: HTMLElement
+
+// jsdom's HTMLDialogElement is an empty class: no `showModal`, no `close`. These
+// stand in for what the player leans on, the way a browser does it: `showModal`
+// refuses a dialog that is not in the document, and `close` queues its event
+// rather than firing it inline. The focus trap and the inert page behind are the
+// browser's own, and are checked by hand.
+const nativeShowModal = HTMLDialogElement.prototype.showModal
+const nativeClose = HTMLDialogElement.prototype.close
+
+afterEach(() => {
+  HTMLDialogElement.prototype.showModal = nativeShowModal
+  HTMLDialogElement.prototype.close = nativeClose
+})
 
 beforeEach(() => {
   window.scrollTo = () => {}
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    if (!this.isConnected) throw new DOMException('The dialog is not in a document.', 'InvalidStateError')
+    this.open = true
+  }
+  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+    if (!this.open) return
+    this.open = false
+    setTimeout(() => this.dispatchEvent(new Event('close')))
+  }
   localStorage.clear()
   document.body.replaceChildren()
   delete document.documentElement.dataset.theme
@@ -65,6 +103,29 @@ async function choose(index: number): Promise<void> {
 
 function body(doc: StoryDoc, nodeTitle: string, value: string): void {
   doc.nodes.find((n) => n.title === nodeTitle)!.body = value
+}
+
+const promptDialog = () => q<HTMLDialogElement>('.prompt-dialog')
+const promptInput = () => q<HTMLInputElement>('.prompt-dialog__input')!
+const promptButtons = () =>
+  [...mount.querySelectorAll<HTMLButtonElement>('.prompt-dialog__button')].map((b) => b.textContent)
+
+/**
+ * Wait for the passage to be drawn again. Not for the dialog to go: it comes
+ * down before the passage is rendered past it, so that would return too soon.
+ */
+async function redrawn(act: () => void): Promise<void> {
+  const before = q('.passage-meta')
+  act()
+  await vi.waitFor(() => expect(q('.passage-meta')).not.toBe(before))
+}
+
+/** Press a button on the prompt, then wait for the passage to go on past it. */
+async function pressPrompt(label: string): Promise<void> {
+  const target = [...mount.querySelectorAll<HTMLButtonElement>('.prompt-dialog__button')].find(
+    (b) => b.textContent === label,
+  )
+  await redrawn(() => target!.click())
 }
 
 describe('a passage', () => {
@@ -387,17 +448,225 @@ describe('the author console', () => {
 
   it('says on the page when a passage asks for input it will not get', async () => {
     const doc = docFrom({ One: [] })
-    body(doc, 'One', '(set: $name to (prompt: "Your name?", "Mira"))Hello $name.')
+    body(doc, 'One', '(input-box: bind $name, "=XX=")Hello $name.')
     await play(doc, { author: true })
-    expect(text('.reader-main .author-note')).toMatch(/asks the reader for \$name/)
-    expect(text('.author-console')).toContain('$name')
+    expect(text('.reader-main .author-note')).toMatch(/asks the reader for \$name in a way this player cannot run/)
+    expect(text('.author-console')).toContain('$name, not answered')
   })
 
   it('keeps both notes off a published page', async () => {
     const doc = docFrom({ One: [] })
-    body(doc, 'One', '(set: $name to (prompt: "Your name?", "Mira"))Hello $name.')
+    body(doc, 'One', '(input-box: bind $name, "=XX=")Hello $name.')
     await play(doc)
     expect(q('.author-note')).toBeNull()
+  })
+
+  it('tells the author about a prompt it cannot run, even with no variable to name', async () => {
+    const doc = docFrom({ One: [] })
+    body(doc, 'One', 'Hello (print: (prompt: "Your name?", "Daniel")).')
+    await play(doc, { author: true })
+    expect(text('.reader-main .author-note')).toMatch(/asks the reader a question .* so it is never asked/)
+    expect(text('.author-console')).toContain('(prompt:), not answered')
+  })
+
+  it('shows what the reader answered, and who set it, with no note', async () => {
+    const doc = docFrom({ One: [] })
+    body(doc, 'One', '(set: $name to (prompt: "Your name?", "Daniel"))Hello $name.')
+    await play(doc, { author: true })
+    expect(text('.author-console')).toContain('Waiting on$name')
+    promptInput().value = 'Mira'
+    await pressPrompt('OK')
+    expect(text('.author-console')).toContain('Mira · set by P1')
+    expect(text('.author-console')).toContain('$name → "Mira"')
+    expect(q('.author-note')).toBeNull()
+  })
+})
+
+describe('a prompt', () => {
+  const NAME = '(set: $name to (prompt: "Your name?", "Daniel"))'
+
+  it('asks in a modal, before anything past the prompt is shown', async () => {
+    const doc = docFrom({ One: ['Two'], Two: [] })
+    body(doc, 'One', `Rain falls.\n${NAME}Hello $name.\n[[On|P2]]`)
+    await play(doc)
+
+    const dialog = promptDialog()!
+    expect(dialog.open).toBe(true)
+    // Inside the reader, so the theme reaches it.
+    expect(dialog.closest('.reader')).not.toBeNull()
+    expect(dialog.querySelector('.prompt-dialog__message')!.textContent).toBe('Your name?')
+    expect(promptInput().value).toBe('Daniel')
+    // Harlowe's order: confirm, then Cancel.
+    expect(promptButtons()).toEqual(['OK', 'Cancel'])
+    expect(text('.passage-body')).toBe('Rain falls.')
+    expect(choices()).toEqual([])
+  })
+
+  it('goes on with what the reader typed', async () => {
+    const doc = docFrom({ One: ['Two'], Two: [] })
+    body(doc, 'One', `Rain falls.\n${NAME}Hello $name.\n[[On|P2]]`)
+    await play(doc)
+    promptInput().value = 'Mira'
+    await pressPrompt('OK')
+
+    expect(promptDialog()).toBeNull()
+    expect(text('.passage-body')).toBe('Rain falls.\nHello Mira.')
+    expect(choices().map((c) => c.querySelector('.choice__text')!.textContent)).toEqual(['On'])
+  })
+
+  it('answers Cancel with the default, whatever was typed', async () => {
+    const doc = docFrom({ One: [] })
+    body(doc, 'One', `${NAME}Hello $name.`)
+    await play(doc)
+    promptInput().value = 'Mira'
+    await pressPrompt('Cancel')
+    expect(text('.passage-body')).toBe('Hello Daniel.')
+  })
+
+  it('takes Escape as Cancel', async () => {
+    const doc = docFrom({ One: [] })
+    body(doc, 'One', `${NAME}Hello $name.`)
+    await play(doc)
+    promptInput().value = 'Mira'
+    const escape = new Event('cancel', { cancelable: true })
+    await redrawn(() => promptDialog()!.dispatchEvent(escape))
+    expect(escape.defaultPrevented).toBe(true)
+    expect(promptDialog()).toBeNull()
+    expect(text('.passage-body')).toBe('Hello Daniel.')
+  })
+
+  it('hides Cancel when the author blanked it, and then Escape does nothing', async () => {
+    const doc = docFrom({ One: [] })
+    body(doc, 'One', '(set: $name to (prompt: "Your name?", "Daniel", "", "Go"))Hello $name.')
+    await play(doc)
+    expect(promptButtons()).toEqual(['Go'])
+    const dialog = promptDialog()!
+    dialog.dispatchEvent(new Event('cancel', { cancelable: true }))
+    await Promise.resolve()
+    expect(promptDialog()).toBe(dialog)
+    expect(dialog.open).toBe(true)
+  })
+
+  it('puts a prompt a browser closed on its own straight back up', async () => {
+    const doc = docFrom({ One: [] })
+    body(doc, 'One', `${NAME}Hello $name.`)
+    await play(doc)
+    const dialog = promptDialog()!
+    dialog.close()
+    expect(dialog.open).toBe(false)
+    await vi.waitFor(() => expect(dialog.open).toBe(true))
+    expect(promptDialog()).toBe(dialog)
+  })
+
+  it('lets an answered prompt go for good', async () => {
+    // Its `close` event arrives after it has left the document. Reopening it
+    // then would throw inside a listener, which jsdom reports to the window
+    // rather than to the test, so the window is what is watched.
+    const errors: unknown[] = []
+    const onError = (e: ErrorEvent) => errors.push(e.error)
+    window.addEventListener('error', onError)
+    try {
+      const doc = docFrom({ One: [] })
+      body(doc, 'One', `${NAME}Hello $name.`)
+      await play(doc)
+      const answered = promptDialog()!
+      await pressPrompt('OK')
+      await new Promise((resolve) => setTimeout(resolve))
+      expect(errors).toEqual([])
+      expect(answered.open).toBe(false)
+    } finally {
+      window.removeEventListener('error', onError)
+    }
+  })
+
+  it('refuses a held Enter, so the next prompt is never answered unread', async () => {
+    // The next prompt takes focus a few milliseconds after this one is answered;
+    // a repeating Enter would answer it with its default before it was read.
+    const doc = docFrom({ One: [] })
+    body(doc, 'One', `${NAME}Hello $name.`)
+    await play(doc)
+    const held = new KeyboardEvent('keydown', { key: 'Enter', repeat: true, bubbles: true, cancelable: true })
+    promptInput().dispatchEvent(held)
+    expect(held.defaultPrevented).toBe(true)
+    const pressed = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    promptInput().dispatchEvent(pressed)
+    expect(pressed.defaultPrevented).toBe(false)
+  })
+
+  it('leaves focus in the prompt when a choice opens one', async () => {
+    // Moving focus to the column after a choice is right for every passage but
+    // this: the column is behind the modal.
+    const doc = docFrom({ One: ['Two'], Two: [] })
+    body(doc, 'Two', `${NAME}Hello $name.`)
+    await play(doc)
+    await choose(0)
+    expect(document.activeElement).toBe(promptInput())
+  })
+
+  it('offers no Restart when answering fails on the first passage', async () => {
+    // Restart would open this same passage, and the same prompt, and the same
+    // failure: `fail`'s own rule, which `restartStory` already follows.
+    const doc = docFrom({ One: [] })
+    body(doc, 'One', `${NAME}Hello $name.`)
+    await play(doc)
+    promptInput().value = EVALUATOR_THROWS
+    await pressPrompt('OK')
+    expect(text('.reader-fail')).toMatch(/could not be opened/)
+    expect(q('.restart-button')).toBeNull()
+    expect(promptDialog()).toBeNull()
+  })
+
+  it('offers Restart when answering fails further in', async () => {
+    const doc = docFrom({ One: ['Two'], Two: [] })
+    body(doc, 'Two', `${NAME}Hello $name.`)
+    await play(doc)
+    await choose(0)
+    promptInput().value = EVALUATOR_THROWS
+    await pressPrompt('OK')
+    expect(text('.reader-fail')).toMatch(/could not be opened/)
+    expect(q('.restart-button')).not.toBeNull()
+  })
+
+  it('asks each prompt in turn', async () => {
+    const doc = docFrom({ One: [] })
+    body(doc, 'One', '(set: $a to (prompt: "First?", "1"))(set: $b to (prompt: "Second?", "2"))$a and $b')
+    await play(doc)
+    expect(text('.prompt-dialog__message')).toBe('First?')
+    await pressPrompt('OK')
+    expect(text('.prompt-dialog__message')).toBe('Second?')
+    promptInput().value = 'x'
+    await pressPrompt('OK')
+    expect(text('.passage-body')).toBe('1 and x')
+  })
+
+  it('carries the answer on, and opens a link that only the answer offers', async () => {
+    // The gated link's key is unwrapped only once the prompt is answered, so
+    // following it proves the answer reached the key graph, not just the prose.
+    const doc = docFrom({ One: ['Two', 'Three'], Two: [], Three: [] })
+    body(doc, 'One', `${NAME}Hello $name.\n(if: $name is "Mira")[ [[Secret|P3]] ]\n[[On|P2]]`)
+    body(doc, 'Three', 'Welcome, $name.')
+    await play(doc)
+    promptInput().value = 'Mira'
+    await pressPrompt('OK')
+
+    expect(choices().map((c) => c.querySelector('.choice__text')!.textContent)).toEqual(['Secret', 'On'])
+    await choose(0)
+    expect(title()).toBe('Three')
+    expect(text('.passage-body')).toBe('Welcome, Mira.')
+  })
+
+  it('asks again after Restart', async () => {
+    const doc = docFrom({ One: [] })
+    body(doc, 'One', `${NAME}Hello $name.`)
+    await play(doc)
+    promptInput().value = 'Mira'
+    await pressPrompt('OK')
+    expect(text('.passage-body')).toBe('Hello Mira.')
+
+    q<HTMLButtonElement>('.restart-button')!.click()
+    await vi.waitFor(() => expect(promptDialog()).not.toBeNull())
+    expect(promptInput().value).toBe('Daniel')
+    expect(document.activeElement).toBe(promptInput())
   })
 })
 
