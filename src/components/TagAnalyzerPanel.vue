@@ -10,7 +10,7 @@ import {
   TAG_HIT_LABELS,
 } from '../lib/graph/tags'
 import type { CoverageRow } from '../lib/graph/coverage'
-import { nodeLabel } from '../types/story'
+import { nodeLabel, tagsInPaletteOrder } from '../types/story'
 
 const emit = defineEmits<{ close: []; open: [id: string] }>()
 
@@ -41,6 +41,17 @@ const combo = computed(() =>
   picked.value.length === 0
     ? null
     : combineTags(store.state.doc, store.layout.value, picked.value),
+)
+
+/**
+ * The ticked tags, named back in palette order like every other chip row.
+ *
+ * Display only. `combineTags` canonicalises its own `keys` with `compareStr`
+ * so the subset walk is reproducible, and the table below is sorted by routes
+ * because that ranking is the analysis — neither is what this reorders.
+ */
+const comboKeys = computed(() =>
+  combo.value ? tagsInPaletteOrder(combo.value.keys, store.tagColors.value) : [],
 )
 
 /**
@@ -333,7 +344,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           </p>
           <template v-else>
             <div class="chips">
-              <span v-for="t in combo.keys" :key="t" class="chip">
+              <span v-for="t in comboKeys" :key="t" class="chip">
                 <span class="swatch" :style="{ background: colorOf(t) }" />
                 {{ t }}
               </span>

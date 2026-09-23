@@ -35,7 +35,8 @@ import {
 import * as M from '../lib/doc/mutations'
 import { parseDoc, serializeDoc } from '../lib/doc/serialize'
 import { deriveGraph } from '../lib/graph/derive'
-import { compareNodes, emptyDoc } from '../types/story'
+import type { TagColor } from '../types/story'
+import { TAG_COLORS, compareNodes, emptyDoc, tagsInPaletteOrder } from '../types/story'
 import { deepFreeze, docFrom, shuffled } from './helpers'
 
 describe('passage note', () => {
@@ -567,6 +568,76 @@ describe('tags', () => {
   it('does nothing for a tag the story never had', () => {
     const doc = docFrom({ One: [] })
     expect(deleteTag(doc, 'ghost')).toBe(doc)
+  })
+})
+
+describe('tags in palette order', () => {
+  const colors = (pairs: Record<string, TagColor>) =>
+    new Map(Object.entries(pairs)) as ReadonlyMap<string, TagColor>
+
+  it('groups by palette position rather than by name', () => {
+    // Stored alphabetically — the order that must not reach the screen.
+    const stored = ['alpha', 'beta', 'gamma']
+    expect(
+      tagsInPaletteOrder(stored, colors({ alpha: 'purple', beta: 'yellow', gamma: 'red' })),
+    ).toEqual(['gamma', 'beta', 'alpha'])
+  })
+
+  it('sorts alphabetically within one colour', () => {
+    expect(
+      tagsInPaletteOrder(['delta', 'beta'], colors({ beta: 'yellow', delta: 'yellow' })),
+    ).toEqual(['beta', 'delta'])
+  })
+
+  it('puts an uncoloured tag last, however early its name sorts', () => {
+    // `none` is TAG_COLORS[0], so its index is the one thing that cannot be
+    // used as its rank: the stripe drops these, so the chips put them last.
+    expect(tagsInPaletteOrder(['aaa', 'zzz'], colors({ aaa: 'none', zzz: 'blue' }))).toEqual([
+      'zzz',
+      'aaa',
+    ])
+  })
+
+  it('ranks a tag missing from the registry with the uncoloured ones', () => {
+    // Every call site reads an absent entry as `none`; so does this.
+    expect(tagsInPaletteOrder(['ghost', 'aaa', 'zzz'], colors({ zzz: 'green' }))).toEqual([
+      'zzz',
+      'aaa',
+      'ghost',
+    ])
+  })
+
+  it('is total, so it never leans on sort stability', () => {
+    const map = colors({
+      alpha: 'purple',
+      beta: 'yellow',
+      delta: 'yellow',
+      gamma: 'red',
+      zeta: 'none',
+    })
+    const expected = ['gamma', 'beta', 'delta', 'alpha', 'zeta']
+    const tags = [...expected]
+    for (let i = 0; i < 6; i++) {
+      expect(tagsInPaletteOrder(shuffled(tags, i + 1), map)).toEqual(expected)
+    }
+  })
+
+  it('ranks every colour the palette has, in the palette order', () => {
+    // The drift guard: a colour added to TAG_COLORS has to reach the chips the
+    // same way it reaches the stripe, and both read their rank off this array.
+    const named = TAG_COLORS.map((c) => `tag-${c}`)
+    const map = colors(Object.fromEntries(TAG_COLORS.map((c) => [`tag-${c}`, c])))
+    expect(tagsInPaletteOrder(named, map)).toEqual([
+      ...TAG_COLORS.filter((c) => c !== 'none').map((c) => `tag-${c}`),
+      'tag-none',
+    ])
+  })
+
+  it('leaves the list it was handed alone', () => {
+    const stored = ['alpha', 'gamma']
+    const out = tagsInPaletteOrder(stored, colors({ alpha: 'purple', gamma: 'red' }))
+    expect(stored).toEqual(['alpha', 'gamma'])
+    expect(out).not.toBe(stored)
   })
 })
 

@@ -201,6 +201,33 @@ describe('the app renders', () => {
     expect(problems).toEqual([])
   })
 
+  it("lists a card's tag chips in palette order, not alphabetically", async () => {
+    mount()
+    store.newStory('Render Check')
+    const startId = store.state.doc.nodes[0]!.id
+    // Stored alphabetically — the order that must not reach the screen. The
+    // chips have to read the way the stripe above them is drawn, or the two
+    // disagree about which tag is which colour.
+    for (const t of ['alpha', 'beta', 'delta', 'gamma', 'zeta']) store.tagAdd(startId, t)
+    store.tagRecolor('alpha', 'purple')
+    store.tagRecolor('beta', 'yellow')
+    store.tagRecolor('delta', 'yellow')
+    store.tagRecolor('gamma', 'red')
+    await nextTick()
+
+    const chips = [...host.querySelectorAll<HTMLElement>('.card .chips .chip')]
+    // Red, then both yellows alphabetically, then purple — and `zeta`, which
+    // earns no stripe at all, last rather than first.
+    expect(chips.map((c) => c.textContent?.trim())).toEqual([
+      'gamma',
+      'beta',
+      'delta',
+      'alpha',
+      'zeta',
+    ])
+    expect(problems).toEqual([])
+  })
+
   it('shows the inspector for the selected passage', async () => {
     mount()
     store.newStory('Render Check')

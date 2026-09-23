@@ -94,6 +94,34 @@ describe('typing in a body', () => {
     expect(store.layoutVersion.value).toBe(before + 1)
   })
 
+  it('hands the cards the same prop maps throughout a run of prose', async () => {
+    vi.resetModules()
+    const store = await import('../stores/story')
+
+    store.loadStory(serializeDoc(bigStory()))
+    const id = store.state.doc.nodes[40]!.id
+    const original = store.state.doc.nodes[40]!.body
+
+    const tags = store.cardTags.value
+    const states = store.cardStates.value
+    const colors = store.tagColors.value
+    const ownTags = tags.get(id)
+
+    for (let i = 1; i <= 50; i++) store.editBody(id, `${original} ${'x'.repeat(i)}`)
+
+    // The other half of the typing budget: layout holding is not enough if the
+    // maps every card reads change identity, because Vue compares props by
+    // reference and would re-render the whole canvas anyway. `stable` only ever
+    // hits because these hold `n.tags` itself and `replaceNode` shares it —
+    // including on the passage being typed into, whose patch carries no `tags`.
+    // Deriving a display order into one of them would mint fresh arrays on
+    // every rebuild and lose exactly this.
+    expect(store.cardTags.value).toBe(tags)
+    expect(store.cardStates.value).toBe(states)
+    expect(store.tagColors.value).toBe(colors)
+    expect(store.cardTags.value.get(id)).toBe(ownTags)
+  })
+
   it('still notices a macro edit that moves no link', async () => {
     vi.resetModules()
     const store = await import('../stores/story')
