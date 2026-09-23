@@ -417,7 +417,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 <style scoped>
 /* Ladder: body 92, sheet 94, help 95, settings 96, recode 97, stats 98,
-   tags / characters 99, reader 100, startup 101. The two analyzers share a rung
+   tags / characters 99, startup 101. The two analyzers share a rung
    because they are mutually unreachable: each one's veil covers the menu bar
    that is the only way to open the other. */
 /* Anchored to the top rather than centred, which is the one place this parts

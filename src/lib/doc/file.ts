@@ -2,19 +2,93 @@ import type { StoryDoc } from '../../types/story'
 import { layoutStory } from '../graph/layout'
 import { parseDoc, serializeDoc } from './serialize'
 
-export function exportDoc(doc: StoryDoc): void {
-  const blob = new Blob([serializeDoc(doc)], { type: 'application/json' })
+/** How long a download's Blob URL outlives the click. FileSaver.js uses the same. */
+const REVOKE_AFTER_MS = 40_000
+
+/**
+ * Hand a blob to the browser as a download.
+ *
+ * The one copy. There were three — this, the skeleton export, and very nearly a
+ * third for publishing — and a download that works in two places and not the
+ * third is the sort of drift nothing catches until someone reports it.
+ */
+export function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${slug(doc.storyTitle)}.json`
+  a.download = filename
   document.body.appendChild(a)
   a.click()
   a.remove()
-  URL.revokeObjectURL(url)
+  // Not revoked in the same task as the click. Safari starts reading the Blob
+  // after the click returns, and a URL revoked before it does cancels the
+  // download while everything here reports success. This is the only path
+  // Safari and Firefox have for Publish, since neither has a save picker.
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_AFTER_MS)
 }
 
-function slug(title: string): string {
+
+/**
+ * What asking for a save location produced.
+ *
+ * The three cases are kept apart because they call for different things:
+ * `picked` writes through the handle, `unsupported` falls back to a download,
+ * and `cancelled` writes nothing at all. Collapsing the last two — which a
+ * nullable handle would do — means dismissing the dialog still drops a file in
+ * the author's Downloads folder, which is precisely what they just declined.
+ */
+export type SaveTarget =
+  | { kind: 'picked'; handle: FileSystemFileHandle }
+  | { kind: 'cancelled' }
+  | { kind: 'unsupported' }
+
+/**
+ * Ask the author where to put a file.
+ *
+ * **Call this before doing any work.** `showSaveFilePicker` requires transient
+ * activation, which expires a few seconds after the click that granted it — and
+ * building a published story encrypts and compresses every passage. Picking
+ * first and building second is the difference between a save dialog and a
+ * silent `SecurityError` on a large story.
+ *
+ * Firefox and Safari have no picker at all, hence `unsupported`.
+ */
+export async function pickSaveFile(
+  filename: string,
+  description: string,
+  mime: string,
+): Promise<SaveTarget> {
+  const picker = (
+    window as unknown as {
+      showSaveFilePicker?: (opts: unknown) => Promise<FileSystemFileHandle>
+    }
+  ).showSaveFilePicker
+  if (typeof picker !== 'function') return { kind: 'unsupported' }
+  try {
+    const handle = await picker({
+      suggestedName: filename,
+      types: [{ description, accept: { [mime]: [`.${filename.split('.').pop()}`] } }],
+    })
+    return { kind: 'picked', handle }
+  } catch (e) {
+    // The spec says AbortError for a dismissed dialog. Anything else means the
+    // picker exists but would not run — a cross-origin iframe, say — and the
+    // download path is a better answer than refusing outright.
+    if (e instanceof DOMException && e.name === 'AbortError') return { kind: 'cancelled' }
+    return { kind: 'unsupported' }
+  }
+}
+
+export function exportDoc(doc: StoryDoc): void {
+  const blob = new Blob([serializeDoc(doc)], { type: 'application/json' })
+  downloadBlob(`${slug(doc.storyTitle)}.json`, blob)
+}
+
+/**
+ * A story title as a filename stem: `My Story` → `my-story`. Shared by every
+ * file the app writes, so an export and a publish of one story are named alike.
+ */
+export function slug(title: string): string {
   const s = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')

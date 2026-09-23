@@ -38,12 +38,10 @@ const tip = commandTip
 const undoTitle = computed(() => tip('edit.undo'))
 const redoTitle = computed(() => tip('edit.redo'))
 /**
- * Not `tip('story.play')`. This button calls `playStart`, which begins the
- * story again from the top, while ⌘P resumes where the reading was — so
- * borrowing the command's sentence would promise the chord's behaviour and
- * quietly lose a reader's place. `App.togglePlay` documents the split.
+ * The command's own sentence now, which it could not be while ⌘P resumed a
+ * reading and this button restarted it. Both open a fresh tab from the top.
  */
-const playTitle = 'Read the story from the start'
+const playTitle = computed(() => tip('story.play'))
 
 const editingTitle = ref(false)
 const titleDraft = ref('')

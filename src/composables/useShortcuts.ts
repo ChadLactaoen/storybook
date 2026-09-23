@@ -33,9 +33,8 @@ export interface ShortcutHandlers {
   openTags: () => void
   /** True while the tag sheet itself is what is up. */
   tagsOpen: () => boolean
-  togglePlay: () => void
-  /** True while the reader itself is what is up. */
-  playOpen: () => boolean
+  /** Open the story in the player, in a new tab. */
+  play: () => void
   /**
    * True while any dialog that owns Escape is up — `modalOpen` plus the
    * expanded body editor, which is not a modal for the purposes below because
@@ -188,13 +187,13 @@ export function useShortcuts(handlers: ShortcutHandlers) {
         // would simply appear broken.
         case 'p':
           if (nativeEditing) return
-          // Same rule as `/` above, and for the same reason: a key that opens a
-          // modal has to respect one already up, or the reader stacks over the
-          // expanded editor and one Escape closes them both. The reader is
-          // exempt from its own guard, or the key could not close it again.
-          if (handlers.dialogOpen() && !handlers.playOpen()) return
+          // Play opens a tab now rather than a sheet, so nothing here can stack
+          // over the expanded editor. It still stands down under a dialog: a
+          // key pressed while a sheet is up belongs to that sheet, and a tab
+          // appearing from behind one would be a surprise.
+          if (handlers.dialogOpen()) return
           e.preventDefault()
-          handlers.togglePlay()
+          handlers.play()
           return
         case 'z':
           if (typing) return

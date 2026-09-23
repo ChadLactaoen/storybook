@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { previewTheme } from '../lib/publish/publish'
+import { DEFAULT_THEME, THEMES } from '../lib/publish/themes'
+import type { PlayerTheme } from '../lib/publish/themes'
 import { prefs, setPref } from '../stores/prefs'
 import type { SwitchPref } from '../stores/prefs'
 
@@ -25,6 +28,23 @@ const TOGGLES: { key: SwitchPref; label: string; hint: string }[] = [
     hint: 'A new passage starts with the same cast. Scene notes are never copied.',
   },
 ]
+
+/**
+ * Why the last preview did not open, shown in the sheet. The notice banner
+ * would be behind the veil.
+ */
+const previewError = ref<string | null>(null)
+
+/**
+ * Not async, and nothing awaited before `previewTheme` is called: the tab has to
+ * open while this click is still being handled, or a popup blocker refuses it.
+ */
+function preview(theme: PlayerTheme) {
+  previewError.value = null
+  previewTheme(theme).catch((e: unknown) => {
+    previewError.value = e instanceof Error ? e.message : 'Could not open the preview.'
+  })
+}
 
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape') emit('close')
@@ -82,6 +102,42 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
               </span>
             </span>
           </label>
+        </section>
+
+        <section>
+          <h3>Player</h3>
+          <div class="theme-list" role="radiogroup" aria-label="Default player theme">
+            <p class="hint lead">
+              Default player theme: how Play and Publish show the story. A reader can still
+              switch with the player’s own Aa button.
+            </p>
+            <div v-for="theme in THEMES" :key="theme.id" class="pref theme-row">
+              <label class="theme-pick">
+                <input
+                  type="radio"
+                  name="player-theme"
+                  :value="theme.id"
+                  :checked="prefs.playerTheme === theme.id"
+                  @change="setPref('playerTheme', theme.id)"
+                />
+                <span class="text">
+                  <span>
+                    {{ theme.label }}
+                    <span v-if="theme.id === DEFAULT_THEME" class="tag">default</span>
+                  </span>
+                  <span class="hint">{{ theme.blurb }}</span>
+                </span>
+              </label>
+              <button
+                class="btn btn-ghost preview"
+                :title="`Open a sample passage in ${theme.label}, in a new tab`"
+                @click="preview(theme.id)"
+              >
+                Preview
+              </button>
+            </div>
+          </div>
+          <p v-if="previewError" class="hint error" role="alert">{{ previewError }}</p>
         </section>
 
         <!-- Written out rather than added to `TOGGLES`, which is specifically
@@ -201,6 +257,49 @@ h3 {
 
 .hint {
   margin: 0;
+}
+
+/* The same gap `RecodePanel` puts between its sections. */
+section + section {
+  margin-top: 16px;
+}
+
+.lead {
+  margin-bottom: 4px;
+}
+
+.theme-row {
+  align-items: center;
+  cursor: default;
+}
+
+.theme-pick {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.preview {
+  flex: 0 0 auto;
+}
+
+.tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.error {
+  margin-top: 8px;
+  color: var(--tag-red);
 }
 
 .note {

@@ -16,12 +16,22 @@ import type { DerivedGraph } from './types'
  *
  * The `seen` set is also the cycle guard — back edges are normal in CYOA
  * writing, so the walk has to tolerate them rather than treat them as errors.
+ *
+ * `stopAt` is where a reader stops: those passages are reached but never left.
+ * Pass the authored endings to ask what a reader can actually get to, which is
+ * the published player's question — it disables every choice on an ending. Left
+ * empty, the walk answers the author's question instead: what the links touch.
  */
-export function reachableFrom(g: DerivedGraph, startId: NodeId): Set<NodeId> {
+export function reachableFrom(
+  g: DerivedGraph,
+  startId: NodeId,
+  stopAt: ReadonlySet<NodeId> = new Set(),
+): Set<NodeId> {
   const seen = new Set<NodeId>([startId])
   const stack = [startId]
   while (stack.length > 0) {
     const id = stack.pop()!
+    if (stopAt.has(id)) continue
     for (const eid of g.outAdj.get(id) ?? []) {
       const t = g.edgeById.get(eid)!.targetId
       if (!seen.has(t)) {

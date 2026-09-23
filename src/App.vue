@@ -4,7 +4,6 @@ import AppToolbar from './components/AppToolbar.vue'
 import StoryStatsPanel from './components/StoryStatsPanel.vue'
 import TagAnalyzerPanel from './components/TagAnalyzerPanel.vue'
 import CastAnalyzerPanel from './components/CastAnalyzerPanel.vue'
-import ReaderPanel from './components/ReaderPanel.vue'
 import MiniMap from './components/MiniMap.vue'
 import NodeInspector from './components/NodeInspector.vue'
 import SearchFilterBar from './components/SearchFilterBar.vue'
@@ -21,7 +20,6 @@ import { useShortcuts } from './composables/useShortcuts'
 import type { CommandBinding } from './lib/ui/commands'
 import { useViewport } from './composables/useViewport'
 import { isPhantomId } from './lib/graph/constants'
-import * as play from './stores/play'
 import { prefs, setPref } from './stores/prefs'
 import * as store from './stores/story'
 import { NODE_STATES } from './types/story'
@@ -59,9 +57,7 @@ const castOpen = ref(false)
 const modalOpen = computed(
   () =>
     // The startup dialog counts. It sits above everything at z-index 101, so a
-    // key that opened a panel under it would put one out of sight — and the
-    // reader in particular would then reveal a stale notice over the story the
-    // author goes on to create.
+    // key that opened a panel under it would put one out of sight.
     !store.state.started ||
     helpOpen.value ||
     settingsOpen.value ||
@@ -74,30 +70,17 @@ const modalOpen = computed(
     // it here, `n`, Delete and `E` all reach the canvas underneath: pressing E
     // while a branch is selected would mark every passage in it as an ending,
     // behind the veil and out of sight.
-    store.state.openCharacter !== null ||
-    play.playOpen.value,
+    store.state.openCharacter !== null,
 )
 
 /**
- * Open the reader on the story's first passage, or on one the author picked.
+ * Play the story in a new tab, from its first passage or one the author picked.
  *
- * Starting a session and showing the panel are the same action: the panel reads
- * `play.playStep`, so opening it without a stack would render an empty book.
+ * Synchronous all the way down to `window.open`, which is what lets it through
+ * a popup blocker: every caller is a click or a key press.
  */
 function openReader(nodeId?: string) {
-  play.playStart(nodeId)
-}
-
-/**
- * Close, or come back to where the reading was.
- *
- * Glancing at the canvas mid-read is what this panel is for — checking the
- * drawing against the reading — so the toggle resumes rather than restarts.
- * The toolbar's Play is the one that starts over, and its tooltip says so.
- */
-function togglePlay() {
-  if (play.playOpen.value) play.playClose()
-  else if (!play.playReopen()) openReader()
+  store.playInTab(nodeId)
 }
 
 function toggleIndex() {
@@ -250,6 +233,12 @@ const toolbar = ref<InstanceType<typeof AppToolbar> | null>(null)
 const commandBindings = computed<Record<string, CommandBinding>>(() => ({
   'file.import': { run: () => toolbar.value?.pickFile() },
   'file.export': { run: store.saveToFile },
+  'file.publish': {
+    run: () => void store.publishToFile(),
+    // Same gate as Play: with no start passage there is no route into the
+    // story, so there is nothing a reader could open.
+    enabled: store.state.doc.startNodeId !== null && !store.publishing.value,
+  },
 
   'edit.undo': { run: store.undo, enabled: store.canUndo.value },
   'edit.redo': { run: store.redo, enabled: store.canRedo.value },
@@ -321,7 +310,7 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
     checked: prefs.compactSpacing,
   },
 
-  'story.play': { run: togglePlay, enabled: store.state.doc.startNodeId !== null },
+  'story.play': { run: () => openReader(), enabled: store.state.doc.startNodeId !== null },
   'story.stats': { run: () => (statsOpen.value = !statsOpen.value) },
   'story.tags': { run: () => (tagsOpen.value = !tagsOpen.value) },
   'story.characters': { run: () => (castOpen.value = !castOpen.value) },
@@ -376,8 +365,11 @@ useShortcuts({
   tagsOpen: () => tagsOpen.value,
   dialogOpen: () => modalOpen.value || (inspector.value?.isExpanded() ?? false),
   modalOpen: () => modalOpen.value,
-  togglePlay,
-  playOpen: () => play.playOpen.value,
+  // Gated like the menu row and the toolbar button: a chord is not a way round
+  // a command that is switched off.
+  play: () => {
+    if (store.state.doc.startNodeId !== null) openReader()
+  },
   menuOpen: () => menuOpen.value,
 })
 
@@ -515,7 +507,6 @@ function dismissNotices() {
     <StoryStatsPanel v-if="statsOpen" @close="statsOpen = false" @open="openPassage" />
     <TagAnalyzerPanel v-if="tagsOpen" @close="tagsOpen = false" @open="openPassage" />
     <CastAnalyzerPanel v-if="castOpen" @close="castOpen = false" @open="openPassage" />
-    <ReaderPanel v-if="play.playOpen.value" @close="play.playClose()" />
 
     <CharacterSheet
       v-if="store.state.openCharacter"

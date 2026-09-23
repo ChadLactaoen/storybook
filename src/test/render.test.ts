@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import type { App as VueApp } from 'vue'
 import App from '../App.vue'
-import { resetPlay } from '../stores/play'
 import { prefs, reloadPrefs, resetPrefs, setPref } from '../stores/prefs'
 import * as store from '../stores/story'
+import { serializeDoc } from '../lib/doc/serialize'
+import { emptyDoc } from '../types/story'
 import { COMMANDS, GROUP_LABELS } from '../lib/ui/commands'
 
 /**
@@ -96,11 +97,6 @@ beforeEach(() => {
   // Preferences are a module singleton too: without this, a toggle flipped by
   // one test silently changes what the next one creates.
   resetPrefs()
-  // And so is the play session. Leave one open and its full-screen veil is
-  // mounted over every test after it in this file, which asserts on
-  // `host.textContent` and fails on any Vue warning — so the failures land a
-  // long way from the cause.
-  resetPlay()
 })
 
 afterEach(() => {
@@ -1067,7 +1063,12 @@ describe('editor settings', () => {
 
   const panel = () => host.querySelector('[aria-label="Editor settings"]')
 
-  const boxes = () => [...host.querySelectorAll<HTMLInputElement>('[aria-label="Editor settings"] input')]
+  const boxes = () => [
+    ...host.querySelectorAll<HTMLInputElement>('[aria-label="Editor settings"] input[type="checkbox"]'),
+  ]
+  const themes = () => [
+    ...host.querySelectorAll<HTMLInputElement>('[aria-label="Default player theme"] input[type="radio"]'),
+  ]
 
   async function openSettings() {
     mount()
@@ -1086,6 +1087,47 @@ describe('editor settings', () => {
     // a default of `false` would move an author's editor on upgrade.
     expect(boxes()).toHaveLength(4)
     expect(boxes().map((b) => b.checked)).toEqual([false, false, false, false])
+    expect(problems).toEqual([])
+  })
+
+  it('offers every player theme, with Folio picked until the author says otherwise', async () => {
+    await openSettings()
+    expect(themes().map((r) => r.value)).toEqual(['marquee', 'folio', 'phosphor', 'daylight'])
+    expect(themes().filter((r) => r.checked).map((r) => r.value)).toEqual(['folio'])
+    expect(problems).toEqual([])
+  })
+
+  it('persists a player theme without touching the story', async () => {
+    await openSettings()
+    const undoable = store.canUndo.value
+
+    const phosphor = themes().find((r) => r.value === 'phosphor')!
+    phosphor.checked = true
+    phosphor.dispatchEvent(new Event('change'))
+    await nextTick()
+
+    expect(prefs.playerTheme).toBe('phosphor')
+    expect(localStorage.getItem('storybook.prefs.v1')).toContain('"playerTheme":"phosphor"')
+    expect(store.canUndo.value).toBe(undoable)
+    expect(problems).toEqual([])
+  })
+
+  it('previews a theme in a new tab, on the sample story, without picking it', async () => {
+    await openSettings()
+    const stub = stubTab()
+
+    const rows = [...host.querySelectorAll<HTMLElement>('.theme-row')]
+    const marquee = rows.find((r) => r.textContent!.includes('Marquee'))!
+    marquee.querySelector<HTMLButtonElement>('.preview')!.click()
+    await nextTick()
+
+    expect(stub.open).toHaveBeenCalledWith('', '_blank')
+    const payload = await stub.payload()
+    expect(payload.theme).toBe('marquee')
+    expect(payload.title).toBe('The Lighthouse Keeper')
+    // A preview is what a reader sees, so no author console.
+    expect(payload.author).toBeUndefined()
+    expect(prefs.playerTheme).toBe('folio')
     expect(problems).toEqual([])
   })
 
@@ -2891,178 +2933,146 @@ describe('the advanced tab', () => {
   })
 })
 
-describe('the reader', () => {
-  /** Mount a two-passage story and open the reader from the toolbar. */
-  async function openReader(): Promise<void> {
+/**
+ * A stand-in for the tab `window.open` returns, and a way to read the page the
+ * app sent to it. jsdom has no `URL.createObjectURL`, so the Blob is caught on
+ * its way there, which is also the most direct way to see what was built.
+ */
+function stubTab() {
+  const tab = {
+    document: document.implementation.createHTMLDocument(''),
+    location: { replace: vi.fn() },
+    close: vi.fn(),
+    // Closed from the start, so the release poll stops at its first tick
+    // rather than outliving the test.
+    closed: true,
+    opener: {} as unknown,
+  }
+  const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
+
+  const blobs: Blob[] = []
+  // Assigned rather than spied, since jsdom has neither to spy on, so
+  // `restoreAllMocks` cannot undo them. Put back when the test ends instead.
+  const { createObjectURL, revokeObjectURL } = URL
+  onTestFinished(() => {
+    URL.createObjectURL = createObjectURL
+    URL.revokeObjectURL = revokeObjectURL
+  })
+  URL.createObjectURL = vi.fn((blob: Blob) => {
+    blobs.push(blob)
+    return 'blob:stub'
+  })
+  URL.revokeObjectURL = vi.fn()
+  return {
+    tab,
+    open,
+    /** The payload of the page that reached the tab. */
+    async payload(): Promise<Record<string, unknown>> {
+      await vi.waitFor(() => expect(tab.location.replace).toHaveBeenCalledWith('blob:stub'), {
+        timeout: 5000,
+      })
+      const html = await blobs[0]!.text()
+      const encoded = /id="story-payload">([^<]*)</.exec(html)![1]!
+      const bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0))
+      return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>
+    },
+  }
+}
+
+describe('playing the story', () => {
+  async function withStory(): Promise<void> {
     mount()
     store.newStory('Render Check')
     writeBody(store.state.doc.nodes[0]!.id, 'Prose here.\n\n[[Onward|Two]]')
     await nextTick()
-
-    const play = [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
-      (b) => b.textContent!.trim() === 'Play',
-    )!
-    play.click()
-    await nextTick()
   }
 
-  it('opens from the toolbar onto the story’s first passage', async () => {
-    await openReader()
-
-    const sheet = host.querySelector('[aria-label="Read the story"]')
-    expect(sheet).not.toBeNull()
-    expect(sheet!.textContent).toContain('Prose here.')
-    expect(sheet!.textContent).toContain('Onward')
-    // The page number at the foot, and the route in the header.
-    expect(sheet!.querySelector('.folio')!.textContent!.trim()).toBe('P1')
-    expect(problems).toEqual([])
-  })
-
-  it('puts a veil over the canvas', async () => {
-    await openReader()
-    expect(host.querySelector('.veil')).not.toBeNull()
-    expect(problems).toEqual([])
-  })
-
-  it('takes a choice and goes back again', async () => {
-    await openReader()
-
-    const choice = host.querySelector<HTMLButtonElement>('.choices .choice')!
-    choice.click()
-    await nextTick()
-    // `Two` is the code, not the title: `resolveLinks` mints the passage a bare
-    // `[[Onward|Two]]` names under exactly the code the link used.
-    expect(host.querySelector('.folio')!.textContent!.trim()).toBe('Two')
-
-    const back = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
-      b.textContent!.includes('Back'),
-    )!
-    back.click()
-    await nextTick()
-    expect(host.querySelector('.folio')!.textContent!.trim()).toBe('P1')
-    expect(problems).toEqual([])
-  })
-
-  it('shows the route and the variables in the console', async () => {
-    mount()
-    store.newStory('Render Check')
-    writeBody(store.state.doc.nodes[0]!.id, '(set: $lantern to "lit")\n[[Onward|Two]]')
-    await nextTick()
-    const play = [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
+  const playButton = () =>
+    [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
       (b) => b.textContent!.trim() === 'Play',
     )!
-    play.click()
+
+  it('opens the player in a new tab from the toolbar, with no sheet over the canvas', async () => {
+    await withStory()
+    const stub = stubTab()
+
+    playButton().click()
     await nextTick()
 
-    host.querySelector<HTMLButtonElement>('.disclose')!.click()
-    await nextTick()
+    // Synchronously, inside the click: a popup blocker allows nothing later.
+    expect(stub.open).toHaveBeenCalledWith('', '_blank')
+    expect(host.querySelector('.veil')).toBeNull()
 
-    const console_ = host.querySelector('.console')!
-    expect(console_.textContent).toContain('$lantern')
-    expect(console_.textContent).toContain('lit')
-    expect(console_.textContent).toContain('P1')
+    const payload = await stub.payload()
+    expect(payload.theme).toBe(prefs.playerTheme)
+    expect(payload.author).toBe(true)
+    expect(payload.midStory).toBeUndefined()
     expect(problems).toEqual([])
   })
 
-  it('leaves the canvas keys alone while it is up', async () => {
-    // The concrete `modalOpen` regression. The reader has no text field for the
-    // shortcut layer's `isTyping` guard to catch, so without joining
-    // `modalOpen` an `n` would create a passage and Delete would remove one,
-    // behind the veil and out of sight.
-    await openReader()
-    const before = store.state.doc.nodes.length
+  it('plays in the theme picked in settings', async () => {
+    setPref('playerTheme', 'daylight')
+    await withStory()
+    const stub = stubTab()
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))
-    await nextTick()
-    expect(store.state.doc.nodes).toHaveLength(before)
-
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
-    await nextTick()
-    expect(store.state.doc.nodes).toHaveLength(before)
+    playButton().click()
+    expect((await stub.payload()).theme).toBe('daylight')
     expect(problems).toEqual([])
   })
 
-  it('shows the marks collected so far, and only when there are any', async () => {
-    mount()
-    store.newStory('Render Check')
-    const start = store.state.doc.nodes[0]!.id
-    writeBody(start, '[[Onward|Two]]')
+  it('opens from the passage the author is on with Play from here', async () => {
+    await withStory()
+    const two = store.state.doc.nodes.find((n) => n.code === 'Two')!
+    store.select(two.id)
     await nextTick()
-
-    const openConsole = async () => {
-      const play = [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
-        (b) => b.textContent!.trim() === 'Play',
-      )!
-      play.click()
-      await nextTick()
-      host.querySelector<HTMLButtonElement>('.disclose')!.click()
-      await nextTick()
-    }
-
-    await openConsole()
-    expect(host.querySelector('.console')!.textContent).not.toContain('Collected')
-
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    openAdvanced()
     await nextTick()
-    store.slugSet(start, 'A')
-    store.slugSet(store.state.doc.nodes.find((n) => n.code === 'Two')!.id, 'B')
-    await nextTick()
+    const stub = stubTab()
 
-    await openConsole()
-    host.querySelector<HTMLButtonElement>('.choices .choice')!.click()
-    await nextTick()
-    expect(host.querySelector('.console')!.textContent).toContain('Collected')
-    expect(host.querySelector('.console')!.textContent).toContain('AB')
-    expect(problems).toEqual([])
-  })
-
-  it('does not list a choice twice when its link sits under the prose', async () => {
-    // The commonest Twine shape of all: links written directly under the prose,
-    // with no blank line. `toBlocks` merges those into one block, so filtering
-    // whole blocks missed it and every choice appeared both in the prose and in
-    // the rows below.
-    mount()
-    store.newStory('Render Check')
-    writeBody(store.state.doc.nodes[0]!.id, 'You see a door.\n[[Open it|Two]]\n[[Leave|Three]]')
-    await nextTick()
-    const play = [...host.querySelectorAll<HTMLButtonElement>('.toolbar button')].find(
-      (b) => b.textContent!.trim() === 'Play',
+    const here = [...host.querySelectorAll<HTMLButtonElement>('.inspector button')].find(
+      (b) => b.textContent!.trim() === 'Play from here',
     )!
-    play.click()
+    here.click()
     await nextTick()
 
-    const prose = host.querySelector('.prose')!
-    expect(prose.textContent!.trim()).toBe('You see a door.')
-    expect(prose.querySelector('.inline-link')).toBeNull()
-    expect(host.querySelectorAll('.choices .choice')).toHaveLength(2)
+    expect(stub.open).toHaveBeenCalledTimes(1)
+    expect((await stub.payload()).midStory).toBe(true)
     expect(problems).toEqual([])
   })
 
-  it('will not open the body editor underneath itself', async () => {
-    // `Cmd E` mounted `BodyDialog` at z-index 92, out of sight under the veil,
-    // and focused its textarea — so every key after that edited the passage
-    // through a session that is meant to be read-only.
-    await openReader()
-    store.select(store.state.doc.nodes[0]!.id)
-    await nextTick()
-    const body = store.state.doc.nodes[0]!.body
+  it('opens from Cmd P as well', async () => {
+    await withStory()
+    const stub = stubTab()
 
-    window.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'e', metaKey: true, bubbles: true }),
-    )
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: true, bubbles: true }))
     await nextTick()
 
-    expect(host.querySelector('[aria-label="Edit passage body"]')).toBeNull()
-    expect(store.state.doc.nodes[0]!.body).toBe(body)
+    expect(stub.open).toHaveBeenCalledTimes(1)
+    await stub.payload()
     expect(problems).toEqual([])
   })
 
-  it('closes on Escape', async () => {
-    await openReader()
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  it('leaves Cmd P alone when there is no start passage, as the menu does', async () => {
+    mount()
+    store.loadStory(serializeDoc({ ...emptyDoc('No Start') }))
+    await nextTick()
+    const open = vi.spyOn(window, 'open')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: true, bubbles: true }))
     await nextTick()
 
-    expect(host.querySelector('[aria-label="Read the story"]')).toBeNull()
+    expect(open).not.toHaveBeenCalled()
+    // Not merely a different wording: nothing ran, so there is nothing to say.
+    expect(store.state.warnings.join(' ')).not.toMatch(/start passage/)
+    expect(problems).toEqual([])
+  })
+
+  it('says so when the browser blocks the tab', async () => {
+    await withStory()
+    vi.spyOn(window, 'open').mockReturnValue(null)
+
+    playButton().click()
+    await vi.waitFor(() => expect(store.state.warnings.join(' ')).toMatch(/blocked the new tab/))
     expect(problems).toEqual([])
   })
 })

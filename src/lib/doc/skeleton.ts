@@ -1,6 +1,7 @@
 import type { StoryDoc, StoryNode } from '../../types/story'
 import { DOC_VERSION } from '../../types/story'
 import { parseLinks } from '../harlowe/links'
+import { downloadBlob } from './file'
 
 /**
  * A structure-only export: enough to reproduce a drawing, and nothing anybody
@@ -79,14 +80,7 @@ export function serializeSkeleton(s: Skeleton): string {
 
 export function exportSkeleton(doc: StoryDoc): void {
   const blob = new Blob([serializeSkeleton(skeletonOf(doc))], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'skeleton.json'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+  downloadBlob('skeleton.json', blob)
 }
 
 /**
