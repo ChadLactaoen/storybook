@@ -8,6 +8,7 @@ import * as store from '../stores/story'
 import { serializeDoc } from '../lib/doc/serialize'
 import { emptyDoc } from '../types/story'
 import { COMMANDS, GROUP_LABELS } from '../lib/ui/commands'
+import { wordCount } from '../lib/graph/stats'
 
 /**
  * Mounts the real component tree against a DOM.
@@ -2754,6 +2755,45 @@ describe('the advanced tab', () => {
       'Links out': '1',
       'Links in': '1',
     })
+    expect(problems).toEqual([])
+  })
+
+  /**
+   * The word tile, and the one thing worth pinning about it: the count is the
+   * story's count. A second rule written in the component would let the tile and
+   * Story Stats disagree about one passage, which is the drift the shared
+   * `wordCount` exists to prevent — so the assertion is against that function's
+   * answer, syntax included, and it tracks the body as it is typed.
+   */
+  it('counts the passage\u2019s own words, syntax included, as the author types', async () => {
+    mount()
+    store.newStory('Render Check')
+    const startId = store.state.doc.nodes[0]!.id
+    writeBody(startId, 'The road forks here. [[Head north|Two]]')
+    store.select(startId)
+    await nextTick()
+    openAdvanced()
+    await nextTick()
+
+    const words = () =>
+      [...host.querySelectorAll('.inspector .stat')]
+        .find((el) => el.querySelector('.muted')!.textContent!.trim() === 'Words')!
+        .querySelector('strong')!.textContent!.trim()
+
+    // Six: four words of prose, and the link splits at the space inside it,
+    // because the count is of the raw source rather than of the rendered page.
+    expect(words()).toBe(String(wordCount('The road forks here. [[Head north|Two]]')))
+    expect(words()).toBe('6')
+
+    // A keystroke moves it, with no blur in between.
+    store.editBody(startId, 'The road forks here again. [[Head north|Two]]')
+    await nextTick()
+    expect(words()).toBe('7')
+
+    // An empty body is zero, not one.
+    store.editBody(startId, '   \n  ')
+    await nextTick()
+    expect(words()).toBe('0')
     expect(problems).toEqual([])
   })
 
