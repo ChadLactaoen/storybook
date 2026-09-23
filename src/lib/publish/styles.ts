@@ -175,11 +175,38 @@ const SHARED = `
 }
 .passage-body + .author-note { margin: 24px 0 0; }
 
+/* A (prompt:), asked the way Harlowe 3 asks it: a modal over the page. The
+   backdrop is a literal because custom properties only reach ::backdrop in
+   recent engines. Theme tokens otherwise, so it belongs to whichever is up. */
+.prompt-dialog {
+  width: min(480px, calc(100vw - 32px)); max-width: none; margin: auto; padding: 28px;
+  background: var(--surface, var(--bg)); color: var(--ink);
+  border: 1px solid var(--rule-strong); border-radius: 0; box-shadow: 0 24px 64px rgb(0 0 0 / 0.35);
+  font-family: var(--font-body);
+}
+.prompt-dialog::backdrop { background: rgb(0 0 0 / 0.6); }
+.prompt-dialog__form { display: flex; flex-direction: column; gap: 18px; margin: 0; }
+.prompt-dialog__message { margin: 0; font-size: calc(18px * var(--body-size, 1)); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.prompt-dialog__input {
+  width: 100%; min-height: 44px; margin: 0; padding: 8px 12px;
+  font: inherit; font-size: calc(17px * var(--body-size, 1)); color: var(--ink);
+  background: var(--bg); border: 1px solid var(--rule-strong); border-radius: 0;
+  text-transform: none; font-variant: normal;   /* what the reader types is shown as typed */
+}
+.prompt-dialog__input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.prompt-dialog__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.reader .prompt-dialog__button {
+  min-width: 88px; min-height: 44px; margin: 0; padding: 0 18px;
+  border: 1px solid var(--rule-strong); border-radius: 0; background: transparent; color: var(--ink); text-align: center;
+}
+.reader .prompt-dialog__button--confirm { border-color: var(--accent); background: var(--accent); color: var(--on-accent, var(--bg)); }
+
 @media (max-width: 640px) {
   .reader-main { padding: 28px 24px 40px; }
   .passage-meta__group--code .meta-label { display: none; }   /* mobile shows only the code */
   .choice__key, .keys-hint { display: none; }                  /* no keyboard affordances */
   .author-console { margin: 0 24px 40px; }
+  .prompt-dialog { padding: 20px; }
   /* keys hint is already hidden on mobile, so the trail is the last line of the page */
   .passage-footer { margin-top: 20px; }
 }
@@ -233,6 +260,10 @@ const MARQUEE = `
 
 [data-theme="marquee"] .restart-wrap { margin-top: 40px; }
 [data-theme="marquee"] .restart-button { min-height: 52px; padding: 0 28px; border: 0; background: var(--accent); color: var(--on-accent); font-size: 14px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+
+[data-theme="marquee"] .prompt-dialog { border-color: var(--rule); }
+[data-theme="marquee"] .prompt-dialog__button { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+[data-theme="marquee"] .prompt-dialog__button--confirm { border: 0; }
 
 @media (max-width: 640px) {
   [data-theme="marquee"] .reader-header { height: 56px; padding: 0 8px 0 24px; }
@@ -301,6 +332,11 @@ const FOLIO = `
 
 [data-theme="folio"] .restart-wrap { margin-top: 44px; display: flex; justify-content: center; }
 [data-theme="folio"] .restart-button { min-height: 52px; padding: 0 28px; border: 1px solid var(--ink); background: transparent; color: var(--ink); font-size: 18px; font-variant: small-caps; text-transform: lowercase; letter-spacing: .14em; }
+
+[data-theme="folio"] .prompt-dialog { border: 3px double #CDBFA4; }
+[data-theme="folio"] .prompt-dialog__message { font-size: calc(20px * var(--body-size, 1)); font-style: italic; }
+[data-theme="folio"] .prompt-dialog__input { font-size: calc(19px * var(--body-size, 1)); background: transparent; }
+[data-theme="folio"] .prompt-dialog__button { font-size: 18px; font-variant: small-caps; text-transform: lowercase; letter-spacing: .14em; }
 
 @media (max-width: 640px) {
   [data-theme="folio"] .reader-header { height: 56px; padding: 0 8px 0 24px; }
@@ -379,6 +415,12 @@ const PHOSPHOR = `
 [data-theme="phosphor"] .restart-wrap { margin-top: 40px; }
 [data-theme="phosphor"] .restart-button { min-height: 52px; padding: 0 24px; border: 1px solid var(--accent); background: transparent; color: var(--accent); font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: .1em; }
 
+[data-theme="phosphor"] .prompt-dialog { border: 1px dashed var(--accent); box-shadow: 0 0 24px rgba(108,255,143,.18); }
+[data-theme="phosphor"] .prompt-dialog__message { font-size: calc(15px * var(--body-size, 1)); line-height: 1.8; }
+[data-theme="phosphor"] .prompt-dialog__input { font-size: calc(15px * var(--body-size, 1)); border: 1px dashed var(--muted); caret-color: var(--accent); }
+[data-theme="phosphor"] .prompt-dialog__button { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); border-color: var(--rule); }
+[data-theme="phosphor"] .prompt-dialog__button--confirm { background: transparent; color: var(--accent); border-color: var(--accent); }
+
 @media (prefers-reduced-motion: reduce) { [data-theme="phosphor"] .choices__label::after { animation: none; } }
 
 @media (max-width: 640px) {
@@ -446,6 +488,12 @@ const DAYLIGHT = `
 
 [data-theme="daylight"] .restart-wrap { margin-top: 40px; }
 [data-theme="daylight"] .restart-button { min-height: 56px; padding: 0 28px; border: 0; border-radius: 12px; background: var(--accent); color: var(--on-accent); font-size: 18px; font-weight: 700; }
+
+[data-theme="daylight"] .prompt-dialog { border: 2px solid var(--ink); border-radius: 16px; }
+[data-theme="daylight"] .prompt-dialog__message { font-size: calc(19px * var(--body-size, 1)); font-weight: 700; }
+[data-theme="daylight"] .prompt-dialog__input { min-height: 48px; border: 2px solid var(--ink); border-radius: 10px; font-size: calc(19px * var(--body-size, 1)); }
+[data-theme="daylight"] .prompt-dialog__button { min-height: 48px; border: 2px solid var(--ink); border-radius: 12px; font-size: 18px; font-weight: 700; }
+[data-theme="daylight"] .prompt-dialog__button--confirm { border-color: var(--accent); }
 
 @media (max-width: 640px) {
   [data-theme="daylight"] .reader-header { height: 60px; padding: 0 8px 0 20px; }

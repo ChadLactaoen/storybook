@@ -110,6 +110,16 @@ describe('gates inferred from conditional links', () => {
     expect(out.EndP!.gateId).toBeNull()
   })
 
+  it('treats what a reader types as unknowable: no gate, and no dead branch', () => {
+    // `(prompt:)` is answered at play time, so no literal in the source is its
+    // value. The reader answers it (run.ts); inference must not pretend to.
+    const asked = '[[A|P4]]\n[[B|P5]]\n(set:$idol to (prompt: "Who?", "p"))'
+    expect(gated(doc, { ...GATED, PickQ: asked }).EndP!.gateId).toBeNull()
+    // Nothing `(set:)`s "Mira", but a reader can type it, so this branch lives.
+    const typed = '(if:$idol is "Mira")[[On|P6]]'
+    expect(gated(doc, { PickP: asked, MidA: typed, MidB: typed }).EndP!.dead).toBe(false)
+  })
+
   it('refuses a gate when the variable is reassigned further down', () => {
     const out = gated(doc, { ...GATED, MidB: `(set:$idol to "p")${'\n'}${CHAIN}` })
     expect(out.EndP!.gateId).toBeNull()

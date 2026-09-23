@@ -31,7 +31,15 @@
  * reader moves on.
  */
 
-import { linesOf, renderPassage, type Block, type Inline, type RunResult, type Vars } from '../../harlowe/run'
+import {
+  linesOf,
+  renderPassage,
+  type Block,
+  type Inline,
+  type PendingPrompt,
+  type RunResult,
+  type Vars,
+} from '../../harlowe/run'
 import { followLink, indexPayload, openPassage, type Lookup, type Payload } from '../payload'
 import { fromBase64, decodeText } from '../crypto'
 import { DEFAULT_THEME, THEMES, isPlayerTheme, type PlayerTheme } from '../themes'
@@ -65,14 +73,25 @@ interface Step {
   setterBefore: ReadonlyMap<string, string>
   /** The text of the choice that led here. Null for the first passage. */
   label: string | null
+  /**
+   * The reader's answers to this passage's prompts, in the order asked. The
+   * passage is rendered again from the top with each one added, which is how
+   * `run.ts` resumes past a prompt; see the top of that file.
+   */
+  answers: string[]
   /** Read out of the envelope when the passage opens. */
   code: string
   slug: string
 }
 
-interface Rendered {
+/** A passage out of its envelope: what rendering it again needs. */
+interface Passage {
   title: string
   isEnding: boolean
+  body: string
+}
+
+interface Rendered extends Passage {
   result: RunResult
 }
 
@@ -103,6 +122,8 @@ let keyed: HTMLButtonElement[] = []
  * to know which links work, and a choice needs the key itself.
  */
 let linkKeys = new Map<number, Uint8Array | null>()
+/** The prompt on screen. At most one: a render halts at its first. */
+let promptDialog: HTMLDialogElement | null = null
 let listening = false
 
 const PASSAGE_FAILED = 'This passage could not be opened. The file may be incomplete or damaged.'
@@ -252,6 +273,9 @@ function renderInline(inline: Inline, blocked: (ordinal: number) => string | nul
 
 /** Why this choice cannot be taken, or null. */
 function blockedReason(rendered: Rendered, hasTarget: boolean): string | null {
+  // Checked first: while a prompt waits no key has been unwrapped, so every
+  // link would otherwise claim to lead nowhere.
+  if (rendered.result.pending !== null) return 'answer the question first'
   if (rendered.isEnding) return 'the story ends here'
   if (!hasTarget) return 'this link leads nowhere yet'
   return null
@@ -607,7 +631,14 @@ function drawConsole(rendered: Rendered | null): void {
       rows.push(...consoleRow(name, `${value ?? 'not readable'} · set by ${setBy}`))
     }
     if (rendered.result.asks.length > 0) {
-      rows.push(...consoleRow('Asks for', rendered.result.asks.map((a) => a.variable).join(', ')))
+      const asked = rendered.result.asks.map((a) => {
+        const name = a.variable ?? '(prompt:)'
+        return a.answer === null ? `${name}, not answered` : `${name} → "${a.answer}"`
+      })
+      rows.push(...consoleRow('Asked', asked.join('; ')))
+    }
+    if (rendered.result.pending !== null) {
+      rows.push(...consoleRow('Waiting on', rendered.result.pending.variable))
     }
     if (rendered.result.unsupported.length > 0) {
       rows.push(...consoleRow('Could not read', rendered.result.unsupported.join(', ')))
@@ -621,8 +652,9 @@ function drawConsole(rendered: Rendered | null): void {
  * page states something false about the passage. Play only.
  *
  * Starting mid-story leaves every variable unset, so a gated branch silently
- * fails; and a passage that asks the reader for input gets none here, so what it
- * set stays unset. Both are on the page, in the flow, rather than in the
+ * fails; and a passage that asks for input this player cannot put to the reader
+ * — an `(input-box:)`, or a `(prompt:)` it could not read — gets none, so what
+ * it set stays unset. Both are on the page, in the flow, rather than in the
  * collapsed console, where they would go unread exactly when they matter.
  */
 function midStoryNote(): HTMLElement[] {
@@ -637,15 +669,18 @@ function midStoryNote(): HTMLElement[] {
 }
 
 function asksNote(rendered: Rendered): HTMLElement[] {
-  if (payload.author !== true || rendered.result.asks.length === 0) return []
-  const names = rendered.result.asks.map((a) => a.variable).join(', ')
-  return [
-    el(
-      'p',
-      'author-note',
-      `This passage asks the reader for ${names}. Nothing is typed in here, so it stays unset.`,
-    ),
-  ]
+  if (payload.author !== true) return []
+  // An answered prompt is the reader's business and nothing to warn about.
+  const unanswered = rendered.result.asks.filter((a) => a.answer === null)
+  if (unanswered.length === 0) return []
+  const names = unanswered.flatMap((a) => (a.variable === null ? [] : [a.variable]))
+  // A prompt with nowhere to put its answer — inside `(print:)`, say — leaves
+  // nothing unset; what the author needs to know is that it is never asked.
+  const text =
+    names.length > 0
+      ? `This passage asks the reader for ${names.join(', ')} in a way this player cannot run, so it stays unset.`
+      : 'This passage asks the reader a question in a way this player cannot run, so it is never asked.'
+  return [el('p', 'author-note', text)]
 }
 
 /** A passage opened and evaluated, with its links' keys, not yet on the page. */
@@ -655,33 +690,45 @@ interface Opened {
 }
 
 /**
+ * Render `passage` as `step` stands — its variables and its answers so far —
+ * with the keys behind the links that rendered. Touches nothing.
+ *
+ * Every link's key is unwrapped concurrently, before the old page comes down,
+ * so a passage with many links does not flash blank while they resolve. None
+ * is unwrapped while a prompt waits: nothing can be chosen until it is
+ * answered, and the answer can change which links render at all.
+ */
+async function evaluate(step: Step, passage: Passage): Promise<Opened> {
+  const result = renderPassage(passage.body, step.varsBefore, step.answers)
+  const rendered: Rendered = { ...passage, result }
+  const ordinals = result.pending === null ? result.choices.map((choice) => choice.ordinal) : []
+  const keys = await Promise.all(ordinals.map((ordinal) => followLink(lookup, step.key, ordinal)))
+  return { rendered, links: new Map(ordinals.map((ordinal, i) => [ordinal, keys[i]!])) }
+}
+
+/**
  * Open `step`'s passage and everything its page needs, touching nothing.
  *
  * Null when the passage cannot be decrypted. Throws if the evaluator does. The
  * page and the stack change only once this has succeeded, so a failure leaves
  * the reader where they were rather than half way into a passage that is not
- * there. Every link's key is unwrapped concurrently, before the old page comes
- * down, so a passage with many links does not flash blank while they resolve.
+ * there.
  */
 async function open(step: Step): Promise<Opened | null> {
   const envelope = await openPassage(lookup, step.key)
   if (envelope === null) return null
-  const rendered: Rendered = {
-    title: envelope.t,
-    isEnding: envelope.e,
-    result: renderPassage(envelope.b, step.varsBefore),
-  }
-  const ordinals = rendered.result.choices.map((choice) => choice.ordinal)
-  const keys = await Promise.all(ordinals.map((ordinal) => followLink(lookup, step.key, ordinal)))
+  const opened = await evaluate(step, { title: envelope.t, isEnding: envelope.e, body: envelope.b })
   step.code = envelope.c
   step.slug = envelope.s
-  return { rendered, links: new Map(ordinals.map((ordinal, i) => [ordinal, keys[i]!])) }
+  return opened
 }
 
 /** Put the top of the stack on the page. Synchronous: everything is in `opened`. */
 function draw(opened: Opened): void {
+  closePrompt()
   const step = stack[stack.length - 1]!
   const rendered = opened.rendered
+  const pending = rendered.result.pending
   current = rendered
   linkKeys = opened.links
   keyed = []
@@ -699,7 +746,10 @@ function draw(opened: Opened): void {
   }
   parts.push(body, ...asksNote(rendered))
 
-  if (rendered.isEnding) {
+  if (pending !== null) {
+    // Half-run: nothing past the prompt exists yet, so neither do the choices,
+    // and an ending must not give itself away before its prose is read.
+  } else if (rendered.isEnding) {
     parts.push(...endingBlock())
   } else if (rendered.result.choices.length > 0) {
     parts.push(...choiceList(rendered, why))
@@ -716,6 +766,118 @@ function draw(opened: Opened): void {
 
   column.replaceChildren(...parts)
   drawConsole(rendered)
+  if (pending !== null) showPrompt(pending)
+}
+
+/**
+ * Ask the reader a `(prompt:)`, the way Harlowe 3 does: a modal over the page,
+ * the message, a text box holding the default, then the confirm button and —
+ * unless the author hid it — Cancel.
+ *
+ * A native `<dialog>` shown modal, which brings the focus trap, the inert page
+ * behind and the backdrop with it; every browser this player already requires
+ * has one. It sits inside `.reader` so the theme reaches it like everything
+ * else. Built from nodes like the prose, since the message is the author's.
+ *
+ * Enter submits whatever the default. Harlowe 3.3 wires Enter only when the
+ * default is non-empty, which reads as a bug rather than a rule: its changelog
+ * promises Enter unconditionally.
+ */
+function showPrompt(pending: PendingPrompt): void {
+  setPopover(false)
+  const dialog = el('dialog', 'prompt-dialog')
+  const form = el('form', 'prompt-dialog__form')
+  const message = el('p', 'prompt-dialog__message', pending.message)
+  message.id = 'prompt-dialog-message'
+  dialog.setAttribute('aria-labelledby', message.id)
+
+  const input = el('input', 'prompt-dialog__input')
+  input.type = 'text'
+  input.value = pending.default
+  input.autocomplete = 'off'
+  input.setAttribute('aria-labelledby', message.id)
+
+  const actions = el('div', 'prompt-dialog__actions')
+  const confirm = el('button', 'prompt-dialog__button prompt-dialog__button--confirm', pending.confirm)
+  confirm.type = 'submit'
+  actions.append(confirm)
+  if (pending.cancel !== null) {
+    const cancel = button('prompt-dialog__button', pending.cancel)
+    // Cancel answers with the default, whatever was typed — Harlowe since 3.1.
+    cancel.addEventListener('click', () => void answer(pending.default))
+    actions.append(cancel)
+  }
+
+  form.append(message, input, actions)
+  // A held key repeats, and the next prompt is focused a few milliseconds after
+  // this one is answered: the repeat would answer it with its default before the
+  // reader had read it. The choice keys refuse repeats for the same reason.
+  form.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.repeat) e.preventDefault()
+  })
+  form.addEventListener('submit', (e) => {
+    e.preventDefault()
+    void answer(input.value)
+  })
+  dialog.append(form)
+
+  // Escape is Cancel where there is one, and nothing where the author took it
+  // away: a prompt with no Cancel has to be answered.
+  dialog.addEventListener('cancel', (e) => {
+    e.preventDefault()
+    if (pending.cancel !== null) void answer(pending.default)
+  })
+  // A browser may close a modal over a refused `cancel` — Chrome lets a second
+  // Escape through. Nothing was answered, so it goes straight back up.
+  dialog.addEventListener('close', () => {
+    if (promptDialog === dialog) dialog.showModal()
+  })
+
+  reader.append(dialog)
+  promptDialog = dialog
+  dialog.showModal()
+  input.focus()
+  input.select()
+}
+
+/** Take the prompt down, if one is up. Cleared first, so `close` lets it go. */
+function closePrompt(): void {
+  const dialog = promptDialog
+  if (dialog === null) return
+  promptDialog = null
+  if (dialog.open) dialog.close()
+  dialog.remove()
+}
+
+/**
+ * The reader answered the prompt the passage stopped at: render it again with
+ * one more answer, which runs it on past that prompt — to the end, or to the
+ * next one. The page stays where it is; this is the same passage, continuing.
+ */
+async function answer(value: string): Promise<void> {
+  if (busy || current === null || current.result.pending === null) return
+  busy = true
+  try {
+    const step = stack[stack.length - 1]!
+    const passage: Passage = current
+    closePrompt()
+    step.answers.push(value)
+    let opened: Opened | null
+    try {
+      opened = await evaluate(step, passage)
+    } catch {
+      opened = null
+    }
+    if (opened === null) {
+      // Restart would open this same passage when it is the first one.
+      fail(PASSAGE_FAILED, stack.length > 1)
+      return
+    }
+    draw(opened)
+    if (opened.rendered.result.pending === null) column.focus({ preventScroll: true })
+  } finally {
+    busy = false
+  }
 }
 
 /**
@@ -724,6 +886,7 @@ function draw(opened: Opened): void {
  * failed is the one Restart would open.
  */
 function fail(message: string, offerRestart: boolean): void {
+  closePrompt()
   current = null
   keyed = []
   linkKeys = new Map()
@@ -733,7 +896,9 @@ function fail(message: string, offerRestart: boolean): void {
 /** Back to the top of the page, with focus at the start of the new passage. */
 function settle(): void {
   window.scrollTo(0, 0)
-  column.focus({ preventScroll: true })
+  // Not while a prompt is up: `draw` has just focused its text box, and the
+  // column is behind the modal, where focus has no business going.
+  if (promptDialog === null) column.focus({ preventScroll: true })
 }
 
 /** `open`, with an evaluator exception read as the same failure as a bad blob. */
@@ -746,7 +911,7 @@ async function tryOpen(step: Step): Promise<Opened | null> {
 }
 
 async function choose(ordinal: number, label: string): Promise<void> {
-  if (busy || current === null || current.isEnding) return
+  if (busy || current === null || current.isEnding || current.result.pending !== null) return
   busy = true
   try {
     const key = linkKeys.get(ordinal) ?? null
@@ -761,6 +926,7 @@ async function choose(ordinal: number, label: string): Promise<void> {
       varsBefore: current.result.vars,
       setterBefore: setter,
       label,
+      answers: [],
       code: '',
       slug: '',
     }
@@ -784,6 +950,7 @@ async function restartStory(moveFocus: boolean): Promise<void> {
     varsBefore: new Map(),
     setterBefore: new Map(),
     label: null,
+    answers: [],
     code: '',
     slug: '',
   }
