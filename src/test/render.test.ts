@@ -95,6 +95,7 @@ beforeEach(() => {
   // silently dims everything in the next.
   store.clearFilters()
   store.closeCharacterSheet()
+  store.setCompactCast(false)
   // Preferences are a module singleton too: without this, a toggle flipped by
   // one test silently changes what the next one creates.
   resetPrefs()
@@ -349,23 +350,245 @@ describe('the app renders', () => {
     expect(problems).toEqual([])
   })
 
-  it('reorders the cast from the index panel', async () => {
-    mount()
-    store.newStory('Render Check')
-    store.characterCreate('Mira')
-    store.characterCreate('Bandit')
-    await runCommand('Cast & Settings')
+  describe('the cast in the index panel', () => {
+    const ROW_H = 40
+    const roster = () => store.state.doc.characters.map((c) => c.name)
+    const castRows = () => [...host.querySelectorAll<HTMLElement>('.index li[data-index]')]
+    const grip = (name: string) => host.querySelector<HTMLElement>(`.index .grip[data-name="${name}"]`)!
 
-    const down = host.querySelector<HTMLButtonElement>('.index .arrow[title="Move down"]')!
-    down.click()
-    await nextTick()
+    /**
+     * jsdom has neither `DragEvent` nor `DataTransfer`, and lays nothing out, so
+     * each row is given a 40px box stacked in order and each event a stand-in
+     * transfer that only records what was set on it.
+     */
+    function fire(el: EventTarget, type: string, clientY = 0, relatedTarget: EventTarget | null = null) {
+      const e = new Event(type, { bubbles: true, cancelable: true })
+      const data = new Map<string, string>()
+      const dataTransfer = {
+        effectAllowed: 'none',
+        dropEffect: 'none',
+        setData: (k: string, v: string) => data.set(k, v),
+        setDragImage: () => {},
+        data,
+      }
+      Object.defineProperties(e, {
+        dataTransfer: { value: dataTransfer },
+        clientY: { value: clientY },
+        relatedTarget: { value: relatedTarget },
+      })
+      el.dispatchEvent(e)
+      return dataTransfer
+    }
 
-    expect(store.state.doc.characters.map((c) => c.name)).toEqual(['Bandit', 'Mira'])
-    // The top row can no longer move up, and the new bottom row cannot move down.
-    const arrows = [...host.querySelectorAll<HTMLButtonElement>('.index .arrow')]
-    expect(arrows[0]!.disabled).toBe(true)
-    expect(arrows.at(-1)!.disabled).toBe(true)
-    expect(problems).toEqual([])
+    async function setup(...names: string[]) {
+      mount()
+      store.newStory('Render Check')
+      for (const n of names) store.characterCreate(n)
+      await nextTick()
+      await runCommand('Cast & Settings')
+      for (const row of castRows()) {
+        const top = Number(row.dataset.index) * ROW_H
+        row.getBoundingClientRect = () => ({ top, height: ROW_H }) as DOMRect
+      }
+    }
+
+    const lines = () => host.querySelectorAll('.index .drop-before, .index .drop-end').length
+
+    /** Drag `name` by its handle and let go at `clientY`, over whichever row is there. */
+    async function dragTo(name: string, clientY: number) {
+      const transfer = fire(grip(name), 'dragstart')
+      await nextTick()
+      const over = castRows()[Math.min(Math.floor(clientY / ROW_H), castRows().length - 1)]!
+      fire(over, 'dragover', clientY)
+      await nextTick()
+      const lined = lines()
+      fire(over, 'drop', clientY)
+      fire(grip(name), 'dragend')
+      await nextTick()
+      return { transfer, lined }
+    }
+
+    it('drops a character anywhere in one move, and undoes it in one step', async () => {
+      await setup('Mira', 'Tam', 'Bandit')
+
+      // Upper half of Mira's row: before her.
+      const { transfer, lined } = await dragTo('Bandit', 10)
+      expect(roster()).toEqual(['Bandit', 'Mira', 'Tam'])
+      expect(lined).toBe(1)
+      // Not text/plain, or a row dropped on the body editor would paste its name.
+      expect([...transfer.data.keys()]).toEqual(['application/x-storyboard-character'])
+      expect(host.querySelectorAll('.index .dragging')).toHaveLength(0)
+      expect(lines()).toBe(0)
+
+      store.undo()
+      expect(roster()).toEqual(['Mira', 'Tam', 'Bandit'])
+      expect(problems).toEqual([])
+    })
+
+    it('moves a character to the very end from below the last midpoint', async () => {
+      await setup('Mira', 'Tam', 'Bandit')
+      const { lined } = await dragTo('Mira', 3 * ROW_H - 5)
+      expect(roster()).toEqual(['Tam', 'Bandit', 'Mira'])
+      expect(lined).toBe(1)
+      expect(problems).toEqual([])
+    })
+
+    it('records nothing for a drop back into its own slot', async () => {
+      await setup('Mira', 'Tam', 'Bandit')
+      const before = store.state.doc
+
+      // Lower half of the row above Tam, and upper half of Tam's own row: both
+      // are the slot Tam already sits in, so neither draws a line or commits.
+      for (const y of [ROW_H - 5, ROW_H + 5]) {
+        const { lined } = await dragTo('Tam', y)
+        expect(lined).toBe(0)
+      }
+      expect(store.state.doc).toBe(before)
+      expect(problems).toEqual([])
+    })
+
+    it('ignores a drag that did not start on a handle', async () => {
+      await setup('Mira', 'Tam')
+      const over = fire(castRows()[0]!, 'dragover', 5)
+      expect(over.dropEffect).toBe('none')
+      fire(castRows()[0]!, 'drop', 5)
+      expect(roster()).toEqual(['Mira', 'Tam'])
+    })
+
+    const compactButton = () =>
+      [...host.querySelectorAll<HTMLButtonElement>('.index .section-actions .mini')].find(
+        (b) => b.textContent!.trim() === 'Compact',
+      )!
+
+    it('gives a name its own line, with only the count beside it', async () => {
+      await setup('Mira')
+      const row = castRows()[0]!
+      const head = row.querySelector('.row-head')!
+      expect(head.querySelector('.name')!.textContent!.trim()).toBe('Mira')
+      expect(head.querySelector('.count')).not.toBeNull()
+      expect(head.querySelectorAll('.mini')).toHaveLength(0)
+      expect([...row.querySelectorAll('.actions .mini:not(.arrow)')].map((b) => b.textContent!.trim())).toEqual([
+        'Open',
+        'Rename',
+        'Delete',
+      ])
+      expect(problems).toEqual([])
+    })
+
+    it('compacts every card to its handle and name, for the session only', async () => {
+      await setup('Mira', 'Tam')
+      compactButton().click()
+      await nextTick()
+
+      expect(compactButton().getAttribute('aria-pressed')).toBe('true')
+      expect(store.state.compactCast).toBe(true)
+      // Not a saved preference: a compact cast met again after a relaunch has
+      // no Open, Rename or Delete in sight.
+      expect(localStorage.getItem('storybook.prefs.v1') ?? '').not.toContain('compactCast')
+      for (const row of castRows()) {
+        expect(row.querySelector('.grip')).not.toBeNull()
+        expect(row.querySelector('.name')).not.toBeNull()
+        expect(row.querySelector('.count, .actions, .bio, .profile')).toBeNull()
+      }
+
+      // Still a drag list: compact is for ordering a long cast.
+      await dragTo('Tam', 5)
+      expect(roster()).toEqual(['Tam', 'Mira'])
+
+      compactButton().click()
+      await nextTick()
+      expect(castRows()[0]!.querySelector('.actions')).not.toBeNull()
+      expect(store.state.compactCast).toBe(false)
+      expect(problems).toEqual([])
+    })
+
+    it('drops a pending delete rather than hiding it behind the compact view', async () => {
+      await setup('Mira')
+      castRows()[0]!.querySelector<HTMLButtonElement>('.actions .danger')!.click()
+      await nextTick()
+      expect(host.querySelector('.index .confirm')).not.toBeNull()
+
+      compactButton().click()
+      await nextTick()
+      compactButton().click()
+      await nextTick()
+      expect(host.querySelector('.index .confirm')).toBeNull()
+      expect(roster()).toEqual(['Mira'])
+    })
+
+    it('lands a drop in the gap between rows, or on a row\'s text', async () => {
+      await setup('Mira', 'Tam', 'Bandit')
+      const list = host.querySelector('.index .cast')!
+
+      // Over the list itself, which is what a gap reports as the target.
+      fire(grip('Bandit'), 'dragstart')
+      fire(list, 'dragover', ROW_H)
+      await nextTick()
+      expect(lines()).toBe(1)
+      fire(list, 'drop', ROW_H)
+      await nextTick()
+      expect(roster()).toEqual(['Mira', 'Bandit', 'Tam'])
+
+      // Over a text node, which Firefox can report instead of its element.
+      const text = castRows()[0]!.querySelector('.name')!.firstChild!
+      expect(text.nodeType).toBe(Node.TEXT_NODE)
+      fire(grip('Tam'), 'dragstart')
+      fire(text, 'dragover', 5)
+      fire(text, 'drop', 5)
+      await nextTick()
+      expect(roster()).toEqual(['Tam', 'Mira', 'Bandit'])
+      expect(problems).toEqual([])
+    })
+
+    it('takes the line away when the drag leaves the list', async () => {
+      await setup('Mira', 'Tam', 'Bandit')
+      const list = host.querySelector('.index .cast')!
+      fire(grip('Bandit'), 'dragstart')
+      fire(castRows()[0]!, 'dragenter', 5)
+      await nextTick()
+      expect(lines()).toBe(1)
+
+      // Into a row's own child: still in the list, so the line stays.
+      fire(castRows()[0]!, 'dragleave', 5, grip('Mira'))
+      await nextTick()
+      expect(lines()).toBe(1)
+
+      fire(list, 'dragleave', 5, host.querySelector('.index header'))
+      await nextTick()
+      expect(lines()).toBe(0)
+      fire(grip('Bandit'), 'dragend')
+      expect(roster()).toEqual(['Mira', 'Tam', 'Bandit'])
+    })
+
+    it('keeps the arrows in the full view, and reads out where a row went', async () => {
+      await setup('Mira', 'Tam', 'Bandit')
+      const arrow = (name: string, dir: 'up' | 'down') =>
+        host.querySelector<HTMLButtonElement>(`.index .arrow[aria-label="Move ${name} ${dir}"]`)!
+
+      expect(arrow('Mira', 'up').disabled).toBe(true)
+      expect(arrow('Bandit', 'down').disabled).toBe(true)
+      arrow('Mira', 'down').click()
+      await nextTick()
+
+      expect(roster()).toEqual(['Tam', 'Mira', 'Bandit'])
+      expect(host.querySelector('.index [aria-live]')!.textContent!.trim()).toBe(
+        'Mira moved to position 2 of 3.',
+      )
+      expect(grip('Mira').getAttribute('role')).toBe('button')
+      expect(problems).toEqual([])
+    })
+
+    it('moves one place per arrow key on a focused handle, and keeps the focus', async () => {
+      await setup('Mira', 'Tam', 'Bandit')
+      grip('Mira').focus()
+      grip('Mira').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      await nextTick()
+      await nextTick()
+
+      expect(roster()).toEqual(['Tam', 'Mira', 'Bandit'])
+      expect(document.activeElement).toBe(grip('Mira'))
+      expect(problems).toEqual([])
+    })
   })
 
   it('dims non-matching passages when an index row is clicked', async () => {

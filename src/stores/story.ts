@@ -65,6 +65,15 @@ interface State {
   noteFilter: boolean
   /** Which character's sheet is open, if any. */
   openCharacter: string | null
+  /**
+   * The Story index lists the cast as names alone.
+   *
+   * Held for the session rather than saved as a preference: compact hides
+   * Open, Rename and Delete, and a view remembered across launches would greet
+   * an author days later with a cast that seemed to have lost them. Nor is it
+   * reset with the story, since it describes the author's screen, not the doc.
+   */
+  compactCast: boolean
   savedAt: number | null
   notice: string | null
   warnings: string[]
@@ -82,6 +91,7 @@ const state = reactive<State>({
   characterFilter: [],
   noteFilter: false,
   openCharacter: null,
+  compactCast: false,
   savedAt: null,
   notice: null,
   warnings: [],
@@ -1156,7 +1166,8 @@ export function characterRename(from: string, to: string): string | null {
 }
 
 /**
- * Move a character up (-1) or down (+1) the roster.
+ * Move a character `delta` places along the roster — one for an arrow key,
+ * any number for a drag in the index.
  *
  * A move off either end changes nothing, and `commit` on an unchanged document
  * would still push an undo entry — so the no-op is filtered here.
@@ -1164,6 +1175,10 @@ export function characterRename(from: string, to: string): string | null {
 export function characterMove(name: string, delta: number): void {
   const next = M.moveCharacter(state.doc, name, delta)
   if (next !== state.doc) commit(next)
+}
+
+export function setCompactCast(on: boolean): void {
+  state.compactCast = on
 }
 
 /** Alphabetize the roster, undoing any hand ordering. */

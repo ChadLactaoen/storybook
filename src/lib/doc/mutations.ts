@@ -1041,10 +1041,12 @@ export function deleteCharacter(doc: StoryDoc, name: string): StoryDoc {
 }
 
 /**
- * Move a character `delta` places along the roster, clamped by its ends.
+ * Move a character `delta` places along the roster.
  *
- * A move off either end is a no-op returning the same document, so the caller
- * never has to guard the edges and no empty undo step is recorded.
+ * Not clamped: a move that would land past either end is refused whole, as a
+ * no-op returning the same document, so the caller never has to guard the
+ * edges and no empty undo step is recorded. A caller wanting "as far as it
+ * goes" computes the delta to the end itself.
  */
 export function moveCharacter(doc: StoryDoc, name: string, delta: number): StoryDoc {
   const ordered = orderRoster(doc.characters)
