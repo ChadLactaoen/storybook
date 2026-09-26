@@ -3,7 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { SLUG_MAX } from '../lib/doc/mutations'
 import { parseLinks } from '../lib/harlowe/links'
 import { authoredIn, authoredOut, forwardTargets, formatCount, share } from '../lib/graph/paths'
-import { wordCount } from '../lib/graph/stats'
+import { displayedSnippet } from '../lib/graph/derive'
+import { displayedWords, wordCount } from '../lib/graph/stats'
 import { commandTip } from '../lib/ui/commands'
 import { prefs } from '../stores/prefs'
 import * as store from '../stores/story'
@@ -403,6 +404,24 @@ const linksIn = computed(() =>
  * author is not watching while they type.
  */
 const words = computed(() => (node.value ? wordCount(node.value.body) : 0))
+
+/**
+ * What this passage's displays add for a reader — the same walk Story Stats
+ * puts on each route, so the tile and a route's figure count one passage alike.
+ *
+ * Only the bodies of snippets it actually displays are read, and a body naming
+ * no display returns before any of them is: the cost per keystroke stays one
+ * passage's, not the story's.
+ */
+const displayed = computed(() => {
+  const n = node.value
+  if (!n) return 0
+  const shown = displayedWords((code) => {
+    const id = displayedSnippet(store.layout.value.graph, code)
+    return id === null ? null : (store.state.doc.nodes.find((m) => m.id === id)?.body ?? null)
+  })
+  return shown(n.body, n.isSnippet ? n.code : undefined)
+})
 
 const isStart = computed(() => node.value?.id === store.state.doc.startNodeId)
 
@@ -1235,7 +1254,11 @@ function applySetting() {
           <div class="stats">
             <div class="stat">
               <span class="muted">Words</span>
-              <strong>{{ words.toLocaleString('en-US') }}</strong>
+              <strong>{{ (words + displayed).toLocaleString('en-US') }}</strong>
+              <span v-if="displayed > 0" class="sub">
+                {{ words.toLocaleString('en-US') }} here,
+                {{ displayed.toLocaleString('en-US') }} displayed
+              </span>
             </div>
             <div v-if="isSnippet" class="stat">
               <span class="muted">Displayed by</span>
@@ -1294,8 +1317,9 @@ function applySetting() {
             disagree wherever a link loops back or leaves an Ending.
           </p>
           <p class="hint">
-            Words come from the raw body, so link and macro syntax counts too &mdash; the
-            same count Story Stats totals.
+            Words are what a reader meets here: the raw body, link and macro syntax
+            included, plus every snippet it displays, each time it displays it. Story
+            Stats counts them the same way along a route, and a snippet once in its total.
           </p>
         </section>
       </template>
@@ -1335,6 +1359,7 @@ function applySetting() {
       :targets="linkTargets"
       :display-targets="displayTargets"
       :can-link="!isSnippet"
+      :displayed="displayed"
       @update:model-value="onBodyInput"
       @settle="settleBody"
       @close="expanded = false"

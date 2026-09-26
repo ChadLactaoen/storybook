@@ -19,7 +19,7 @@ import { deriveGraph } from '../lib/graph/derive'
 import { authoredIn, authoredOut } from '../lib/graph/paths'
 import { layoutStory } from '../lib/graph/layout'
 import { planRecode, type RecodeOptions } from '../lib/graph/recode'
-import { computeStoryStats } from '../lib/graph/stats'
+import { computeStoryStats, displayedWords, wordCount } from '../lib/graph/stats'
 import { computeTagStats } from '../lib/graph/tags'
 import type { LayoutResult } from '../lib/graph/types'
 import { insertDisplay } from '../lib/harlowe/format'
@@ -682,6 +682,46 @@ describe('a snippet in Story Stats', () => {
     expect(a.totalRoutes).toBe(b.totalRoutes)
   })
 
+  it('counts a snippet on a route every time it is displayed, and once in the total', () => {
+    // A straight path of three short passages, each displaying its own long
+    // snippet: a playthrough reads all of it.
+    const doc = docFrom(
+      { A: ['B'], B: ['C'], C: [], SA: [], SB: [], SC: [] },
+      { snippets: ['SA', 'SB', 'SC'] },
+    )
+    const long = Array.from({ length: 200 }, () => 'w').join(' ')
+    for (const [host, code] of [['A', 'P4'], ['B', 'P5'], ['C', 'P6']] as const) {
+      nodeOf(doc, host).body += ` (display: "${code}")`
+    }
+    for (const s of ['SA', 'SB', 'SC']) setBody(doc, s, long)
+    const own = ['A', 'B', 'C'].reduce((sum, t) => sum + wordCount(nodeOf(doc, t).body), 0)
+
+    const s = computeStoryStats(doc, layoutStory(doc))
+    expect(s.playthrough.shortestWords).toBe(own + 600)
+    expect(s.playthrough.longestWords).toBe(own + 600)
+    expect(s.playthrough.meanWords).toBe(own + 600)
+    expect(s.words.total).toBe(own + 600)
+
+    // One snippet shown by all three: read three times, written once.
+    for (const host of ['A', 'B', 'C']) {
+      nodeOf(doc, host).body = nodeOf(doc, host).body.replace(/"P[56]"/, '"P4"')
+    }
+    const shared = computeStoryStats(doc, layoutStory(doc))
+    expect(shared.playthrough.longestWords).toBe(own + 600)
+    expect(shared.words.total).toBe(own + 600)
+  })
+
+  it('puts a snippet only on the routes that display it', () => {
+    const doc = story()
+    setBody(doc, 'Weather', 'Rain on the tin roof.')
+    const before = computeStoryStats(doc, layoutStory(doc)).playthrough
+    nodeOf(doc, 'Left').body += ' (display: "P5")'
+    const after = computeStoryStats(doc, layoutStory(doc)).playthrough
+    // Two tokens of macro on the Left route, and the five words it shows.
+    expect(after.shortestWords).toBe(before.shortestWords)
+    expect(after.longestWords).toBe(before.longestWords + 7)
+  })
+
   it('names links in or to a snippet', () => {
     const doc = story()
     setBody(doc, 'Weather', '[[Out|P1]] [[Also|P2]]')
@@ -702,6 +742,42 @@ describe('a snippet in Story Stats', () => {
       ['Start', '"P2" is not a snippet; no passage "Nope"'],
       ['Status', 'not a quoted code'],
     ])
+  })
+})
+
+describe("a snippet's words, as a reader meets them", () => {
+  const shownBy = (snippets: Record<string, string>) =>
+    displayedWords((code) => snippets[code] ?? null)
+
+  it('counts each display, nested ones included', () => {
+    const shown = shownBy({ S: 'one two', T: 'three (display: "S")' })
+    expect(shown('(display: "S")')).toBe(2)
+    expect(shown('(display: "S") (display: "S")')).toBe(4)
+    // T's own three tokens, and the S it shows.
+    expect(shown('(display: "T")')).toBe(3 + 2)
+  })
+
+  it('adds nothing for a display the reader will not show', () => {
+    const shown = shownBy({ S: 'one two' })
+    expect(shown('(display: "Nope") (display: $x)')).toBe(0)
+    expect(shown('<!-- (display: "S") -->')).toBe(0)
+  })
+
+  it('refuses a loop, as the reader does', () => {
+    const shown = shownBy({ S: 'one (display: "T")', T: 'two (display: "S")' })
+    // S, then T, then S again is refused.
+    expect(shown('(display: "S")')).toBe(3 + 3)
+    // Read as displayed, a snippet cannot show itself even once more.
+    expect(shownBy({ S: 'one (display: "S")' })('one (display: "S")', 'S')).toBe(0)
+  })
+
+  it('stops where the reader stops, at its depth and its budget', () => {
+    const chain: Record<string, string> = {}
+    for (let i = 1; i <= DISPLAY_DEPTH + 2; i++) chain[`S${i}`] = `w (display: "S${i + 1}")`
+    expect(shownBy(chain)('(display: "S1")')).toBe(DISPLAY_DEPTH * 3)
+
+    const many = '(display: "S") '.repeat(DISPLAY_BUDGET + 10)
+    expect(shownBy({ S: 'one two' })(many)).toBe(DISPLAY_BUDGET * 2)
   })
 })
 
