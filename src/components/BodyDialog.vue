@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { wordCount } from '../lib/graph/stats'
 import * as store from '../stores/story'
 import HarloweEditor from './HarloweEditor.vue'
 
@@ -13,6 +14,11 @@ const props = defineProps<{
   displayTargets?: readonly { code: string; title: string }[]
   /** False in a snippet, which cannot link. */
   canLink?: boolean
+  /**
+   * Words the body's `(display:)` calls add for a reader. The inspector's
+   * figure, handed down rather than walked again, so the two cannot disagree.
+   */
+  displayed?: number
 }>()
 
 const emit = defineEmits<{
@@ -36,9 +42,10 @@ const body = computed({
 
 /** Counted on the prose the author sees, not on a tokenised view of it. */
 const stats = computed(() => {
-  const words = props.modelValue.trim().length === 0 ? 0 : props.modelValue.trim().split(/\s+/).length
+  const own = wordCount(props.modelValue)
+  const displayed = props.displayed ?? 0
   const links = props.modelValue.match(/\[\[/g)?.length ?? 0
-  return { words, links }
+  return { own, displayed, words: own + displayed, links }
 })
 
 function onKey(e: KeyboardEvent) {
@@ -91,7 +98,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
       <footer>
         <span class="muted">
-          {{ stats.words }} {{ stats.words === 1 ? 'word' : 'words' }} &middot;
+          {{ stats.words.toLocaleString('en-US') }} {{ stats.words === 1 ? 'word' : 'words' }}
+          <template v-if="stats.displayed > 0">
+            ({{ stats.own.toLocaleString('en-US') }} here,
+            {{ stats.displayed.toLocaleString('en-US') }} displayed)
+          </template>
+          &middot;
           {{ stats.links }} {{ stats.links === 1 ? 'link' : 'links' }} &middot; saved as you type
         </span>
         <button class="btn btn-primary" @click="emit('close')">Done</button>

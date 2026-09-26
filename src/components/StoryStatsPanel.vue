@@ -272,7 +272,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
       <footer>
         <span class="muted">
-          Words are counted from the raw body, so link and macro syntax counts too. A snippet&rsquo;s words count once, where it is written, not in each passage that displays it.
+          Words are counted from the raw body, so link and macro syntax counts too. A snippet counts once in the total, where it is written, and in a playthrough every time a passage on the route displays it.
         </span>
         <button class="btn btn-primary" @click="emit('close')">Done</button>
       </footer>

@@ -15,7 +15,7 @@
 
 import type { NodeId, NodeState, StoryDoc } from '../../types/story'
 import { compareNodes, compareStr } from '../../types/story'
-import { DISPLAY_BUDGET, DISPLAY_DEPTH, displayReach, parseDisplays } from '../harlowe/macros'
+import { DISPLAY_BUDGET, DISPLAY_DEPTH, displayReach, parseDisplays, type DisplayRef } from '../harlowe/macros'
 import { displayedSnippet } from './derive'
 import { authoredOut as outDegree, countPaths, countPathsToAll, forwardTargets, share } from './paths'
 import { reachableFrom } from './reachability'
@@ -114,6 +114,63 @@ export function wordCount(body: string): number {
   return t.length === 0 ? 0 : t.split(/\s+/).length
 }
 
+/**
+ * The words a passage's `(display:)` calls put in front of a reader, on top of
+ * its own: every snippet shown, each time it is shown, nested ones included.
+ *
+ * The walk is `runDisplay`'s, refusal for refusal and in its order — no quoted
+ * code, no snippet by that code, a loop, a nest past `DISPLAY_DEPTH`, a render
+ * past `DISPLAY_BUDGET` — so a display the reader will not show adds nothing.
+ * The budget is per render, which is why the walk is not memoized by code;
+ * the budget also bounds it, at `DISPLAY_BUDGET` steps per body. Conditions are
+ * not evaluated, the same as for the passage's own words: a display behind a
+ * false `(if:)` counts, as the prose beside it does.
+ *
+ * `self` walks a snippet's body as it reads when a passage displays it, so a
+ * display of itself is refused there as it would be in play.
+ *
+ * One reader per story: each snippet is parsed once however many passages
+ * display it.
+ */
+export function displayedWords(
+  resolve: (code: string) => string | null,
+): (body: string, self?: string) => number {
+  const parsed = new Map<string, { words: number; displays: DisplayRef[] }>()
+
+  return (body, self) => {
+    const displaying: string[] = self === undefined ? [] : [self]
+    let count = displaying.length
+
+    const walk = (displays: readonly DisplayRef[]): number => {
+      let total = 0
+      for (const d of displays) {
+        const target = d.code === null ? null : resolve(d.code)
+        if (
+          d.code === null ||
+          target === null ||
+          displaying.includes(d.code) ||
+          displaying.length >= DISPLAY_DEPTH ||
+          count >= DISPLAY_BUDGET
+        ) {
+          continue
+        }
+        count++
+        let p = parsed.get(d.code)
+        if (p === undefined) {
+          p = { words: wordCount(target), displays: parseDisplays(target) }
+          parsed.set(d.code, p)
+        }
+        displaying.push(d.code)
+        total += p.words + walk(p.displays)
+        displaying.pop()
+      }
+      return total
+    }
+
+    return walk(parseDisplays(body))
+  }
+}
+
 function pct(n: number, total: number): number {
   return total === 0 ? 0 : Math.round((n / total) * 1000) / 10
 }
@@ -156,6 +213,11 @@ export function computeStoryStats(doc: StoryDoc, layout: LayoutResult): StorySta
   // The document as a fallback: a snippet is in no graph list, and a lint row
   // naming one still needs its title and code.
   const nodeOf = new Map(doc.nodes.map((n) => [n.id, n]))
+  /** The body a `(display:)` of `code` shows, or null when it shows nothing. */
+  const snippetBody = (code: string): string | null => {
+    const id = displayedSnippet(graph, code)
+    return id === null ? null : (nodeOf.get(id)?.body ?? null)
+  }
   const titleOf = (id: NodeId) => graph.titleOf.get(id) ?? nodeOf.get(id)?.title ?? ''
   const codeOf = (id: NodeId) => graph.codeOf.get(id) ?? nodeOf.get(id)?.code ?? ''
   const entry = (id: NodeId, detail = ''): LintEntry => ({
@@ -262,11 +324,7 @@ export function computeStoryStats(doc: StoryDoc, layout: LayoutResult): StorySta
   // display works that the reader will not show.
   const brokenDisplays: LintEntry[] = []
   {
-    const resolve = (code: string): string | null => {
-      const id = displayedSnippet(graph, code)
-      return id === null ? null : (nodeOf.get(id)?.body ?? null)
-    }
-    const reach = displayReach(resolve)
+    const reach = displayReach(snippetBody)
     for (const n of [...doc.nodes].sort(compareNodes)) {
       const problems: string[] = []
       const note = (problem: string) => {
@@ -315,23 +373,29 @@ export function computeStoryStats(doc: StoryDoc, layout: LayoutResult): StorySta
   }
 
   const passageHops = routeExtremes(startId, forwardOut, () => 1)
-  const wordHops = routeExtremes(startId, forwardOut, (id) => words.get(id) ?? 0)
 
   /* ---------- playthrough ---------- */
 
-  // Words as written, not as read: a displayed snippet's prose is counted once,
-  // where it is written, and never on the routes that show it — a snippet has
-  // `to(n) === 0n`. Crediting it to every host would make the number depend on
-  // where a paragraph happens to live rather than on what was written.
-  //
+  // Words as read, not as written: a passage's own, plus every snippet its
+  // displays show, each time they show it. The totals above are the other
+  // question — what the author wrote — so a snippet counts once there, and on
+  // a route as often as the reader meets it. Story passages only: a snippet
+  // has `to(n) === 0n`, so its words reach a route through its hosts or not
+  // at all.
+  const shown = displayedWords(snippetBody)
+  const read = new Map<NodeId, number>()
+  for (const n of story) read.set(n.id, (words.get(n.id) ?? 0) + shown(n.body))
+
+  const wordHops = routeExtremes(startId, forwardOut, (id) => read.get(id) ?? 0)
+
   // Exact rather than sampled. A node sits on `to(n) * from(n)` routes, so
-  // summing `words(n)` over that product totals the words across every route
+  // summing `read(n)` over that product totals the words across every route
   // without enumerating any of them. A node stranded past an ending has
   // `to(n) === 0n` and correctly contributes nothing.
   let wordsAcrossRoutes = 0n
-  for (const n of doc.nodes) {
+  for (const n of story) {
     const through = (to.get(n.id) ?? 0n) * (from.get(n.id) ?? 0n)
-    if (through > 0n) wordsAcrossRoutes += BigInt(words.get(n.id) ?? 0) * through
+    if (through > 0n) wordsAcrossRoutes += BigInt(read.get(n.id) ?? 0) * through
   }
   const meanWords = totalRoutes > 0n ? Number(wordsAcrossRoutes / totalRoutes) : 0
 

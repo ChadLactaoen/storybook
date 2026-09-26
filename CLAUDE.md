@@ -356,8 +356,10 @@ hold that — and unmaking the last one in a story with no start makes it the st
 one of a passage that is the start, has links, or is linked to, because each would silently cut a
 route the author can only see in the prose. A link *to* a snippet is still one the author
 wrote, so `authoredOut`/`authoredIn` count it — the dead-end lint must not name a passage
-twice for one mistake. A snippet's words count once, where they are written, never on the
-routes that display them.
+twice for one mistake. A snippet's words count once in the story's total, where they are
+written, and on a route every time it is displayed there: the total answers what the author
+wrote, a playthrough what a reader reads. `displayedWords` (`stats.ts`) is the one walk of
+that, refusing what `runDisplay` refuses, and the inspector's Words tile reads it too.
 
 **An ending is authored, and it terminates routes.** `StoryNode.isEnding` is never
 inferred: a passage with no outgoing links is indistinguishable from one whose links are
