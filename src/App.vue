@@ -83,6 +83,16 @@ function openReader(nodeId?: string) {
   store.playInTab(nodeId)
 }
 
+/**
+ * Play from the selected passage — the inspector's Play from here, for the
+ * menu row and the `p` key. `selected` is null for a phantom anchor as well as for no
+ * selection, and a phantom has no passage for the player to open.
+ */
+function playHere() {
+  const node = store.selected.value
+  if (node) openReader(node.id)
+}
+
 function toggleIndex() {
   leftPanel.value = leftPanel.value === 'index' ? null : 'index'
 }
@@ -311,6 +321,9 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
   },
 
   'story.play': { run: () => openReader(), enabled: store.state.doc.startNodeId !== null },
+  // No start-passage gate: the inspector button has none either, since a
+  // passage picked by hand is a start of its own.
+  'passage.play': { run: playHere, enabled: store.selected.value !== null },
   'story.stats': { run: () => (statsOpen.value = !statsOpen.value) },
   'story.tags': { run: () => (tagsOpen.value = !tagsOpen.value) },
   'story.characters': { run: () => (castOpen.value = !castOpen.value) },
@@ -370,6 +383,7 @@ useShortcuts({
   play: () => {
     if (store.state.doc.startNodeId !== null) openReader()
   },
+  playHere,
   menuOpen: () => menuOpen.value,
 })
 

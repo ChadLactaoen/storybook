@@ -55,6 +55,7 @@ function spyHandlers() {
     openStats: act('openStats'),
     openTags: act('openTags'),
     play: act('play'),
+    playHere: act('playHere'),
     statsOpen: () => false,
     tagsOpen: () => false,
     dialogOpen: () => false,

@@ -3342,6 +3342,44 @@ describe('playing the story', () => {
     expect(problems).toEqual([])
   })
 
+  it('opens from the selected passage with P', async () => {
+    await withStory()
+    const two = store.state.doc.nodes.find((n) => n.code === 'Two')!
+    store.select(two.id)
+    await nextTick()
+    const stub = stubTab()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', bubbles: true }))
+    await nextTick()
+
+    expect(stub.open).toHaveBeenCalledTimes(1)
+    expect((await stub.payload()).midStory).toBe(true)
+    expect(problems).toEqual([])
+  })
+
+  it('leaves P alone with no passage selected, or while typing', async () => {
+    await withStory()
+    store.select(null)
+    await nextTick()
+    const stub = stubTab()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', bubbles: true }))
+    await nextTick()
+    expect(stub.open).not.toHaveBeenCalled()
+
+    // A `p` typed into prose is a letter, not a command.
+    const two = store.state.doc.nodes.find((n) => n.code === 'Two')!
+    store.select(two.id)
+    await nextTick()
+    const field = document.createElement('textarea')
+    host.appendChild(field)
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', bubbles: true }))
+    await nextTick()
+
+    expect(stub.open).not.toHaveBeenCalled()
+    expect(problems).toEqual([])
+  })
+
   it('leaves Cmd P alone when there is no start passage, as the menu does', async () => {
     mount()
     store.loadStory(serializeDoc({ ...emptyDoc('No Start') }))

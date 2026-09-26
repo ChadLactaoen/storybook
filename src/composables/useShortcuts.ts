@@ -35,6 +35,8 @@ export interface ShortcutHandlers {
   tagsOpen: () => boolean
   /** Open the story in the player, in a new tab. */
   play: () => void
+  /** Open the player in a new tab, starting at the selected passage. */
+  playHere: () => void
   /**
    * True while any dialog that owns Escape is up — `modalOpen` plus the
    * expanded body editor, which is not a modal for the purposes below because
@@ -239,6 +241,14 @@ export function useShortcuts(handlers: ShortcutHandlers) {
     if (e.key === 'e' || e.key === 'E') {
       e.preventDefault()
       handlers.toggleEnding()
+      return
+    }
+    // Play from the selected passage. Bare, so it stands down while typing —
+    // which ⌘P, the whole-story Play, is modified to avoid — because Firefox
+    // keeps ⌘⇧P for a private window and never lets the page see it.
+    if (e.key === 'p' || e.key === 'P') {
+      e.preventDefault()
+      handlers.playHere()
       return
     }
     // 1, 2, 3 across the sidebar's segmented control, left to right. Read as a
