@@ -26,7 +26,8 @@
  */
 
 import type { StoryDoc, StoryNode, NodeId } from '../../types/story'
-import { deriveGraph } from '../graph/derive'
+import { deriveGraph, displayedSnippet } from '../graph/derive'
+import { displayClosure } from '../harlowe/macros'
 import type { DerivedGraph } from '../graph/types'
 import type { PlayerTheme } from './themes'
 import { reachableFrom } from '../graph/reachability'
@@ -76,6 +77,17 @@ export interface Envelope {
   c: string
   /** The author's mark, or `''`. The reader runs these together as the trail. */
   s: string
+  /**
+   * The snippets this passage displays, directly or through one another, as
+   * `[code, body]` in code order. Absent when it displays none.
+   *
+   * Carried here rather than as blobs of their own, because a snippet is on no
+   * route and so has no key a reader could earn: sealed with the prose that
+   * shows it, it opens exactly when that prose does, and no code map ships in
+   * the clear. A snippet shown by many passages is carried by each — the cost of
+   * needing no second key graph.
+   */
+  d?: [string, string][]
 }
 
 /** The shuffled store, as it is embedded in the published page. */
@@ -154,15 +166,19 @@ export function partitionNodes(
   start: NodeId | null = doc.startNodeId,
   graph: DerivedGraph = deriveGraph(doc),
 ): { shipped: StoryNode[]; excluded: Excluded[] } {
+  // A snippet is neither: it ships inside the envelope of every passage that
+  // displays it, so it is not left behind, and reporting it would tell the
+  // author their snippets were lost.
+  const nodes = doc.nodes.filter((node) => !node.isSnippet)
   if (start === null) {
-    return { shipped: [], excluded: doc.nodes.map((node) => ({ node, reason: 'unreachable' })) }
+    return { shipped: [], excluded: nodes.map((node) => ({ node, reason: 'unreachable' })) }
   }
   const endings = new Set(doc.nodes.filter((node) => node.isEnding).map((node) => node.id))
   const reader = reachableFrom(graph, start, endings)
   const linked = reachableFrom(graph, start)
   const shipped: StoryNode[] = []
   const excluded: Excluded[] = []
-  for (const node of doc.nodes) {
+  for (const node of nodes) {
     if (reader.has(node.id)) shipped.push(node)
     else excluded.push({ node, reason: linked.has(node.id) ? 'past-ending' : 'unreachable' })
   }
@@ -183,8 +199,12 @@ export function startOf(doc: StoryDoc, start: NodeId | null | undefined): NodeId
   if (id === null) {
     throw new PublishError('This story has no start passage yet. Mark one as the start to play or publish it.')
   }
-  if (!doc.nodes.some((node) => node.id === id)) {
+  const node = doc.nodes.find((n) => n.id === id)
+  if (node === undefined) {
     throw new PublishError('That passage no longer exists, so there is nothing to read.')
+  }
+  if (node.isSnippet) {
+    throw new PublishError('A snippet is not on any route. Play from a passage that displays it.')
   }
   return id
 }
@@ -207,6 +227,17 @@ export async function buildPayload(
   const keys = new Map<NodeId, Uint8Array>()
   for (const node of shipped) keys.set(node.id, randomKey())
 
+  // Only a snippet may be displayed, resolved exactly as a link resolves. The
+  // bodies come from `doc`, never the graph, which may predate a prose edit.
+  const snippetBody = new Map<NodeId, string>()
+  for (const node of doc.nodes) if (node.isSnippet) snippetBody.set(node.id, node.body)
+  const resolve = (code: string): string | null => {
+    const id = displayedSnippet(graph, code)
+    return id === null ? null : (snippetBody.get(id) ?? null)
+  }
+  // Shared by every passage's closure, so each snippet is parsed once per publish.
+  const displayMemo = new Map<string, (string | null)[]>()
+
   const blobs = await Promise.all(
     shipped.map(async (node): Promise<[string, string]> => {
       const key = keys.get(node.id)!
@@ -217,6 +248,8 @@ export async function buildPayload(
         c: node.code,
         s: node.slug,
       }
+      const displays = displayClosure(node.body, resolve, displayMemo)
+      if (displays.length > 0) envelope.d = displays
       const [addr, sealed] = await Promise.all([contentAddr(key), seal(envelope)])
       return [toBase64(addr), toBase64(await encrypt(await contentKey(key), sealed))]
     }),

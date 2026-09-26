@@ -2,7 +2,7 @@ import type { NodeId, StoryDoc } from '../../types/story'
 import { compareNodes, compareStr } from '../../types/story'
 import { parseLinks } from '../harlowe/links'
 import { PHANTOM_PREFIX } from './constants'
-import type { DerivedEdge, DerivedGraph, EdgeId, GraphNode, PhantomNode } from './types'
+import type { DerivedEdge, DerivedGraph, EdgeId, GraphNode, PhantomNode, SnippetLink } from './types'
 
 /**
  * Build the edge set by parsing every body. Edges are never stored in the
@@ -17,23 +17,49 @@ import type { DerivedEdge, DerivedGraph, EdgeId, GraphNode, PhantomNode } from '
  * resurrected by the next re-derive.
  */
 export function deriveGraph(doc: StoryDoc): DerivedGraph {
-  const nodes = [...doc.nodes].sort(compareNodes)
+  const all = [...doc.nodes].sort(compareNodes)
 
   // Built from the canonically sorted nodes rather than `doc.nodes`, so that
   // "first wins" means "first in canonical order". A hand-edited file carrying
   // a duplicate code would otherwise resolve its links one way or the other
   // depending on array order, and layout would stop being shuffle-invariant.
+  //
+  // Over every passage, snippets included: a link naming a snippet's code has
+  // to resolve to the snippet, or it would draw a phantom beside it that
+  // "Make real" could never materialise.
   const idByCode = new Map<string, NodeId>()
-  for (const n of nodes) {
+  for (const n of all) {
     if (n.code.length > 0 && !idByCode.has(n.code)) idByCode.set(n.code, n.id)
   }
 
+  // A snippet stands outside the tree: it is in none of the lists below, so
+  // nothing that walks the story can meet one.
+  const nodes = all.filter((n) => !n.isSnippet)
+  const snippetIds = all.filter((n) => n.isSnippet).map((n) => n.id)
+  const snippet = new Set(snippetIds)
+
   const phantomByCode = new Map<string, PhantomNode>()
   const edges: DerivedEdge[] = []
+  const snippetLinks: SnippetLink[] = []
 
-  for (const node of nodes) {
+  for (const node of all) {
     for (const link of parseLinks(node.body)) {
       let targetId = idByCode.get(link.target)
+
+      // Neither is an edge, and neither is a phantom. The ordinal is kept as
+      // `parseLinks` gave it, so a skipped one leaves a gap rather than
+      // renumbering the edges after it — `EdgeId` has to go on agreeing with
+      // `readStoryMacros`.
+      if (node.isSnippet || (targetId !== undefined && snippet.has(targetId))) {
+        snippetLinks.push({
+          sourceId: node.id,
+          ordinal: link.ordinal,
+          targetCode: link.target,
+          kind: node.isSnippet ? 'in' : 'to',
+        })
+        continue
+      }
+
       let dangling = false
 
       if (targetId === undefined) {
@@ -111,7 +137,24 @@ export function deriveGraph(doc: StoryDoc): DerivedGraph {
     inAdj,
     codeOf,
     titleOf,
+    snippetIds,
+    idByCode,
+    snippetLinks,
   }
+}
+
+/**
+ * The snippet a `(display:)` of `code` shows, or null when it shows nothing.
+ *
+ * The one definition, for the reason `forwardTargets` is one: the lint, the
+ * inspector's "Displayed by" and the published envelope all ask it, and three
+ * copies would be three chances for the page and the panel to disagree about
+ * whether a display works. Resolved through `idByCode`, so a display reaches
+ * exactly the passage a link to the same code would — and only a snippet.
+ */
+export function displayedSnippet(g: DerivedGraph, code: string): NodeId | null {
+  const id = g.idByCode.get(code)
+  return id !== undefined && g.snippetIds.includes(id) ? id : null
 }
 
 /** Codes used by more than one node — invalid, but possible in a hand-edited file. */

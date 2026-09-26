@@ -2,7 +2,14 @@
 import { computed, ref, watch } from 'vue'
 import type { Selection } from '../lib/harlowe/format'
 import { commandTip } from '../lib/ui/commands'
-import { BOLD, ITALIC, insertLink, toggleBlockquote, toggleWrap } from '../lib/harlowe/format'
+import {
+  BOLD,
+  ITALIC,
+  insertDisplay,
+  insertLink,
+  toggleBlockquote,
+  toggleWrap,
+} from '../lib/harlowe/format'
 import { highlightHtml } from '../lib/harlowe/highlight'
 import LinkPicker from './LinkPicker.vue'
 
@@ -13,8 +20,12 @@ const props = withDefaults(
     toolbar?: boolean
     /** Passages offered when linking, in canonical order. */
     targets?: readonly { code: string; title: string }[]
+    /** Snippets offered to `(display:)`, in canonical order. */
+    displayTargets?: readonly { code: string; title: string }[]
+    /** False in a snippet, which cannot link: the link button and chord stand down. */
+    canLink?: boolean
   }>(),
-  { toolbar: false, targets: () => [] },
+  { toolbar: false, targets: () => [], displayTargets: () => [], canLink: true },
 )
 
 const emit = defineEmits<{
@@ -101,11 +112,15 @@ function quote() {
  */
 const shell = ref<HTMLElement | null>(null)
 
-const linking = ref<Selection | null>(null)
+/**
+ * The open picker, if any, and what it will insert. One ref for both kinds, so
+ * the blur guard below cannot cover one picker and forget the other.
+ */
+const picking = ref<{ sel: Selection; mode: 'link' | 'display' } | null>(null)
 
 const linkLabel = computed(() => {
-  const sel = linking.value
-  return sel ? sel.text.slice(sel.start, sel.end) : ''
+  const p = picking.value
+  return p && p.mode === 'link' ? p.sel.text.slice(p.sel.start, p.sel.end) : ''
 })
 
 /**
@@ -114,24 +129,29 @@ const linkLabel = computed(() => {
  * transform is about to put the caret straight back.
  */
 function onBlur(e: FocusEvent) {
-  if (linking.value !== null) return
+  if (picking.value !== null) return
   const to = e.relatedTarget
   if (to instanceof Node && shell.value?.contains(to)) return
   emit('settle')
 }
 
+function openPicker(mode: 'link' | 'display') {
+  const sel = selection()
+  picking.value = sel === null ? null : { sel, mode }
+}
+
 function openLink() {
-  linking.value = selection()
+  if (props.canLink) openPicker('link')
 }
 
-function pickLink(target: string) {
-  const sel = linking.value
-  linking.value = null
-  if (sel) apply(insertLink(sel, target))
+function pick(target: string) {
+  const p = picking.value
+  picking.value = null
+  if (p) apply(p.mode === 'link' ? insertLink(p.sel, target) : insertDisplay(p.sel, target))
 }
 
-function closeLink() {
-  linking.value = null
+function closePicker() {
+  picking.value = null
   textarea.value?.focus()
 }
 
@@ -169,7 +189,11 @@ function onKeyDown(e: KeyboardEvent) {
   })
 }
 
-defineExpose({ focus: () => textarea.value?.focus() })
+defineExpose({
+  focus: () => textarea.value?.focus(),
+  /** For an editor shown without its toolbar: the inspector's own button. */
+  openDisplay: () => openPicker('display'),
+})
 </script>
 
 <template>
@@ -184,17 +208,36 @@ defineExpose({ focus: () => textarea.value?.focus() })
       <button class="tool" type="button" :title="tip('editor.quote')" @click="quote">
         &ldquo;&rdquo;
       </button>
-      <button class="tool" type="button" :title="tip('editor.link')" @click="openLink">
+      <button
+        v-if="canLink"
+        class="tool"
+        type="button"
+        :title="tip('editor.link')"
+        @click="openLink"
+      >
         [[&thinsp;]]
+      </button>
+      <!-- Only once there is a snippet to show: an empty picker is a dead end. -->
+      <button
+        v-if="displayTargets.length > 0"
+        class="tool tool-wide"
+        type="button"
+        data-display
+        title="Show a snippet here: inserts (display: &quot;Code&quot;)"
+        @click="openPicker('display')"
+      >
+        (display:)
       </button>
     </div>
 
     <LinkPicker
-      v-if="linking"
-      :targets="targets"
+      v-if="picking"
+      :targets="picking.mode === 'link' ? targets : displayTargets"
       :label="linkLabel"
-      @pick="pickLink"
-      @close="closeLink"
+      :creatable="picking.mode === 'link'"
+      :verb="picking.mode === 'link' ? 'Link' : 'Display'"
+      @pick="pick"
+      @close="closePicker"
     />
 
     <div class="editor">
@@ -246,6 +289,12 @@ defineExpose({ focus: () => textarea.value?.focus() })
 .tool:hover {
   background: var(--bg);
   color: var(--accent);
+}
+
+/* Written as the macro it inserts, so it reads as Harlowe rather than an icon. */
+.tool-wide {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
 }
 
 .editor {

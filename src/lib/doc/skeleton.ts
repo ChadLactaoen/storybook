@@ -15,7 +15,7 @@ import { downloadBlob } from './file'
  *
  * What it writes is exactly what `layoutStory` reads and nothing else. Layout
  * is a pure function of the document, but of a narrow slice of it: the store's
- * memo key is id, code, title, `levelOffset`, `startNodeId`, and each body's
+ * memo key is id, code, title, `levelOffset`, `isSnippet`, `startNodeId`, and each body's
  * *link signature* — the ordered targets its `[[...]]` links name. Tags,
  * states, notes, characters, settings, endings and the prose itself move no
  * card, which is why none of them are here.
@@ -41,6 +41,8 @@ export interface SkeletonNode {
   code: string
   /** Omitted when 0, which it is for nearly every passage. */
   levelOffset?: number
+  /** Omitted when false. A snippet is drawn on its own row, so it moves cards. */
+  isSnippet?: true
   /** Every `[[...]]` target in body order, duplicates and all. */
   links: string[]
 }
@@ -65,6 +67,7 @@ export function skeletonOf(doc: StoryDoc): Skeleton {
         links: parseLinks(n.body).map((l) => l.target),
       }
       if (n.levelOffset !== 0) out.levelOffset = n.levelOffset
+      if (n.isSnippet) out.isSnippet = true
       return out
     }),
   }
@@ -120,6 +123,7 @@ export function docFromSkeleton(s: Skeleton): StoryDoc {
     characters: [],
     levelOffset: n.levelOffset ?? 0,
     isEnding: false,
+    isSnippet: n.isSnippet === true,
   }))
   return {
     version: DOC_VERSION,

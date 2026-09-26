@@ -10,12 +10,23 @@ import { computed, onMounted, ref } from 'vue'
  * only ever sees the finished link.
  */
 
-const props = defineProps<{
-  /** Every passage in the story, in the order they should be offered. */
-  targets: readonly { code: string; title: string }[]
-  /** The prose the link will be shown as, empty when nothing was selected. */
-  label: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** Every passage in the story, in the order they should be offered. */
+    targets: readonly { code: string; title: string }[]
+    /** The prose the link will be shown as, empty when nothing was selected. */
+    label: string
+    /**
+     * Offer to create a passage that does not exist yet. Off for `(display:)`:
+     * a display creates nothing on blur, so the row would promise a passage
+     * that never appears.
+     */
+    creatable?: boolean
+    /** What the field says it will do: `Link` or `Display`. */
+    verb?: string
+  }>(),
+  { creatable: true, verb: 'Link' },
+)
 
 const emit = defineEmits<{ pick: [target: string]; close: [] }>()
 
@@ -35,7 +46,7 @@ const matches = computed(() => {
 /** Offering to create a name that is already on the list would be a duplicate row. */
 const canCreate = computed(() => {
   const name = draft.value.trim()
-  return name.length > 0 && !props.targets.some((t) => t.title === name)
+  return props.creatable && name.length > 0 && !props.targets.some((t) => t.title === name)
 })
 
 /**
@@ -73,12 +84,16 @@ onMounted(() => input.value?.focus())
 </script>
 
 <template>
-  <div class="link-picker" role="dialog" aria-label="Link to a passage">
+  <div
+    class="link-picker"
+    role="dialog"
+    :aria-label="creatable ? `${verb} to a passage` : `${verb} a snippet`"
+  >
     <input
       ref="input"
       v-model="draft"
       class="field"
-      :placeholder="label.length > 0 ? `Link “${label}” to…` : 'Link to…'"
+      :placeholder="label.length > 0 ? `${verb} “${label}” to…` : creatable ? `${verb} to…` : `${verb}…`"
       @input="active = 0"
       @keydown.down.prevent="move(1)"
       @keydown.up.prevent="move(-1)"

@@ -96,6 +96,19 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         </section>
 
         <section>
+          <h3>Snippets</h3>
+          <p class="note">
+            A <strong>snippet</strong> is text other passages show inline with
+            <code>(display: &quot;Code&quot;)</code> &mdash; a recurring description, a status
+            line. Add one from <strong>Edit &rarr; New snippet</strong>, or turn an unlinked
+            passage into one from the inspector&rsquo;s Advanced tab. Snippets sit on level 0, above
+            the story and on no route, so they are never flagged as unreachable. A snippet cannot
+            link, and nothing may link to one. Recoding moves every <code>(display:)</code> with
+            its snippet, and Play and Publish show the snippet&rsquo;s text in place.
+          </p>
+        </section>
+
+        <section>
           <h3>Story codes</h3>
           <p class="note">
             Every passage has a code, and the codes of the passages a reader visited are

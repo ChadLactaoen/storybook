@@ -42,6 +42,15 @@ export interface PhantomNode {
 
 export type GraphNode = StoryNode | PhantomNode
 
+export interface SnippetLink {
+  sourceId: NodeId
+  /** The `parseLinks` ordinal within the source body. */
+  ordinal: number
+  targetCode: string
+  /** `in`: written inside a snippet. `to`: a story passage linking to one. */
+  kind: 'in' | 'to'
+}
+
 export interface DerivedGraph {
   /** Real nodes in canonical order. */
   nodes: readonly StoryNode[]
@@ -57,6 +66,29 @@ export interface DerivedGraph {
   codeOf: ReadonlyMap<NodeId, string>
   /** Display title. Empty for a phantom that no link proposed a name for. */
   titleOf: ReadonlyMap<NodeId, string>
+  /**
+   * Snippets, in canonical order — ids only, and absent from every list above.
+   *
+   * A snippet is on no route, so nothing that walks the story may meet one:
+   * leaving them out of `nodes`/`ids` is what keeps layering, ordering, route
+   * counts and reachability ignorant of them without a check in each. Ids, not
+   * nodes, because this graph outlives prose edits (the layout memo is keyed on
+   * link signatures), so a body read off it would be stale. Read bodies from the
+   * live document.
+   */
+  snippetIds: readonly NodeId[]
+  /**
+   * Every code in the story, snippets included, to the passage it resolves to:
+   * the first holder in canonical order. The one resolution table, so a
+   * `(display:)` resolves exactly as a link does.
+   */
+  idByCode: ReadonlyMap<string, NodeId>
+  /**
+   * Links that touch a snippet — inside one (`in`), or from a story passage to
+   * one (`to`). Neither is an edge or a phantom: a snippet cannot lead anywhere
+   * and cannot be arrived at. Kept so the lint can say so.
+   */
+  snippetLinks: readonly SnippetLink[]
   // No `stateOf` here, for the reason `DerivedEdge` carries no span: `state` is
   // absent from the layout memo key on purpose, so a map of it built here would
   // go stale the moment anyone ticked a status. The canvas builds its own from
@@ -178,6 +210,12 @@ export interface NodeLayout {
   width: number
   height: number
   isPhantom: boolean
+  /**
+   * A snippet: `level` 0 and `layer` -1, on a row of its own above the story.
+   * The row sits where a layer -1 would, so the story's own geometry never
+   * depends on whether any snippet exists.
+   */
+  isSnippet: boolean
   /** Structural floor; UI uses this to gate the level control. */
   minLevel: number
   levelOffset: number

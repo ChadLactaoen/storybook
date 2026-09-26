@@ -277,6 +277,12 @@ export function computeCoverage(
   let brokenRoutes = 0n
   for (const p of graph.phantoms) brokenRoutes += to.get(p.id) ?? 0n
 
+  // A snippet is on no route by design, so it is not "off route" the way a
+  // stranded passage is. It stays in `passages` all the same: a tag or cast
+  // member used only in snippets is in use, and reading it as unused would offer
+  // to remove it.
+  const snippet = new Set(graph.snippetIds)
+
   const rows: CoverageRow[] = keys.map((key) => {
     const nodeIds = byKey.get(key) ?? []
     const routes =
@@ -287,7 +293,9 @@ export function computeCoverage(
       key,
       passages: nodeIds.length,
       nodeIds,
-      offRoute: nodeIds.filter((id) => (to.get(id) ?? 0n) === 0n && id !== startId).length,
+      offRoute: nodeIds.filter(
+        (id) => !snippet.has(id) && (to.get(id) ?? 0n) === 0n && id !== startId,
+      ).length,
       routes,
       percent: share(routes, totalRoutes),
       levels: bucketByLevel(nodeIds, nodeById, levelSize),

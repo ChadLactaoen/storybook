@@ -81,11 +81,12 @@ describe('a save file written before endings existed', () => {
     after.nodes.forEach((node, i) => {
       const added = Object.keys(node).filter((k) => !(k in before.nodes[i]!))
       const gone = Object.keys(before.nodes[i]!).filter((k) => !(k in node))
-      expect(added).toEqual(['isEnding', 'note', 'slug'])
+      expect(added).toEqual(['isEnding', 'isSnippet', 'note', 'slug'])
       // `token` is not lost, it is renamed — the assertion below proves the
       // value came with it.
       expect(gone).toEqual(['token'])
       expect(node.isEnding).toBe(false)
+      expect(node.isSnippet).toBe(false)
     })
   })
 

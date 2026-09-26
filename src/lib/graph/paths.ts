@@ -50,11 +50,18 @@ export function forwardTargets(
  * lint cannot disagree.
  */
 export function authoredOut(g: DerivedGraph, id: NodeId): number {
-  return (g.outAdj.get(id) ?? []).length
+  // A link to a snippet is no edge, but the author still wrote it — the same
+  // reason a back edge counts here. Rare by construction (each is a lint row),
+  // so a scan costs nothing.
+  let snippetLinks = 0
+  for (const l of g.snippetLinks) if (l.sourceId === id) snippetLinks++
+  return (g.outAdj.get(id) ?? []).length + snippetLinks
 }
 
 export function authoredIn(g: DerivedGraph, id: NodeId): number {
-  return (g.inAdj.get(id) ?? []).length
+  let snippetLinks = 0
+  for (const l of g.snippetLinks) if (l.kind === 'to' && g.idByCode.get(l.targetCode) === id) snippetLinks++
+  return (g.inAdj.get(id) ?? []).length + snippetLinks
 }
 
 /**

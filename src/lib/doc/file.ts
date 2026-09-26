@@ -117,7 +117,9 @@ export function importDoc(json: string): ImportResult {
   const notes = [...warnings]
   const nodes = doc.nodes.map((n) => {
     const requested = legacyLevels.get(n.id)
-    if (requested === undefined) return n
+    // A snippet's level is 0 by definition; `parseDoc` records none for one, and
+    // this says so again rather than trusting a floor it would read as 0.
+    if (requested === undefined || n.isSnippet) return n
     const floor = probe.nodeById.get(n.id)?.minLevel ?? 1
     const offset = Math.min(1, Math.max(0, requested - floor))
     if (floor + offset !== requested) {

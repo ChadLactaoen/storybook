@@ -168,6 +168,14 @@ export const COMMANDS: readonly CommandSpec[] = [
     hint: 'Add a passage with no links to it yet',
   },
   {
+    id: 'edit.snippetAdd',
+    label: 'New snippet',
+    group: 'edit',
+    section: 2,
+    scope: 'global',
+    hint: 'Add a snippet on level 0: text other passages show with (display:)',
+  },
+  {
     id: 'edit.passageEnding',
     label: 'Mark as Ending',
     group: 'edit',

@@ -120,6 +120,20 @@ export interface StoryNode {
    * counting as an explicit argument.
    */
   isEnding: boolean
+  /**
+   * The author's claim that this passage is a *snippet*: prose that other
+   * passages show inline with `(display: "CODE")`, standing outside the tree.
+   *
+   * Never inferred, for `isEnding`'s reason: a passage nothing links to is far
+   * more often one whose inbound link is unwritten than one meant for display.
+   *
+   * A snippet sits on level 0, above the story, and is on no route. It cannot
+   * link — a link inside one is not an edge, and a link *to* one leads nowhere
+   * — so it is never the start, never an ending, and its `levelOffset` is
+   * always 0 (`setSnippet` and `parseDoc` both hold that). Unlike `isEnding`
+   * it *is* in `layoutKey` and `NodeLayout`, because it moves the card.
+   */
+  isSnippet: boolean
   /** 0 or 1. The only persisted layout input. */
   levelOffset: number
   /** Where this passage takes place. Empty when unset. */

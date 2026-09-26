@@ -53,6 +53,18 @@ const LINTS: { key: string; label: string; hint: string; rows: () => LintEntry[]
     hint: 'Routes stop at these, so whatever they link to is unreachable.',
     rows: () => s.value.lint.endingsWithLinks,
   },
+  {
+    key: 'snippetlinks',
+    label: 'Links in or to a snippet',
+    hint: 'Snippets sit outside every route: a link inside one shows as plain text, and a link to one leads nowhere.',
+    rows: () => s.value.lint.snippetLinks,
+  },
+  {
+    key: 'displays',
+    label: 'Broken displays',
+    hint: 'A (display:) the reader cannot show: it names no passage, names one that is not a snippet, or is not a quoted code.',
+    rows: () => s.value.lint.brokenDisplays,
+  },
 ]
 
 const lints = computed(() => LINTS.map((l) => ({ ...l, entries: l.rows() })))
@@ -92,7 +104,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             <span class="k">words</span>
           </div>
           <div class="tile">
-            <span class="n">{{ s.shape.passages }}</span>
+            <!-- Every passage, snippets included, so it agrees with the toolbar's
+                 count; the Shape table below is where the story alone is measured. -->
+            <span class="n">{{ s.words.passages }}</span>
             <span class="k">passages</span>
           </div>
           <div class="tile">
@@ -223,6 +237,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                   <td>Phantom targets</td>
                   <td class="num">{{ s.shape.phantoms }}</td>
                 </tr>
+                <tr v-if="s.shape.snippets > 0">
+                  <td>Snippets</td>
+                  <td class="num">{{ s.shape.snippets }}</td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -254,7 +272,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
       <footer>
         <span class="muted">
-          Words are counted from the raw body, so link and macro syntax counts too.
+          Words are counted from the raw body, so link and macro syntax counts too. A snippet&rsquo;s words count once, where it is written, not in each passage that displays it.
         </span>
         <button class="btn btn-primary" @click="emit('close')">Done</button>
       </footer>

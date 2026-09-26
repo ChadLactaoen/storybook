@@ -55,13 +55,23 @@ export interface RecodePlan {
  * a routing dummy holds a slot, but strictly increasing left to right, so it
  * orders real cards exactly as `x` does without depending on coordinates.
  *
+ * Snippets come last, after the whole story, though their row is drawn above
+ * it: the start passage keeps the first number, and a story's numbering does
+ * not shift because a snippet was added. That is still a fixed point. Snippets
+ * are in no component and on no route, so their codes cannot move a story card;
+ * and their row is packed in code order, which the uniformly padded numbers
+ * they are given preserve.
+ *
  * Exported because the store reads a finished recode back in this same order,
  * and a second copy of this rule is a second thing to get wrong.
  */
 export function drawingOrder(layout: LayoutResult): NodeLayout[] {
   return layout.nodes
     .filter((n) => !n.isPhantom)
-    .sort((a, b) => a.level - b.level || a.order - b.order)
+    .sort(
+      (a, b) =>
+        Number(a.isSnippet) - Number(b.isSnippet) || a.level - b.level || a.order - b.order,
+    )
 }
 
 /**
@@ -101,6 +111,8 @@ function widthOf(max: number): number {
  *
  * Levels are the user-facing 1-based ones. Within a level the index runs left to
  * right; the global index runs level by level, left to right inside each.
+ * Snippets are numbered after every level, and in level-and-node they carry
+ * level 0 — `0N01` — which is where they are drawn and no story level can be.
  *
  * Phantoms consume no index. They draw as cards, so counting them would be
  * defensible, but they are not passages and cannot be recoded — numbering around
@@ -124,33 +136,61 @@ function widthOf(max: number): number {
 export function planRecode(layout: LayoutResult, opts: RecodeOptions): RecodePlan {
   const real = drawingOrder(layout)
 
-  // The index of each passage within its level, and the widths those imply.
-  // Computed up front because a code cannot be padded until the widest number in
-  // the scheme is known.
-  const indexOf: number[] = []
-  let maxIndex = 0
   let maxLevel = 0
-  {
-    let level = 0
-    let index = 0
+  for (const n of real) if (n.level > maxLevel) maxLevel = n.level
+  const levelWidth = widthOf(maxLevel)
+
+  const codeFor = (n: NodeLayout, num: number, width: number): string =>
+    // Trimmed here rather than left to the mutation: `setCode` and `recodeAll`
+    // both trim, so an untrimmed preview would show a code the document never
+    // receives.
+    opts.mode === 'node'
+      ? `${opts.prefix}${pad(num, width)}`.trim()
+      : `${opts.prefix}${pad(n.level, levelWidth)}${opts.separator}${pad(num, width)}`.trim()
+
+  /**
+   * Codes a dangling link already names. A story passage may take one — that
+   * is a capture, and the store warns about it — but a snippet never does:
+   * nothing may link to a snippet, so the capture would only turn a dashed card
+   * into a lint row. `createNode` keeps new snippets off them for the same
+   * reason. A snippet steps past one to the next free number instead.
+   */
+  const dangling = new Set(layout.nodes.filter((n) => n.isPhantom).map((n) => n.code))
+
+  // Each passage's number — global in node mode, within its level otherwise —
+  // and the width they are padded to. Computed up front because a code cannot
+  // be padded until the widest number in the scheme is known, and re-run if a
+  // snippet's step past a dangling code needs another digit: a wider pad makes
+  // different codes, which have to be checked against the dangling ones again.
+  // Width only grows, and is bounded by the number of dangling links, so this
+  // settles within a pass or two.
+  let numbers: number[] = []
+  let indexWidth = MIN_NUMBER_WIDTH
+  for (let pass = 0; pass < 4; pass++) {
+    numbers = []
+    // Not 0: snippets sit on level 0, so a story holding nothing else must
+    // still see a group break at its first card.
+    let level = -1
+    let last = 0
     for (const n of real) {
       // `real` is sorted by level, so a change of level *is* the group break.
-      if (n.level !== level) {
+      // Snippets come after the deepest level, back on 0, which is a change too.
+      if (opts.mode === 'levelNode' && n.level !== level) {
         level = n.level
-        index = 0
+        last = 0
       }
-      index += 1
-      indexOf.push(index)
-      if (index > maxIndex) maxIndex = index
-      if (n.level > maxLevel) maxLevel = n.level
+      let num = last + 1
+      if (n.isSnippet) while (dangling.has(codeFor(n, num, indexWidth))) num++
+      numbers.push(num)
+      last = num
     }
+    // Never narrowed again. A wider pad can free a code a narrower one found
+    // dangling (`P002` where `P02` was taken), and narrowing back would land on
+    // it again — two widths taking turns, with no pass that settles.
+    const needed = Math.max(MIN_NUMBER_WIDTH, widthOf(Math.max(0, ...numbers)))
+    if (needed <= indexWidth) break
+    indexWidth = needed
   }
-
-  const levelWidth = widthOf(maxLevel)
-  const indexWidth = Math.max(
-    MIN_NUMBER_WIDTH,
-    widthOf(opts.mode === 'node' ? real.length : maxIndex),
-  )
 
   const entries: RecodeEntry[] = []
   const mapping = new Map<NodeId, string>()
@@ -170,14 +210,7 @@ export function planRecode(layout: LayoutResult, opts: RecodeOptions): RecodePla
 
   for (let i = 0; i < real.length; i++) {
     const n = real[i]!
-
-    // Trimmed here rather than left to the mutation: `setCode` and `recodeAll`
-    // both trim, so an untrimmed preview would show a code the document never
-    // receives.
-    const to =
-      opts.mode === 'node'
-        ? `${opts.prefix}${pad(i + 1, indexWidth)}`.trim()
-        : `${opts.prefix}${pad(n.level, levelWidth)}${opts.separator}${pad(indexOf[i]!, indexWidth)}`.trim()
+    const to = codeFor(n, numbers[i]!, indexWidth)
 
     // Fixed widths make the level and index fields unambiguous, so this cannot
     // fire for a plan built here. Kept because the check costs nothing and the

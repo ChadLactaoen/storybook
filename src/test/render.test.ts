@@ -3784,3 +3784,166 @@ describe('a preference store written by an older build', () => {
     expect(prefs.packing).toBe('balanced')
   })
 })
+
+describe('snippets', () => {
+  async function withStory(): Promise<void> {
+    mount()
+    store.newStory('Snippet Check')
+    // Replaced first: the starter text names `P2` in its example link, and the
+    // first passage made below would capture it.
+    store.editBody(store.state.doc.startNodeId!, 'Your story begins here.')
+    await nextTick()
+  }
+
+  const toggle = () => host.querySelector<HTMLButtonElement>('.inspector [data-snippet-toggle]')!
+
+  it('adds one from the Edit menu, drawn on level 0 with its badge', async () => {
+    await withStory()
+    await runCommand('New snippet')
+    await nextTick()
+
+    const snip = store.state.doc.nodes.find((n) => n.isSnippet)!
+    expect(store.state.selectedId).toBe(snip.id)
+    expect(host.querySelectorAll('.card.snippet')).toHaveLength(1)
+    expect(host.querySelector('.card.snippet .flag-snippet')!.textContent).toBe('SNIPPET')
+    const bands = [...host.querySelectorAll('.level-tag')].map((el) => el.textContent!.trim())
+    // Just the number, like every other band: the gutter is a card's margin
+    // wide, and the card's own SNIPPET flag says the rest.
+    expect(bands[0]).toBe('Level 0')
+    expect(bands[1]).toBe('Level 1')
+    expect(problems).toEqual([])
+  })
+
+  it('gives a snippet its own inspector, and opens the passage that displays it', async () => {
+    await withStory()
+    const startId = store.state.doc.startNodeId!
+    const snipId = store.addSnippet()
+    const code = store.state.doc.nodes.find((n) => n.id === snipId)!.code
+    store.editBody(startId, `Outside: (display: "${code}")`)
+    store.select(snipId)
+    await nextTick()
+
+    const footer = [...host.querySelectorAll('.inspector footer .btn')].map((b) => b.textContent!.trim())
+    expect(footer).toEqual(['Delete'])
+    expect(host.querySelectorAll('.inspector .hosts .jump')).toHaveLength(1)
+
+    openAdvanced()
+    await nextTick()
+    const text = host.querySelector('.inspector')!.textContent!
+    expect(text).not.toContain('Play from here')
+    expect(text).not.toContain('Mark as Ending')
+    expect(text).toContain('Level 0')
+    expect(toggle().textContent!.trim()).toBe('Make it a passage again')
+    expect(host.querySelectorAll('.inspector input[type=checkbox]')).toHaveLength(0)
+
+    host.querySelector<HTMLButtonElement>('.inspector [data-tab="write"]')!.click()
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.inspector .hosts .jump')!.click()
+    await nextTick()
+    expect(store.state.selectedId).toBe(startId)
+    expect(problems).toEqual([])
+  })
+
+  it('makes an unlinked passage a snippet, and says why the start cannot be one', async () => {
+    await withStory()
+    openAdvanced()
+    await nextTick()
+    expect(toggle().disabled).toBe(true)
+    expect(toggle().title).toMatch(/start/)
+    // Still exactly the one box: the snippet control is a button.
+    expect(host.querySelectorAll('.inspector input[type=checkbox]')).toHaveLength(1)
+
+    const lone = store.addPassage()
+    await nextTick()
+    expect(toggle().disabled).toBe(false)
+    toggle().click()
+    await nextTick()
+    expect(store.state.doc.nodes.find((n) => n.id === lone)!.isSnippet).toBe(true)
+    expect(host.querySelectorAll('.card.snippet')).toHaveLength(1)
+    expect(toggle().textContent!.trim()).toBe('Make it a passage again')
+
+    toggle().click()
+    await nextTick()
+    expect(store.state.doc.nodes.find((n) => n.id === lone)!.isSnippet).toBe(false)
+    expect(host.querySelectorAll('.card.snippet')).toHaveLength(0)
+    expect(problems).toEqual([])
+  })
+
+  it('offers only snippets to the (display:) picker, and writes the macro', async () => {
+    await withStory()
+    const startId = store.state.doc.startNodeId!
+    const snipId = store.addSnippet()
+    store.addPassage()
+    const code = store.state.doc.nodes.find((n) => n.id === snipId)!.code
+    store.select(startId)
+    await nextTick()
+
+    host.querySelector<HTMLButtonElement>('.inspector .body-tools [data-display]')!.click()
+    await nextTick()
+    const picker = host.querySelector('[aria-label="Display a snippet"]')!
+    const rows = [...picker.querySelectorAll('.row-code')].map((el) => el.textContent)
+    expect(rows).toEqual([code])
+    expect(picker.querySelector('.create')).toBeNull()
+
+    picker.querySelector<HTMLButtonElement>('.item')!.dispatchEvent(new MouseEvent('mousedown'))
+    await nextTick()
+    expect(store.state.doc.nodes.find((n) => n.id === startId)!.body).toContain(
+      `(display: "${code}")`,
+    )
+    expect(problems).toEqual([])
+  })
+
+  it('keeps focus in the editor when the (display:) button is pressed', async () => {
+    await withStory()
+    store.addSnippet()
+    store.select(store.state.doc.startNodeId!)
+    await nextTick()
+    // Losing focus would settle the body first, and a settle that binds a link
+    // moves the caret to the end — where the macro would then land.
+    const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    host.querySelector<HTMLButtonElement>('.inspector .body-tools [data-display]')!.dispatchEvent(press)
+    expect(press.defaultPrevented).toBe(true)
+    expect(problems).toEqual([])
+  })
+
+  it('leaves snippets out of a selection level range and ending count', async () => {
+    await withStory()
+    const start = store.state.doc.startNodeId!
+    const snip = store.addSnippet()
+    store.select(start)
+    store.toggleSelected(snip)
+    await nextTick()
+    expect(host.querySelector('.inspector .batch .level-now strong')!.textContent!.trim()).toBe(
+      'Level 1',
+    )
+
+    // A set of snippets alone has no level to nudge and nothing to mark.
+    const other = store.addSnippet()
+    store.select(snip)
+    store.toggleSelected(other)
+    await nextTick()
+    expect(host.querySelector('.inspector .batch .level-now')).toBeNull()
+    expect(host.querySelector('.inspector input[type=checkbox]')).toBeNull()
+    expect(problems).toEqual([])
+  })
+
+  it('lists snippet problems in Story Stats, and no snippet as unreachable', async () => {
+    await withStory()
+    const startId = store.state.doc.startNodeId!
+    store.addSnippet()
+    store.editBody(startId, '(display: "Nope")')
+    await nextTick()
+    await runCommand('Stats')
+    await nextTick()
+
+    const sheet = host.querySelector('[aria-label="Story statistics"]')!
+    const count = (label: string) =>
+      [...sheet.querySelectorAll('.lint-head')]
+        .find((b) => b.querySelector('.what')!.firstChild!.textContent!.trim() === label)!
+        .querySelector('.count')!.textContent
+    expect(count('Broken displays')).toBe('1')
+    expect(count('Unreachable passages')).toBe('0')
+    expect(count('Dead ends not marked as an Ending')).toBe('1')
+    expect(problems).toEqual([])
+  })
+})
