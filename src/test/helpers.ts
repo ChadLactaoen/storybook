@@ -29,6 +29,8 @@ export function docFrom(
     tags?: Record<string, string[]>
     /** Titles to mark as endings. */
     endings?: string[]
+    /** Titles to mark as snippets. Never chosen as the start by default. */
+    snippets?: string[]
   } = {},
 ): StoryDoc {
   const doc = emptyDoc('Test Story')
@@ -57,6 +59,7 @@ export function docFrom(
     tags: [...(opts.tags?.[title] ?? [])].sort(compareStr),
     state: 'TODO' as const,
     isEnding: opts.endings?.includes(title) ?? false,
+    isSnippet: opts.snippets?.includes(title) ?? false,
     levelOffset: opts.offsets?.[title] ?? 0,
     setting: opts.settings?.[title] ?? '',
     code: codeOf.get(title)!,
@@ -70,7 +73,7 @@ export function docFrom(
 
   doc.nodes = nodes
   doc.nextId = nodes.length + 1
-  const startTitle = opts.start ?? titles[0]
+  const startTitle = opts.start ?? titles.find((t) => !opts.snippets?.includes(t))
   doc.startNodeId = nodes.find((n) => n.title === startTitle)?.id ?? null
   return doc
 }

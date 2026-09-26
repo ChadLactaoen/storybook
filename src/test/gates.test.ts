@@ -171,3 +171,43 @@ describe('gates inferred from conditional links', () => {
     expect(out.EndP!.gateId).toBe(deep.nodes.find((n) => n.title === 'PickP')!.id)
   })
 })
+
+/**
+ * `(display:)` runs another passage's `(set:)` where the display stands, which
+ * reading each body on its own attributes to the wrong passage. Every case
+ * here fails closed: the display's writes are opaque, so no gate is claimed
+ * and no branch is called dead on a reading that cannot be trusted.
+ */
+describe('gates beside a (display:)', () => {
+  // `Snip` is P8: appended, so the story's codes are the ones `CHAIN` names.
+  const doc = docFrom({ ...SPEC, Snip: [] }, { snippets: ['Snip'] })
+  const idOf = (title: string) => doc.nodes.find((n) => n.title === title)!.id
+
+  it('still infers a gate a snippet has nothing to do with', () => {
+    const out = gated(doc, { ...GATED, Snip: '(set: $other to "z")' })
+    expect(out.EndP!.gateId).toBe(idOf('PickP'))
+  })
+
+  it('refuses a gate on a value a displayed story passage sets', () => {
+    // Showing PickP's text from PickQ runs PickP's `(set:)` on a route that
+    // never passed PickP — the gate this refusal prevents would be a lie.
+    const shown = '[[A|P4]]\n[[B|P5]]\n(set:$idol to "q")(display: "P2")'
+    expect(gated(doc, { ...GATED, PickQ: shown }).EndP!.gateId).toBeNull()
+  })
+
+  it('refuses a gate, and calls nothing dead, when only a snippet sets the value', () => {
+    const out = gated(doc, {
+      ...GATED,
+      PickP: '[[A|P4]]\n[[B|P5]]\n(display: "P8")',
+      Snip: '(set:$idol to "p")',
+    })
+    expect(out.EndP!.gateId).toBeNull()
+    expect(out.EndP!.dead).toBe(false)
+  })
+
+  it('refuses every gate once a display cannot be read', () => {
+    const out = gated(doc, { ...GATED, Start: '[[A|P2]]\n[[B|P3]]\n(display: $which)' })
+    expect(out.EndP!.gateId).toBeNull()
+    expect(out.EndQ!.gateId).toBeNull()
+  })
+})

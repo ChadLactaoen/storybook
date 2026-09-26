@@ -89,6 +89,8 @@ interface Passage {
   title: string
   isEnding: boolean
   body: string
+  /** The snippets its `(display:)` calls may show, by code, from the envelope. */
+  displays: ReadonlyMap<string, string>
 }
 
 interface Rendered extends Passage {
@@ -699,7 +701,7 @@ interface Opened {
  * answered, and the answer can change which links render at all.
  */
 async function evaluate(step: Step, passage: Passage): Promise<Opened> {
-  const result = renderPassage(passage.body, step.varsBefore, step.answers)
+  const result = renderPassage(passage.body, step.varsBefore, step.answers, passage.displays)
   const rendered: Rendered = { ...passage, result }
   const ordinals = result.pending === null ? result.choices.map((choice) => choice.ordinal) : []
   const keys = await Promise.all(ordinals.map((ordinal) => followLink(lookup, step.key, ordinal)))
@@ -717,7 +719,12 @@ async function evaluate(step: Step, passage: Passage): Promise<Opened> {
 async function open(step: Step): Promise<Opened | null> {
   const envelope = await openPassage(lookup, step.key)
   if (envelope === null) return null
-  const opened = await evaluate(step, { title: envelope.t, isEnding: envelope.e, body: envelope.b })
+  const opened = await evaluate(step, {
+    title: envelope.t,
+    isEnding: envelope.e,
+    body: envelope.b,
+    displays: new Map(envelope.d ?? []),
+  })
   step.code = envelope.c
   step.slug = envelope.s
   return opened

@@ -8,7 +8,7 @@ import { serializeDoc } from '../lib/doc/serialize'
 import { clearLocal, loadLocal, localMeta, saveLocal } from '../lib/doc/storage'
 import type { SavedMeta } from '../lib/doc/storage'
 import { buildLink, parseLinks } from '../lib/harlowe/links'
-import { deriveGraph } from '../lib/graph/derive'
+import { deriveGraph, displayedSnippet } from '../lib/graph/derive'
 import { fnv1a } from '../lib/graph/hash'
 import { COMPACT_CONFIG, isPhantomId } from '../lib/graph/constants'
 import { layoutStory } from '../lib/graph/layout'
@@ -19,7 +19,7 @@ import { countPaths, countPathsTo } from '../lib/graph/paths'
 import { drawingOrder, planRecode } from '../lib/graph/recode'
 import type { RecodeEntry, RecodeOptions } from '../lib/graph/recode'
 import { reachableFrom, strandedBy } from '../lib/graph/reachability'
-import { readStoryMacros } from '../lib/harlowe/macros'
+import { parseDisplays, readStoryMacros } from '../lib/harlowe/macros'
 import type { LayoutConfig, LayoutResult } from '../lib/graph/types'
 import type {
   NodeId,
@@ -246,7 +246,11 @@ function readBodies(doc: StoryDoc): { key: string; bodies: string } {
       }
     }
     next.set(n.id, facts)
-    parts.push([n.id, n.code, n.title, n.levelOffset, facts.links].join(KEY_SEP))
+    // `isSnippet` moves the card to the level-0 row, and takes it and its links
+    // out of the graph, so it is structure.
+    parts.push(
+      [n.id, n.code, n.title, n.levelOffset, n.isSnippet ? 1 : 0, facts.links].join(KEY_SEP),
+    )
     hashes.push(n.id + KEY_SEP + facts.hash)
   }
 
@@ -744,7 +748,11 @@ export function addPassage(linkFrom?: string): string {
   // Named `source` rather than `parent`: the block below needs its own lookup
   // against the cloned document, and two bindings of the same name would be a
   // quiet way to read from the wrong one.
-  const source = linkFrom ? (state.doc.nodes.find((n) => n.id === linkFrom) ?? null) : null
+  //
+  // A snippet cannot link, so a passage "linked from" one is simply a new
+  // passage: nothing written into the snippet, and nothing inherited from it.
+  const found = linkFrom ? state.doc.nodes.find((n) => n.id === linkFrom) : undefined
+  const source = found === undefined || found.isSnippet ? null : found
   const inherit = inheritance()
   const { doc: withNode, node } = M.createNode(state.doc, {
     title: 'Untitled Passage',
@@ -752,18 +760,58 @@ export function addPassage(linkFrom?: string): string {
     characters: source && inherit.characters ? source.characters.map((c) => c.name) : [],
   })
   let next = withNode
-  if (linkFrom) {
-    const parent = next.nodes.find((n) => n.id === linkFrom)
+  if (source) {
+    const parent = next.nodes.find((n) => n.id === source.id)
     if (parent) {
       const gap = parent.body.length > 0 && !parent.body.endsWith('\n') ? '\n' : ''
       // Through `buildLink`, so the link is written the one way the app teaches:
       // display text on the left, the code that actually resolves on the right.
-      next = M.setBody(next, linkFrom, parent.body + gap + buildLink(node.code, node.title))
+      next = M.setBody(next, source.id, parent.body + gap + buildLink(node.code, node.title))
     }
   }
   commit(next)
   select(node.id)
   return node.id
+}
+
+/**
+ * A new snippet: a passage on level 0, outside the tree, for `(display:)` to
+ * show inside others. It links nowhere, so it inherits nothing either.
+ */
+export function addSnippet(): string {
+  const { doc, node } = M.createNode(state.doc, { title: 'Untitled Snippet', isSnippet: true })
+  commit(doc)
+  select(node.id)
+  return node.id
+}
+
+let blockerVersion = -1
+const blockers = new Map<string, string | null>()
+
+/**
+ * Why this passage cannot become a snippet, or null when it can.
+ *
+ * Memoized on `layoutVersion`, and exactly so: the answer reads the start, which
+ * passages are snippets, the passage's own links and every link naming its
+ * code — all of it in the layout key and none of it anywhere else. Unmemoized,
+ * every note or code committed on the Advanced tab re-read every body in the
+ * story to answer a question none of those edits can change.
+ */
+export function snippetBlockerOf(id: string): string | null {
+  if (layoutVersion.value !== blockerVersion) {
+    blockerVersion = layoutVersion.value
+    blockers.clear()
+  }
+  if (!blockers.has(id)) blockers.set(id, M.snippetBlocker(state.doc, id))
+  return blockers.get(id)!
+}
+
+/** Make a passage a snippet or an ordinary one again. Returns the refusal, else null. */
+export function snippetSet(id: string, value: boolean): string | null {
+  const { doc: next, error } = M.setSnippet(state.doc, id, value)
+  if (error) return error
+  commit(next)
+  return null
 }
 
 /** Returns the refusal message when the delete would strand a passage, else null. */
@@ -839,7 +887,7 @@ export function endingSetSelected(value: boolean): void {
  * a passage that does not exist.
  */
 export function endingToggleSelected(): void {
-  if (selectedNodes.value.length === 0) return
+  if (selectedStoryNodes.value.length === 0) return
   endingSetSelected(!allSelectedEndings.value)
 }
 
@@ -1305,9 +1353,19 @@ export const selectedSettingCount = computed(
   () => selectedNodes.value.filter((n) => n.setting !== '').length,
 )
 
+/**
+ * The selection without its snippets.
+ *
+ * A snippet is never an ending and has no level to nudge, and the mutations
+ * skip one silently. So every tri-state and every "can this move" asks about
+ * this rather than `selectedNodes`: a selection holding a snippet would
+ * otherwise read as mixed forever, since the snippet can never agree.
+ */
+export const selectedStoryNodes = computed(() => selectedNodes.value.filter((n) => !n.isSnippet))
+
 /** How many of the selection are endings — what the sidebar's tri-state draws. */
 export const selectedEndingCount = computed(
-  () => selectedNodes.value.filter((n) => n.isEnding).length,
+  () => selectedStoryNodes.value.filter((n) => n.isEnding).length,
 )
 
 /**
@@ -1320,7 +1378,9 @@ export const selectedEndingCount = computed(
  * documents.
  */
 export const allSelectedEndings = computed(
-  () => selectedNodes.value.length > 0 && selectedEndingCount.value === selectedNodes.value.length,
+  () =>
+    selectedStoryNodes.value.length > 0 &&
+    selectedEndingCount.value === selectedStoryNodes.value.length,
 )
 
 /**
@@ -1337,13 +1397,13 @@ export const allSelectedEndings = computed(
  * offered.
  */
 export const selectedOffset = computed<number | null>(() => {
-  const first = selectedNodes.value[0]?.levelOffset ?? null
-  return selectedNodes.value.every((n) => n.levelOffset === first) ? first : null
+  const first = selectedStoryNodes.value[0]?.levelOffset ?? null
+  return selectedStoryNodes.value.every((n) => n.levelOffset === first) ? first : null
 })
 
 /** How many of the selection sit below their floor — what the mixed hint counts. */
 export const selectedNudgedCount = computed(
-  () => selectedNodes.value.filter((n) => n.levelOffset === 1).length,
+  () => selectedStoryNodes.value.filter((n) => n.levelOffset === 1).length,
 )
 
 // A passage sits at its floor or one below it, so "can move" is only a question
@@ -1531,6 +1591,36 @@ export const gates = computed(() => {
     isAncestor,
   })
   return lastGates
+})
+
+let lastHostKey = ''
+let lastHosts = new Map<string, string[]>()
+
+/**
+ * Which passages display each snippet, by snippet id, hosts in canonical order.
+ *
+ * Keyed like `gates`, for its reason: a display is read out of prose, which a
+ * layout does not see, while which code names a snippet is structure, which a
+ * body counter does not. Only the inspector reads it.
+ */
+export const displayHosts = computed(() => {
+  const key = layoutVersion.value + '|' + bodyVersion.value
+  if (key === lastHostKey) return lastHosts
+  lastHostKey = key
+
+  const { graph } = layout.value
+  const out = new Map<string, string[]>()
+  for (const n of [...state.doc.nodes].sort(compareNodes)) {
+    for (const d of parseDisplays(n.body)) {
+      const id = d.code === null ? null : displayedSnippet(graph, d.code)
+      if (id === null) continue
+      const hosts = out.get(id) ?? []
+      if (!hosts.includes(n.id)) hosts.push(n.id)
+      out.set(id, hosts)
+    }
+  }
+  lastHosts = out
+  return out
 })
 
 let lastRunKey = ''

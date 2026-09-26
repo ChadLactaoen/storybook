@@ -90,7 +90,8 @@ function openReader(nodeId?: string) {
  */
 function playHere() {
   const node = store.selected.value
-  if (node) openReader(node.id)
+  // A snippet is on no route, so there is nowhere to play it from.
+  if (node && !node.isSnippet) openReader(node.id)
 }
 
 function toggleIndex() {
@@ -254,15 +255,17 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
   'edit.redo': { run: store.redo, enabled: store.canRedo.value },
   'edit.passageAdd': { run: () => store.addPassage(store.state.selectedId ?? undefined) },
   'edit.passageAddFree': { run: () => store.addPassage() },
+  'edit.snippetAdd': { run: () => openPassage(store.addSnippet()) },
   'edit.passageDelete': {
     run: deleteSelected,
     enabled: store.state.selectedIds.length > 0 || store.state.selectedId !== null,
   },
   'edit.passageEnding': {
     run: store.endingToggleSelected,
-    // `selectedIds` rather than the anchor: a phantom is selectable and has no
-    // passage to mark, so Delete's looser test would enable a no-op here.
-    enabled: store.state.selectedIds.length > 0,
+    // The selection's story passages rather than the anchor: a phantom is
+    // selectable and has no passage to mark, and a snippet is never an ending,
+    // so Delete's looser test would enable a no-op here.
+    enabled: store.selectedStoryNodes.value.length > 0,
     checked: store.allSelectedEndings.value,
   },
   // Derived rather than written out three times: the ids, the ticks and the
@@ -323,7 +326,10 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
   'story.play': { run: () => openReader(), enabled: store.state.doc.startNodeId !== null },
   // No start-passage gate: the inspector button has none either, since a
   // passage picked by hand is a start of its own.
-  'passage.play': { run: playHere, enabled: store.selected.value !== null },
+  'passage.play': {
+    run: playHere,
+    enabled: store.selected.value !== null && !store.selected.value.isSnippet,
+  },
   'story.stats': { run: () => (statsOpen.value = !statsOpen.value) },
   'story.tags': { run: () => (tagsOpen.value = !tagsOpen.value) },
   'story.characters': { run: () => (castOpen.value = !castOpen.value) },

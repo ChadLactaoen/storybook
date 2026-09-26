@@ -12,6 +12,7 @@
  */
 
 import { buildLink } from './links'
+import { buildDisplay } from './macros'
 
 export interface Selection {
   /** The whole body, not just the selected part. */
@@ -121,4 +122,18 @@ export function insertLink(sel: Selection, target: string): Selection {
 
   const at = start + link.length
   return { text: text.slice(0, start) + link + text.slice(end), start: at, end: at }
+}
+
+/**
+ * Insert `(display: "code")` at the caret, leaving any selection in place.
+ *
+ * Unlike a link it has no prose half to wrap: the selection is the author's,
+ * and the macro goes after it rather than over it. The caret lands after the
+ * macro, so the author can carry on writing.
+ */
+export function insertDisplay(sel: Selection, code: string): Selection {
+  const { text, end } = sel
+  const macro = buildDisplay(code)
+  const at = end + macro.length
+  return { text: text.slice(0, end) + macro + text.slice(end), start: at, end: at }
 }

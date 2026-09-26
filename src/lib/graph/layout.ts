@@ -101,8 +101,46 @@ export function layoutStory(doc: StoryDoc, config?: Partial<LayoutConfig>): Layo
       width: ln.width,
       height: ln.height,
       isPhantom: isPhantomId(id),
+      isSnippet: false,
       minLevel: lv.minLevel.get(id) ?? 1,
       levelOffset: Math.min(1, Math.max(0, Math.trunc(offsets.get(id) ?? 0))),
+    })
+  }
+
+  // The snippet row, where a layer -1 would be. Placed after the pipeline and
+  // outside it, so nothing above — ordering, packing, routing — can tell
+  // whether a snippet exists: a story's drawing is byte-identical with and
+  // without them, and making the first one moves no card. In canonical order,
+  // which is code order, so a recode reads the row back in the order it
+  // already stands in.
+  //
+  // Centred over the start passage, because that is where an author looks
+  // first: on a wide tree a row packed from x = 0 sat above whichever fragment
+  // happened to be leftmost, off-screen from the story it belongs to. With no
+  // start to stand over, it centres on the story's own extent instead.
+  if (g.snippetIds.length > 0) {
+    const byId = new Map(doc.nodes.map((n) => [n.id, n]))
+    const y = round(cfg.margin - cfg.layerSpacing + cfg.nodeHeight / 2, cfg.coordPrecision)
+    const pitch = cfg.nodeWidth + cfg.nodeGap
+    const first = rowCentre(nodes, doc.startNodeId, cfg) - ((g.snippetIds.length - 1) * pitch) / 2
+    g.snippetIds.forEach((id, i) => {
+      const n = byId.get(id)!
+      nodes.push({
+        id,
+        code: n.code,
+        title: n.title,
+        level: 0,
+        layer: -1,
+        order: i,
+        x: round(first + i * pitch, cfg.coordPrecision),
+        y,
+        width: cfg.nodeWidth,
+        height: cfg.nodeHeight,
+        isPhantom: false,
+        isSnippet: true,
+        minLevel: 0,
+        levelOffset: 0,
+      })
     })
   }
   nodes.sort((a, b) => compareStr(a.code, b.code) || compareStr(a.id, b.id))
@@ -153,6 +191,16 @@ export function layoutStory(doc: StoryDoc, config?: Partial<LayoutConfig>): Layo
     height: cfg.nodeHeight,
     count: nodes.filter((n) => n.layer === layer).length,
   }))
+  // Only when there is something on it: a story with no snippets keeps exactly
+  // the bands it always had.
+  if (g.snippetIds.length > 0) {
+    levels.unshift({
+      level: 0,
+      y: round(cfg.margin - cfg.layerSpacing, cfg.coordPrecision),
+      height: cfg.nodeHeight,
+      count: g.snippetIds.length,
+    })
+  }
 
   const bounds = boundsOf(nodes, cfg)
 
@@ -177,6 +225,24 @@ export function layoutStory(doc: StoryDoc, config?: Partial<LayoutConfig>): Layo
     graph: g,
     backEdges,
   }
+}
+
+/**
+ * Where the snippet row centres: over the start passage, else over the middle
+ * of the story's cards, else where the first card of an empty story would sit.
+ * `story` holds story cards only — it is read before the row is added.
+ */
+function rowCentre(story: readonly NodeLayout[], startId: NodeId | null, cfg: LayoutConfig): number {
+  const start = startId === null ? undefined : story.find((n) => n.id === startId)
+  if (start !== undefined) return start.x
+  if (story.length === 0) return cfg.nodeWidth / 2
+  let min = Infinity
+  let max = -Infinity
+  for (const n of story) {
+    min = Math.min(min, n.x)
+    max = Math.max(max, n.x)
+  }
+  return (min + max) / 2
 }
 
 function boundsOf(nodes: readonly NodeLayout[], cfg: LayoutConfig): Bounds {

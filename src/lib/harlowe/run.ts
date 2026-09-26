@@ -45,6 +45,17 @@
  * only on the variables carried in and the k-1 answers before it, so the k-th
  * prompt reached is the same prompt on every pass, and nothing is resumed that
  * could have drifted from the source.
+ *
+ * **A `(display:)` is walked in place.** The caller hands in the bodies it may
+ * show, keyed by code — the snippets this passage displays, and the ones those
+ * display — and the walk descends into one exactly where the macro stands,
+ * sharing the variables, the prompts and the doubt of the region around it.
+ * Its output is prose, not a value, because Harlowe re-parses what it displays.
+ * A code not in the map is not one this reader may show, so it renders as
+ * unread, as does one already being displayed (a cycle Harlowe would recurse
+ * on forever). A link inside a displayed snippet is its label and nothing
+ * more: a snippet cannot link, and its ordinals would collide with the host's.
+ * Temps are shared too — the approximation hooks already make here.
  */
 
 import type { ParsedLink } from './links'
@@ -53,6 +64,9 @@ import type { ChainSlot, RawMacro } from './macros'
 import {
   chainsOf,
   closeHook,
+  DISPLAY_BUDGET,
+  DISPLAY_DEPTH,
+  displayCode,
   HOOK_TAG_BACK,
   HOOK_TAG_FRONT,
   parseMacros,
@@ -297,7 +311,29 @@ interface Ctx {
   frozen: number
   /** Pending run of plain text, flushed when anything else is emitted. */
   buf: string
+  /** Bodies `(display:)` may show, by code. */
+  displays: ReadonlyMap<string, string>
+  /** The codes being displayed right now, outermost first. Empty in the host. */
+  displaying: string[]
+  /** How many displays this render has walked, against `DISPLAY_BUDGET`. */
+  displayCount: number
+  /**
+   * Each displayed body's parse, by code, made once per render. A status line
+   * shown at every level of a nest is otherwise re-parsed per appearance, up
+   * to `DISPLAY_BUDGET` times — and again for every prompt the reader answers.
+   */
+  parsed: Map<string, Parsed>
 }
+
+/** The offset-keyed indexes of one body: what a walk over it looks things up in. */
+interface Parsed {
+  macroAt: Map<number, RawMacro>
+  chains: Map<number, ChainSlot>
+  linkAt: Map<number, ParsedLink>
+}
+
+/** No display is readable: what a caller that passes none gets. */
+const NO_DISPLAYS: ReadonlyMap<string, string> = new Map()
 
 /**
  * Render one passage.
@@ -318,6 +354,7 @@ export function renderPassage(
   body: string,
   vars: Vars = new Map(),
   answers: readonly string[] = [],
+  displays: ReadonlyMap<string, string> = NO_DISPLAYS,
 ): RunResult {
   const macros = parseMacros(body)
   const ctx: Ctx = {
@@ -342,6 +379,10 @@ export function renderPassage(
     speculative: 0,
     frozen: 0,
     buf: '',
+    displays,
+    displaying: [],
+    displayCount: 0,
+    parsed: new Map(),
   }
 
   evalSpan(ctx, 0, body.length)
@@ -433,6 +474,12 @@ function emitVariable(ctx: Ctx, name: string): void {
 }
 
 function emitLink(ctx: Ctx, link: ParsedLink): void {
+  // Inside a displayed snippet a link is only its words. Its ordinal belongs to
+  // the snippet's body, so as a choice it would collide with the host's own.
+  if (ctx.displaying.length > 0) {
+    ctx.buf += link.label ?? link.target
+    return
+  }
   flush(ctx)
   const label = link.label ?? link.target
   const uncertain = ctx.speculative > 0
@@ -679,6 +726,11 @@ function runMacro(ctx: Ctx, macro: RawMacro, to: number): number {
     case 'print':
       runPrint(ctx, macro)
       return macro.end
+    case 'display':
+      // Not the attached body, for `set`'s reason: a display is a command, and
+      // a hook after it is the author's next line.
+      runDisplay(ctx, macro)
+      return macro.end
     default:
       if (OPAQUE_WRITERS.has(macro.name)) {
         // Reversed operands, and these can write several variables at once.
@@ -689,6 +741,58 @@ function runMacro(ctx: Ctx, macro: RawMacro, to: number): number {
       }
       return runUnknown(ctx, macro, to)
   }
+}
+
+function runDisplay(ctx: Ctx, macro: RawMacro): void {
+  // The source is read before any swap: afterwards `ctx.body` is the snippet's.
+  const text = source(ctx, macro)
+  const code = displayCode(macro.args)
+  const body = code === null ? undefined : ctx.displays.get(code)
+  if (
+    code === null ||
+    body === undefined ||
+    ctx.displaying.includes(code) ||
+    ctx.displaying.length >= DISPLAY_DEPTH ||
+    ctx.displayCount >= DISPLAY_BUDGET
+  ) {
+    chip(ctx, macro.name, text)
+    return
+  }
+  ctx.displayCount++
+
+  // Everything keyed by an offset belongs to one body, so it is swapped with
+  // it. The walk state — variables, prompts, doubt — is the host's to share.
+  flush(ctx)
+  const saved = {
+    body: ctx.body,
+    macroAt: ctx.macroAt,
+    chains: ctx.chains,
+    linkAt: ctx.linkAt,
+    chainState: ctx.chainState,
+  }
+  let parsed = ctx.parsed.get(code)
+  if (parsed === undefined) {
+    const macros = parseMacros(body)
+    parsed = {
+      macroAt: new Map(macros.map((m) => [m.start, m])),
+      chains: chainsOf(body, macros),
+      linkAt: new Map(parseLinks(body).map((l) => [l.span.start, l])),
+    }
+    ctx.parsed.set(code, parsed)
+  }
+  ctx.body = body
+  ctx.macroAt = parsed.macroAt
+  ctx.chains = parsed.chains
+  ctx.linkAt = parsed.linkAt
+  // Walk state, not parse: a chain satisfied in one appearance must not skip
+  // its branches in the next.
+  ctx.chainState = new Map()
+  ctx.displaying.push(code)
+
+  evalRegion(ctx, 0, body.length)
+
+  ctx.displaying.pop()
+  Object.assign(ctx, saved)
 }
 
 function runUnknown(ctx: Ctx, macro: RawMacro, to: number): number {

@@ -122,6 +122,35 @@ describe('typing in a body', () => {
     expect(store.cardTags.value.get(id)).toBe(ownTags)
   })
 
+  it('lays out nothing for a display typed, and once for a snippet made', async () => {
+    vi.resetModules()
+    const layoutMod = await import('../lib/graph/layout')
+    const spy = vi.spyOn(layoutMod, 'layoutStory')
+    const store = await import('../stores/story')
+
+    store.loadStory(serializeDoc(bigStory()))
+    const host = store.state.doc.nodes[40]!.id
+    const original = store.state.doc.nodes[40]!.body
+    const snippet = store.addSnippet()
+    const code = store.state.doc.nodes.find((n) => n.id === snippet)!.code
+
+    spy.mockClear()
+    const before = store.layoutVersion.value
+    // A display is prose to the drawing: it moves no card, so neither typing
+    // one nor typing inside the snippet it names may lay anything out.
+    const macro = `(display: "${code}")`
+    for (let i = 1; i <= macro.length; i++) store.editBody(host, original + macro.slice(0, i))
+    for (let i = 1; i <= 20; i++) store.editBody(snippet, 'rain '.repeat(i))
+    expect(spy).not.toHaveBeenCalled()
+    expect(store.layoutVersion.value).toBe(before)
+    // …and yet what reads displays sees the new one.
+    expect(store.displayHosts.value.get(snippet)).toEqual([host])
+
+    // Unflagging moves the card into the tree, which is exactly one layout.
+    expect(store.snippetSet(snippet, false)).toBeNull()
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
   it('still notices a macro edit that moves no link', async () => {
     vi.resetModules()
     const store = await import('../stores/story')

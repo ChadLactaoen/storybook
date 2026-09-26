@@ -707,3 +707,68 @@ describe('a damaged file', () => {
     expect(text('.reader-fail')).not.toMatch(/WebCrypto/)
   })
 })
+
+describe('a snippet', () => {
+  /** Start and Next are the story; Weather and Status (P3, P4) are snippets. */
+  function withSnippets(): StoryDoc {
+    return docFrom({ Start: ['Next'], Next: [], Weather: [], Status: [] }, {
+      snippets: ['Weather', 'Status'],
+    })
+  }
+
+  it('is shown in place, with what it displays in turn', async () => {
+    const doc = withSnippets()
+    body(doc, 'Start', 'Outside: (display: "P3")\n[[On|P2]]')
+    body(doc, 'Weather', 'rain, (display: "P4").')
+    body(doc, 'Status', 'and all is well')
+    await play(doc)
+    expect(text('.passage-body')).toBe('Outside: rain, and all is well.')
+    expect(choices().map((c) => c.querySelector('.choice__text')!.textContent)).toEqual(['On'])
+  })
+
+  it('sets a variable for the passage showing it, which the console credits to that passage', async () => {
+    const doc = withSnippets()
+    body(doc, 'Start', '(display: "P3")(if: $sky is "grey")[Grey.]\n[[On|P2]]')
+    body(doc, 'Weather', '(set: $sky to "grey")')
+    await play(doc, { author: true })
+    expect(text('.passage-body')).toBe('Grey.')
+    expect(text('.author-console')).toContain('grey · set by P1')
+  })
+
+  it('is shown on Play from here, too', async () => {
+    const doc = withSnippets()
+    body(doc, 'Next', 'Later: (display: "P3")')
+    body(doc, 'Weather', 'still raining')
+    await play(doc, { author: true, start: doc.nodes[1]!.id })
+    expect(text('.passage-body')).toBe('Later: still raining')
+  })
+
+  it('shows a display it may not show as unread, and a cycle ends', async () => {
+    const doc = withSnippets()
+    body(doc, 'Start', '(display: "P2") (display: "P3")')
+    body(doc, 'Weather', 'loop (display: "P3")')
+    await play(doc, { author: true })
+    expect(mount.querySelectorAll('.passage-body .hazy')).toHaveLength(2)
+    expect(text('.passage-body')).toContain('loop')
+    expect(text('.author-console')).toContain('Could not readdisplay')
+  })
+
+  it('cannot be arrived at by a link', async () => {
+    const doc = withSnippets()
+    body(doc, 'Start', '[[Peek|P3]]')
+    await play(doc)
+    expect(choices()[0]!.disabled).toBe(true)
+    expect(text('.choice__why')).toBe('this link leads nowhere yet')
+  })
+
+  it('asks a prompt it holds, and goes on with the answer', async () => {
+    const doc = withSnippets()
+    body(doc, 'Start', 'Hello, (display: "P3").')
+    body(doc, 'Weather', '(set: $name to (prompt: "Your name?", "Daniel"))$name')
+    await play(doc)
+    expect(promptDialog()!.open).toBe(true)
+    promptInput().value = 'Mira'
+    await pressPrompt('OK')
+    expect(text('.passage-body')).toBe('Hello, Mira.')
+  })
+})

@@ -26,6 +26,7 @@
  * consumer turns a guess into a confident claim about the story's shape.
  */
 
+import { compareStr } from '../../types/story'
 import type { Span } from './links'
 import { parseLinks } from './links'
 
@@ -586,6 +587,288 @@ export function chainsOf(body: string, macros = parseMacros(body)): Map<number, 
   return out
 }
 
+/**
+ * The passage a `(display:)` names, when its argument is exactly one string
+ * literal — and null when it is anything else, which nobody can read.
+ *
+ * The single definition, shared by the reader, the publisher, the lint and the
+ * recode, so `(display: "P7")` names the same passage to all four. A passage's
+ * name in this tool is its code (invariant 3), so what comes back is a code.
+ */
+export function displayCode(args: string): string | null {
+  return stringValue(args.trim())
+}
+
+/** One `(display:)` call, located exactly. */
+export interface DisplayRef {
+  /** The code it names, or null when the argument is not one string literal. */
+  code: string | null
+  /** The whole `(display: …)` call. */
+  macro: Span
+  /** The string literal, quotes included, when `code` is not null. */
+  literal: Span | null
+}
+
+/** Whether `at` falls inside a string literal somewhere in `src[from, at)`. */
+function insideString(src: string, from: number, at: number): boolean {
+  let i = from
+  while (i < at) {
+    const c = src[i]
+    if (c === '"' || c === "'") {
+      const end = skipString(src, i)
+      if (at < end) return true
+      i = end
+      continue
+    }
+    i++
+  }
+  return false
+}
+
+/**
+ * The stretches of prose Harlowe never runs: `<!-- comments -->` and
+ * `` `verbatim` `` runs, found the way `run.ts` finds them.
+ *
+ * Only *prose* is walked. A macro met in prose is jumped whole — its arguments
+ * are code, where neither construct exists — and the walk resumes at its end,
+ * so a hook after it is prose again. A macro inside one of these spans is text,
+ * and every reader of `(display:)` has to agree with the player that it is:
+ * a commented-out `(display: $x)` taken at its word would switch off every gate
+ * in the story, over a line the author disabled.
+ */
+function unrunSpans(body: string, macros: readonly RawMacro[]): Span[] {
+  const at = new Map<number, RawMacro>()
+  for (const m of macros) if (!at.has(m.start)) at.set(m.start, m)
+  const out: Span[] = []
+  let i = 0
+  while (i < body.length) {
+    const macro = at.get(i)
+    if (macro !== undefined) {
+      i = macro.end
+      continue
+    }
+    if (body.startsWith('<!--', i)) {
+      const close = body.indexOf('-->', i + 4)
+      const end = close === -1 ? body.length : close + 3
+      out.push({ start: i, end })
+      i = end
+      continue
+    }
+    if (body[i] === '`') {
+      let open = i
+      while (body[open] === '`') open++
+      const close = body.indexOf(body.slice(i, open), open)
+      if (close !== -1) {
+        const end = close + (open - i)
+        out.push({ start: i, end })
+        i = end
+        continue
+      }
+      // An unclosed fence is literal backticks, as it is to the reader.
+      i = open
+      continue
+    }
+    i++
+  }
+  return out
+}
+
+/**
+ * Every `(display:)` in `body` the player would run, in source order.
+ *
+ * `MACRO_OPEN` scans the whole body, so `(set: $v to "(display: 'X')")` yields a
+ * `display` from inside the quotes. That one is dropped — but only that one.
+ * `chainsOf`'s statement filter would also drop a display sitting in another
+ * macro's *arguments*, which is real code: a recode that skipped it would leave
+ * it naming a code that no longer exists. So the test is narrower: a macro is a
+ * phantom exactly when it starts inside a string literal of the innermost real
+ * macro enclosing it. Prose is not an argument list — Harlowe runs a macro in
+ * quoted prose — so a macro enclosed by nothing is never a phantom.
+ *
+ * A display inside a comment or a verbatim run is dropped too (`unrunSpans`).
+ *
+ * `macros` is optional so that the cheap test comes first: most bodies name no
+ * display at all, and every caller that scans a whole story would otherwise
+ * pay for a full macro parse of each one to learn that.
+ */
+export function parseDisplays(body: string, macros?: readonly RawMacro[]): DisplayRef[] {
+  if (!/display/i.test(body)) return []
+  const all = macros ?? parseMacros(body)
+  if (!all.some((m) => m.name === 'display')) return []
+  const unrun = unrunSpans(body, all)
+  const out: DisplayRef[] = []
+  /** Real macros whose argument list may still enclose the next one. */
+  const open: RawMacro[] = []
+  for (const m of all) {
+    while (open.length > 0 && open[open.length - 1]!.end <= m.start) open.pop()
+    const parent = open[open.length - 1]
+    if (parent !== undefined && insideString(body, parent.argsStart, m.start)) continue
+    if (unrun.some((u) => m.start >= u.start && m.start < u.end)) continue
+    open.push(m)
+    if (m.name !== 'display') continue
+
+    const lead = m.args.length - m.args.trimStart().length
+    const text = m.args.trim()
+    const code = displayCode(m.args)
+    out.push({
+      code,
+      macro: { start: m.start, end: m.end },
+      literal:
+        code === null ? null : { start: m.argsStart + lead, end: m.argsStart + lead + text.length },
+    })
+  }
+  return out
+}
+
+/**
+ * `text` as a string literal in `quote`, escaped so `stringValue` reads it back
+ * exactly. Codes may hold quotes — only link syntax is banned from them.
+ */
+export function quoteString(text: string, quote: '"' | "'" = '"'): string {
+  return quote + text.replace(/\\/g, '\\\\').split(quote).join('\\' + quote) + quote
+}
+
+/** The macro that shows the passage coded `code` inline. */
+export function buildDisplay(code: string): string {
+  return `(display: ${quoteString(code)})`
+}
+
+/**
+ * Rewrite every `(display:)` naming a code in `mapping` to name its new code.
+ *
+ * `remapLinks`'s discipline, for the same reason: a recode is a permutation, so
+ * every literal is looked up once in the *old* vocabulary and the splices run
+ * right to left, keeping earlier spans valid. The author's quote character is
+ * kept. A display whose argument is not a literal is left alone — there is no
+ * code in it to rewrite.
+ */
+export function remapDisplays(body: string, mapping: ReadonlyMap<string, string>): string {
+  if (mapping.size === 0 || !/display/i.test(body)) return body
+  const hits = parseDisplays(body).filter((d) => {
+    if (d.code === null) return false
+    const to = mapping.get(d.code)
+    return to !== undefined && to !== d.code
+  })
+  let out = body
+  for (let i = hits.length - 1; i >= 0; i--) {
+    const { code, literal } = hits[i]!
+    const quote = body[literal!.start] === "'" ? "'" : '"'
+    out = out.slice(0, literal!.start) + quoteString(mapping.get(code!)!, quote) + out.slice(literal!.end)
+  }
+  return out
+}
+
+/**
+ * Every passage `body` displays, directly or through what it displays, as
+ * `[code, body]` pairs in code order.
+ *
+ * `resolve` answers which codes may be displayed at all, and with what text —
+ * this layer knows nothing of snippets. A code it refuses is simply absent,
+ * which is how the reader learns to render that display as unreadable. Each
+ * code is visited once, so a cycle terminates here and is caught at render.
+ *
+ * `memo` holds what each resolved code's own body displays, so a caller asking
+ * for many passages — the publisher, once per passage — parses each snippet
+ * once rather than once per passage that shows it.
+ */
+export function displayClosure(
+  body: string,
+  resolve: (code: string) => string | null,
+  memo: Map<string, (string | null)[]> = new Map(),
+): [string, string][] {
+  const found = new Map<string, string>()
+  const codesIn = (text: string, code: string | null): (string | null)[] => {
+    if (code === null) return parseDisplays(text).map((d) => d.code)
+    let codes = memo.get(code)
+    if (codes === undefined) {
+      codes = parseDisplays(text).map((d) => d.code)
+      memo.set(code, codes)
+    }
+    return codes
+  }
+  const queue: [string, string | null][] = [[body, null]]
+  while (queue.length > 0) {
+    const [text, from] = queue.pop()!
+    for (const code of codesIn(text, from)) {
+      if (code === null || found.has(code)) continue
+      const target = resolve(code)
+      if (target === null) continue
+      found.set(code, target)
+      queue.push([target, code])
+    }
+  }
+  return [...found].sort(([a], [b]) => compareStr(a, b))
+}
+
+/**
+ * How deep displays may nest before the reader stops. A cycle is caught by the
+ * reader's stack; this bounds a chain that is merely long.
+ *
+ * Here rather than in `run.ts`, because the lint has to state the same limit
+ * and `run.ts` exports nothing to the graph layer.
+ */
+export const DISPLAY_DEPTH = 8
+/**
+ * How many displays one render may walk. Depth alone is not enough: a snippet
+ * that displays another twice, at every level, doubles per level.
+ */
+export const DISPLAY_BUDGET = 256
+
+/** What the reader will meet walking a body's displays, read statically. */
+export interface DisplayReach {
+  /** Some display comes back round to one already being shown. */
+  cycle: boolean
+  /** The deepest nesting of displays, 1 for a display of a snippet that shows none. */
+  depth: number
+  /** Displays walked in all, saturating just past `DISPLAY_BUDGET`. */
+  count: number
+}
+
+/**
+ * Read, for any number of bodies, what the reader's display limits will say
+ * about them — the lint's half of `runDisplay`'s refusals.
+ *
+ * Conditions are not evaluated, so a display behind a false `(if:)` counts: the
+ * lint says a loop *can* happen, which is the question an author needs asked.
+ * One analyzer per story: results are memoized by code, which is sound because
+ * a code's reach depends only on its body — the cycle flag included, since a
+ * code memoized without one reached nothing that was still being walked.
+ */
+export function displayReach(resolve: (code: string) => string | null): (body: string) => DisplayReach {
+  const memo = new Map<string, DisplayReach>()
+  const walking = new Set<string>()
+  const cap = DISPLAY_BUDGET + 1
+
+  const ofBody = (body: string): DisplayReach => {
+    let cycle = false
+    let depth = 0
+    let count = 0
+    for (const d of parseDisplays(body)) {
+      if (d.code === null) continue
+      const target = resolve(d.code)
+      if (target === null) continue
+      const r = ofCode(d.code, target)
+      cycle ||= r.cycle
+      depth = Math.max(depth, 1 + r.depth)
+      count = Math.min(cap, count + 1 + r.count)
+    }
+    return { cycle, depth, count }
+  }
+
+  const ofCode = (code: string, body: string): DisplayReach => {
+    if (walking.has(code)) return { cycle: true, depth: 0, count: 0 }
+    const known = memo.get(code)
+    if (known !== undefined) return known
+    walking.add(code)
+    const r = ofBody(body)
+    walking.delete(code)
+    memo.set(code, r)
+    return r
+  }
+
+  return ofBody
+}
+
 /** Everything a whole story's macros say, gathered in one pass over its bodies. */
 export interface StoryMacros {
   /** Guard per edge, keyed exactly as `deriveGraph` keys its edges. */
@@ -605,31 +888,66 @@ export interface StoryMacros {
  * test asserts the two agree, because a silent drift here would attach a guard
  * to the wrong edge, which is the one failure that produces a confident lie
  * rather than a missing gate.
+ *
+ * `(display:)` runs another passage's `(set:)` *at the passage displaying it*,
+ * and reading each body in isolation attributes that write to the wrong
+ * passage. So every variable a displayed passage writes is opaque: a snippet's
+ * writes always (and a snippet is never an assigner — it is on no route, and
+ * `gatesOf` would read its missing level as level 1), any other passage's once
+ * a literal display names it, and *every* written variable in the story once
+ * any display's argument cannot be read, since that one could name anything.
  */
 export function readStoryMacros(
-  nodes: readonly { id: string; body: string }[],
+  // Required, not optional: a caller that left them off would switch off every
+  // rule above in silence — a snippet's `(set:)` read as an assigner is the
+  // confident lie invariant 4 exists to prevent.
+  nodes: readonly { id: string; body: string; code: string; isSnippet: boolean }[],
 ): StoryMacros {
   const guardOf = new Map<string, Guard>()
   const assignersOf = new Map<string, { nodeId: string; value: string }[]>()
   const opaqueVars = new Set<string>()
+  /** What each passage writes, by code, for the display rule below. */
+  const writes: { code: string; vars: string[] }[] = []
+  const displayed = new Set<string>()
+  let unreadableDisplay = false
 
   for (const node of nodes) {
-    // One scan per body, shared by both readers. This runs on the typing path:
-    // `gates` is memoized on `layoutVersion`, which every body keystroke bumps,
+    // One scan per body, shared by every reader. This runs on the typing path:
+    // `gates` is memoized on `bodyVersion`, which every body keystroke bumps,
     // so parsing twice would double the cost for the whole story per character.
     const macros = parseMacros(node.body)
+    const { literal, opaque } = parseAssignments(node.body, macros)
+    const vars = [...literal.map((a) => a.variable), ...opaque]
+    writes.push({ code: node.code, vars })
+
+    for (const d of parseDisplays(node.body, macros)) {
+      if (d.code === null) unreadableDisplay = true
+      else displayed.add(d.code)
+    }
+
+    if (node.isSnippet) {
+      for (const v of vars) opaqueVars.add(v)
+      continue
+    }
 
     for (const [ordinal, guard] of guardsByOrdinal(node.body, parseLinks(node.body), macros)) {
       guardOf.set(`${node.id}|${ordinal}`, guard)
     }
 
-    const { literal, opaque } = parseAssignments(node.body, macros)
     for (const a of literal) {
       const list = assignersOf.get(a.variable) ?? []
       list.push({ nodeId: node.id, value: a.value })
       assignersOf.set(a.variable, list)
     }
     for (const v of opaque) opaqueVars.add(v)
+  }
+
+  // Every holder of a displayed code, not the first: which one a display
+  // reaches is not this layer's question, and marking both is order-free.
+  for (const w of writes) {
+    if (unreadableDisplay || displayed.has(w.code)) {
+      for (const v of w.vars) opaqueVars.add(v)
+    }
   }
 
   return { guardOf, assignersOf, opaqueVars }

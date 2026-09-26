@@ -9,6 +9,10 @@ const props = defineProps<{
   label: string
   /** Passages offered when linking, in canonical order. */
   targets: readonly { code: string; title: string }[]
+  /** Snippets offered to `(display:)`, in canonical order. */
+  displayTargets?: readonly { code: string; title: string }[]
+  /** False in a snippet, which cannot link. */
+  canLink?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -80,6 +84,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         v-model="body"
         toolbar
         :targets="targets"
+        :display-targets="displayTargets ?? []"
+        :can-link="canLink !== false"
         @settle="emit('settle')"
       />
 

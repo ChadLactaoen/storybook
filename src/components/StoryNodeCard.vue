@@ -122,6 +122,7 @@ const style = computed(() => ({
         selected,
         anchor,
         phantom: node.isPhantom,
+        snippet: node.isSnippet,
         dimmed,
         start: isStart,
         ending: isEnding,
@@ -172,7 +173,8 @@ const style = computed(() => ({
         </template>
       </div>
 
-      <div v-if="detailed && (isStart || isEnding || pathCount)" class="foot">
+      <div v-if="detailed && (isStart || isEnding || pathCount || node.isSnippet)" class="foot">
+        <span v-if="node.isSnippet" class="flag flag-snippet">SNIPPET</span>
         <span v-if="isStart" class="flag">START</span>
         <span v-if="isEnding" class="flag flag-end">END</span>
         <span v-if="pathCount" class="paths">{{ pathCount }} paths</span>
@@ -250,6 +252,14 @@ const style = computed(() => ({
   border-style: dashed;
   background: var(--panel-alt);
   box-shadow: none;
+}
+
+/* Dotted, not dashed: a phantom is a card with no passage behind it, a snippet
+   is a real passage standing outside the tree. The two must not read alike, and
+   the fill stays the passage's own because `.selected.anchor` needs it. */
+.card.snippet {
+  border-style: dotted;
+  border-width: 2px;
 }
 
 .card.dimmed {
@@ -422,5 +432,9 @@ const style = computed(() => ({
 
 .flag-end {
   color: var(--ending);
+}
+
+.flag-snippet {
+  color: var(--text-dim);
 }
 </style>

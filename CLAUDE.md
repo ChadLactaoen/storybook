@@ -43,7 +43,10 @@ which is cosmetic and may repeat. So changing a code must cascade through inboun
 text (`setCode`), while renaming a title is a plain field write. Deriving must never
 create real nodes, or a deleted-but-still-linked passage would be resurrected on the
 next re-derive. Unresolved targets become *phantoms* (`phantom:`-prefixed ids) that
-participate fully in layout but exist only in the derived graph.
+participate fully in layout but exist only in the derived graph. A `(display: "P7")` names
+a code too, and so moves with it on a recode (`remapDisplays`), but it is **not** an edge:
+it shows prose, it does not lead anywhere, and only a snippet may be its target (see
+"A snippet is outside the tree" below).
 
 **3. `code` is identity, and a route's identity is a sequence of them.** A reader's
 story is identified by the ordered codes of the passages they visited — `P1->P3->P7`.
@@ -104,7 +107,9 @@ direction inverts there, deliberately: `gates.ts` fails closed because a wrong g
 something false about the story, while `run.ts` fails open because a hidden hook deletes
 prose the author wrote. Wire the reader's broader evaluator into gate inference and
 `(if: $v is not "x")` — which it reads and `gates.ts` refuses — starts producing gates,
-which is the exact soundness break the rest of this invariant is about.
+which is the exact soundness break the rest of this invariant is about. `(display:)` is
+walked inside the same sandbox: the caller hands `renderPassage` the snippet bodies it may
+show, and a code not among them renders unread rather than being looked up anywhere else.
 
 `deriveGraph` sees only `[[...]]`, so a
 link gated by `(if: $v is "x")` looks unconditional and the graph over-reports what is
@@ -228,7 +233,7 @@ Mira→Tam records only how Mira regards Tam; the reverse is a separate entry.
 layout costs more than computing it. `setDoc` recomputes layout synchronously (not in a
 watcher, which would flush a tick late and leave `layout` describing the previous
 document) and memoizes on a hash of only the fields layout depends on — id, code, title,
-`levelOffset`, `startNodeId`, and each body's **link signature** — so tag, state and
+`levelOffset`, `isSnippet`, `startNodeId`, and each body's **link signature** — so tag, state and
 story-notes edits are pure re-renders. `code` is in
 there because links resolve against it; leave it out and a recode goes unnoticed while
 every inbound edge re-resolves to a phantom.
@@ -302,6 +307,57 @@ next pass and finish under a different code than the one that did the capturing.
 re-planned from it — that stays true whether the loop converged or ran out of passes,
 which a re-plan would not. `commit` is handed that same layout rather than paying for
 Sugiyama twice on one button press.
+
+**A snippet is outside the tree and outside every route.** `StoryNode.isSnippet` is
+authored, like `isEnding`, and for its reason: a passage nothing links to is far more often
+one whose link is unwritten than one meant for `(display:)`. Everything else follows from
+keeping snippets out of `DerivedGraph`'s `nodes`/`ids`/`byId`/adjacency — layering,
+ordering, routing, reachability, route counts and gates then cannot meet one, with no check
+in each. What the graph keeps is `snippetIds` (ids only, since the graph outlives prose
+edits and a body read off it would be stale), `idByCode` (every code, so a display
+resolves exactly as a link does), and `snippetLinks`. A link inside a snippet, or from a
+story passage to one, is **neither an edge nor a phantom**: a phantom would draw a second
+card with the snippet's code that "Make real" could never materialise. Its ordinal is
+skipped, not reused, so `EdgeId` still matches `readStoryMacros`. The reader shows a link
+inside a displayed snippet as its words; a link to one is disabled like any dangling link.
+
+The row is drawn where a layer −1 would be, centred over the start passage (over the
+story's middle when there is none), *after* the pipeline and outside it, and that
+placement is the point: a story's geometry is byte-identical with and without snippets, so
+making the first one moves no card, and a story with none keeps its compat hash. The
+level-0 band exists only while a snippet does, and `stats.shape.depth` reads
+`layout.stats.layers` rather than `levels.length` so a snippet makes no story deeper.
+Recode numbers snippets **after** the whole story (level 0 in level-and-node codes), so the
+start keeps `P01`; it is still a fixed point, because snippets are in no component and
+their row is packed in code order, which the uniformly padded new codes preserve. A
+snippet never takes a code a dangling link names — `createNode` and `planRecode` both step
+past one — because the capture would only turn a dashed card into a lint row. The pad
+only ever widens while stepping, or two widths take turns and no pass settles.
+
+Only a snippet may be displayed, and `displayedSnippet` (`derive.ts`) is the one
+definition of which code shows which snippet — the envelope, the lint and "Displayed by"
+all ask it. `parseDisplays` is the one reading of the macro, and it skips what the player
+never runs: a display inside `<!-- -->` or a verbatim run is text, or one commented-out
+`(display: $x)` would switch off every gate in the story. The lint states every refusal
+`runDisplay` makes, not just an unknown code — a loop, a nest past `DISPLAY_DEPTH`, a
+render past `DISPLAY_BUDGET` — which is why those limits live in `macros.ts` rather than
+in `run.ts`, which exports nothing to the graph layer. `readStoryMacros` fails closed on
+displays, since a displayed `(set:)` runs at the passage displaying it: every write in a snippet is opaque
+and a snippet is never an assigner (it has no level, and `gatesOf` would read the missing
+one as `?? 1`); a passage named by a literal display has its writes made opaque; and one
+display whose argument cannot be read makes *every* written variable opaque. Nothing may
+call a snippet unhealthy — the unreachable, stranded, dead-end and ending lints skip it,
+the inspector's "no route reaches" warning skips it, and Publish neither ships nor reports
+it. Coverage keeps it in a tag's `passages` (a tag used only in snippets is in use, and
+reading it as unused would offer **Remove**) and leaves it out of `offRoute` only. A
+snippet is never the start (`createNode`, `deleteNodes`, `setStartNode`, `parseDoc` all
+hold that — and unmaking the last one in a story with no start makes it the start, as
+`createNode` would have), never an ending, and never nudged; `setSnippet` refuses to make
+one of a passage that is the start, has links, or is linked to, because each would silently cut a
+route the author can only see in the prose. A link *to* a snippet is still one the author
+wrote, so `authoredOut`/`authoredIn` count it — the dead-end lint must not name a passage
+twice for one mistake. A snippet's words count once, where they are written, never on the
+routes that display them.
 
 **An ending is authored, and it terminates routes.** `StoryNode.isEnding` is never
 inferred: a passage with no outgoing links is indistinguishable from one whose links are
@@ -538,6 +594,12 @@ someone who has walked a real route to it. Four things about that are load-beari
   escapes unconditionally, and that property does not travel into a published file. Nodes
   and `textContent` make the escaping bug impossible rather than merely avoided.
 
+A snippet ships no blob and has no key: it is on no route, so no reader could earn one.
+Each envelope instead carries `d`, the snippets its passage displays (transitively, in code
+order), sealed with the prose that shows them — so a snippet opens exactly when a passage
+displaying it does, "Play from here" needs nothing extra, and no code map reaches the
+clear. The price is duplication: a snippet displayed by fifty passages ships fifty times.
+
 What it buys is that reading ahead costs *writing a program* rather than pressing Ctrl+F.
 It does not stop a mechanical walk of the graph, and no single file could — everything
 needed to play is in it. Hardening the derivation would not help either, since a player
@@ -633,6 +695,9 @@ legible in the generated file), `player` (the reader view in jsdom, over a real 
 the meta row and trail, endings, keys, themes, and the author console), and `compat` (save
 files that predate a field),
 `recode` (numbering read off the layout, in both modes),
+`snippets` (level-0 passages and `(display:)`, across every layer they touch — the
+document, the graph and the row, recode, the macro reading, the reader, the stats and the
+published envelope),
 `macros` (reading `(set:)` and `(if:)` out of a body, and the spans and chains an
 evaluator needs), `run` (the reader's evaluator — what renders, what is hidden, and what
 must never run),

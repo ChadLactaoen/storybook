@@ -438,9 +438,9 @@ describe('reading a whole story', () => {
 
   it('gathers assigners across passages and keeps unreadable ones apart', () => {
     const nodes = [
-      { id: 'a', body: '(set:$idol to "Sakura")' },
-      { id: 'b', body: '(set:$idol to "Chaewon")' },
-      { id: 'c', body: '(set:$mood to it + "!")' },
+      { id: 'a', code: 'P1', isSnippet: false, body: '(set:$idol to "Sakura")' },
+      { id: 'b', code: 'P2', isSnippet: false, body: '(set:$idol to "Chaewon")' },
+      { id: 'c', code: 'P3', isSnippet: false, body: '(set:$mood to it + "!")' },
     ]
     const { assignersOf, opaqueVars } = readStoryMacros(nodes)
     expect(assignersOf.get('idol')).toEqual([

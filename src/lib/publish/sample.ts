@@ -33,6 +33,7 @@ function passage(
     tags: [],
     state: 'Done',
     isEnding,
+    isSnippet: false,
     levelOffset: 0,
     setting: '',
     characters: [],

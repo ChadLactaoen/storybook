@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { SLUG_MAX } from '../lib/doc/mutations'
+import { parseLinks } from '../lib/harlowe/links'
 import { authoredIn, authoredOut, forwardTargets, formatCount, share } from '../lib/graph/paths'
 import { wordCount } from '../lib/graph/stats'
 import { commandTip } from '../lib/ui/commands'
@@ -37,6 +38,8 @@ const pickedState = store.selectedState
 // read the same two, so a local copy would be a second answer to what a click
 // on this box means.
 const endingCount = store.selectedEndingCount
+// Snippets are never endings, so "N of M already are" counts without them.
+const storyPicked = store.selectedStoryNodes
 const allEndings = store.allSelectedEndings
 const mixedEndings = computed(() => endingCount.value > 0 && !allEndings.value)
 
@@ -269,10 +272,59 @@ function pickTab(next: 'write' | 'advanced') {
   tab.value = next
 }
 
-/** What the editor's link picker offers, here and in the pop-out. */
-const targets = computed(() =>
-  [...store.state.doc.nodes].sort(compareNodes).map((n) => ({ code: n.code, title: n.title })),
+/* ---------- snippets ---------- */
+
+const isSnippet = computed(() => node.value?.isSnippet === true)
+
+/**
+ * What the editor's link picker offers, here and in the pop-out. Never a
+ * snippet: nothing may link to one.
+ */
+const linkTargets = computed(() =>
+  [...store.state.doc.nodes]
+    .filter((n) => !n.isSnippet)
+    .sort(compareNodes)
+    .map((n) => ({ code: n.code, title: n.title })),
 )
+
+/** What the `(display:)` picker offers: every snippet but this passage. */
+const displayTargets = computed(() =>
+  [...store.state.doc.nodes]
+    .filter((n) => n.isSnippet && n.id !== node.value?.id)
+    .sort(compareNodes)
+    .map((n) => ({ code: n.code, title: n.title })),
+)
+
+/** The passages whose `(display:)` shows this snippet. */
+const hosts = computed(() => {
+  const id = node.value?.id
+  if (id === undefined || !isSnippet.value) return []
+  const byId = new Map(store.state.doc.nodes.map((n) => [n.id, n]))
+  return (store.displayHosts.value.get(id) ?? []).flatMap((h) => byId.get(h) ?? [])
+})
+
+/** Links written in a snippet, which lead nowhere. Worth saying where they are typed. */
+const snippetLinkCount = computed(() => (isSnippet.value ? parseLinks(body.value).length : 0))
+
+/**
+ * Why this passage cannot be made a snippet, or null.
+ *
+ * Read only from the Advanced tab, so the scan of every body it costs runs
+ * while that tab is open rather than on every keystroke typed on Write.
+ */
+const snippetBlocker = computed(() =>
+  node.value && !isSnippet.value ? store.snippetBlockerOf(node.value.id) : null,
+)
+
+const bodyEditor = ref<InstanceType<typeof HarloweEditor> | null>(null)
+
+function toggleSnippet() {
+  if (!node.value) return
+  // `snippetSet` refuses exactly when the button is disabled; a refusal here
+  // is a state change between render and click, and the notice says so.
+  const error = store.snippetSet(node.value.id, !isSnippet.value)
+  if (error !== null) store.state.warnings = [error]
+}
 
 /**
  * Hoisted rather than called from each of its two readers: `pathsFrom` rebuilds
@@ -366,7 +418,11 @@ const isStart = computed(() => node.value?.id === store.state.doc.startNodeId)
  * a reason this sentence would misreport.
  */
 const unreached = computed(
-  () => routesIn.value === 0n && !isStart.value && store.state.doc.startNodeId !== null,
+  () =>
+    routesIn.value === 0n &&
+    !isStart.value &&
+    !isSnippet.value &&
+    store.state.doc.startNodeId !== null,
 )
 
 /**
@@ -468,8 +524,10 @@ const pushedDown = computed(() => store.selectedOffset.value === 1)
 
 // Display only, and local for that reason — `blockingParent` is in the store
 // because it reads the anchor; this reads the layout the component already has.
+// Story passages only, like every level control: a snippet in the set would
+// read the range as starting at 0, and no arrow moves it.
 const pickedLevels = computed(() => {
-  const ls = picked.value.map((n) => store.layout.value.nodeById.get(n.id)?.level ?? 0)
+  const ls = storyPicked.value.map((n) => store.layout.value.nodeById.get(n.id)?.level ?? 1)
   return { min: Math.min(...ls), max: Math.max(...ls) }
 })
 
@@ -599,7 +657,9 @@ function applySetting() {
            the same order it sits there: Level, then Ending. No `.seg` in here
            — the State control above owns that class, and a second one would
            join every assertion that reaches for `.batch .seg`. -->
-      <section class="batch">
+      <!-- Both sections are about story passages; a set of snippets alone has
+           no level to nudge and nothing to mark. -->
+      <section v-if="storyPicked.length > 0" class="batch">
         <span class="label">Level</span>
         <div class="level">
           <div class="level-now">
@@ -618,7 +678,7 @@ function applySetting() {
               :disabled="!canUp"
               :title="
                 canUp
-                  ? `Return all ${picked.length} to their earliest level`
+                  ? `Return all ${storyPicked.length} to their earliest level`
                   : canDown
                     ? 'Already at the earliest levels their links allow'
                     : 'Mixed — some are nudged down and some are not'
@@ -632,7 +692,7 @@ function applySetting() {
               :disabled="!canDown"
               :title="
                 canDown
-                  ? `Nudge all ${picked.length} one level down`
+                  ? `Nudge all ${storyPicked.length} one level down`
                   : canUp
                     ? 'Already nudged down'
                     : 'Mixed — some are nudged down and some are not'
@@ -649,17 +709,17 @@ function applySetting() {
             selected one drops further than that, because its floor moves too.
           </template>
           <template v-else-if="canUp">
-            All {{ picked.length }} sit one level below their natural spot.
+            All {{ storyPicked.length }} sit one level below their natural spot.
           </template>
           <template v-else>
-            Mixed &mdash; {{ nudgedCount }} of {{ picked.length }}
+            Mixed &mdash; {{ nudgedCount }} of {{ storyPicked.length }}
             {{ nudgedCount === 1 ? 'is' : 'are' }} nudged down. They move together or not at
             all, so even them up one at a time first.
           </template>
         </p>
       </section>
 
-      <section class="batch">
+      <section v-if="storyPicked.length > 0" class="batch">
         <!-- Driven off `allEndings`, never off the event's `checked`: a click on
              an indeterminate box does not report the same value across browsers,
              and the document already knows the answer. Mixed and all-off both
@@ -674,7 +734,7 @@ function applySetting() {
           <span class="text">
             Mark as Ending
             <span class="hint">
-              Routes stop at each of these. {{ endingCount }} of {{ picked.length }}
+              Routes stop at each of these. {{ endingCount }} of {{ storyPicked.length }}
               {{ endingCount === 1 ? 'already is' : 'already are' }}.
             </span>
           </span>
@@ -826,21 +886,64 @@ function applySetting() {
         <section class="grow">
           <div class="body-head">
             <span class="label">Body <span class="muted">Harlowe</span></span>
-            <button class="expand" title="Edit in a larger window" @click="expanded = true">
-              &#10530; Expand
-            </button>
+            <span class="body-tools">
+              <!-- `mousedown.prevent` keeps focus in the editor. Losing it would
+                   settle the body first, and a settle that binds a bare link
+                   rewrites the text and sends the caret to the end, so the
+                   macro would land there rather than where the author was. -->
+              <button
+                v-if="displayTargets.length > 0"
+                class="expand mono"
+                data-display
+                title="Show a snippet here: inserts (display: &quot;Code&quot;)"
+                @mousedown.prevent
+                @click="bodyEditor?.openDisplay()"
+              >
+                (display:)
+              </button>
+              <button class="expand" title="Edit in a larger window" @click="expanded = true">
+                &#10530; Expand
+              </button>
+            </span>
           </div>
-          <p class="hint above">
+          <p v-if="isSnippet" class="hint above">
+            A snippet is shown inside other passages with
+            <code>(display: &quot;{{ node.code }}&quot;)</code>. It sits on level 0, outside the
+            story, and cannot link.
+          </p>
+          <p v-else class="hint above">
             Link with <code>[[Text|Code]]</code>, <code>[[Text-&gt;Code]]</code> or
             <code>[[Code&lt;-Text]]</code>. A link to a code that doesn&rsquo;t exist creates the
-            passage when you leave the editor.
+            passage when you leave the editor. Show a snippet with
+            <code>(display: &quot;Code&quot;)</code>.
           </p>
           <HarloweEditor
+            ref="bodyEditor"
             :model-value="body"
-            :targets="targets"
+            :targets="linkTargets"
+            :display-targets="displayTargets"
+            :can-link="!isSnippet"
             @update:model-value="onBodyInput"
             @settle="settleBody"
           />
+          <p v-if="snippetLinkCount > 0" class="hint hint-warn">
+            {{ snippetLinkCount === 1 ? 'This link leads' : 'These links lead' }} nowhere: a
+            snippet cannot link, so a reader sees only the words.
+          </p>
+        </section>
+
+        <section v-if="isSnippet">
+          <span class="label">Displayed by</span>
+          <ul v-if="hosts.length > 0" class="hosts">
+            <li v-for="h in hosts" :key="h.id">
+              <button class="jump" @click="emit('open', h.id)">
+                {{ nodeLabel(h.code, h.title) }}
+              </button>
+            </li>
+          </ul>
+          <p v-else class="hint">
+            No passage displays this snippet yet. Readers never see it until one does.
+          </p>
         </section>
 
         <section>
@@ -911,7 +1014,7 @@ function applySetting() {
       </template>
 
       <template v-else>
-        <section>
+        <section v-if="!isSnippet">
           <span class="label">Read</span>
           <button
             class="btn"
@@ -927,7 +1030,33 @@ function applySetting() {
           </p>
         </section>
 
-        <section>
+        <section v-if="isSnippet">
+          <span class="label">Level</span>
+          <div class="level">
+            <div class="level-now">
+              <strong>Level 0</strong>
+              <span class="muted">snippet</span>
+            </div>
+          </div>
+          <p class="hint">
+            Snippets sit above the story, on no route. Making this an ordinary passage puts it
+            back in the tree, unlinked, and any <code>(display:)</code> naming it stops showing it.
+          </p>
+          <button
+            class="btn"
+            data-snippet-toggle
+            :title="
+              hosts.length > 0
+                ? `${hosts.length} ${hosts.length === 1 ? 'passage displays' : 'passages display'} this snippet; ${hosts.length === 1 ? 'it' : 'they'} will show the macro unread instead`
+                : 'Return this passage to the story tree'
+            "
+            @click="toggleSnippet"
+          >
+            Make it a passage again
+          </button>
+        </section>
+
+        <section v-else>
           <span class="label">Level</span>
           <div class="level">
             <div class="level-now">
@@ -972,9 +1101,21 @@ function applySetting() {
               the deepest passage that links to it.
             </template>
           </p>
+          <!-- A button, not a checkbox: it can be refused, and a box that will
+               not tick gives no reason. The reason sits under it instead. -->
+          <button
+            class="btn"
+            data-snippet-toggle
+            :disabled="snippetBlocker !== null"
+            :title="snippetBlocker ?? 'Move this passage to level 0, for (display:) to show inside others'"
+            @click="toggleSnippet"
+          >
+            Make snippet
+          </button>
+          <p v-if="snippetBlocker" class="hint">{{ snippetBlocker }}</p>
         </section>
 
-        <section>
+        <section v-if="!isSnippet">
           <label class="pref">
             <input
               type="checkbox"
@@ -1012,15 +1153,19 @@ function applySetting() {
             @keydown.esc="revertCode"
           />
           <p v-if="codeError" class="hint hint-error">{{ codeError }}</p>
+          <p v-else-if="isSnippet" class="hint">
+            What <code>(display:)</code> names, unique across the story and case-sensitive.
+            Changing it updates every <code>(display:)</code> showing this snippet.
+          </p>
           <p v-else class="hint">
             What links point at, unique across the story and case-sensitive. Changing it
-            updates every <code>[[link]]</code> pointing here. Most stories never need to
+            updates every <code>[[link]]</code> and <code>(display:)</code> pointing here. Most stories never need to
             &mdash; it is set for you. Codes are also what a reader&rsquo;s story code is
             made of: the ones they visited, in order.
           </p>
         </section>
 
-        <section>
+        <section v-if="!isSnippet">
           <label class="label" for="passage-slug">Slug</label>
           <input
             id="passage-slug"
@@ -1092,29 +1237,35 @@ function applySetting() {
               <span class="muted">Words</span>
               <strong>{{ words.toLocaleString('en-US') }}</strong>
             </div>
-            <div class="stat">
-              <span class="muted">Routes from here</span>
-              <strong>{{ pathCount }}</strong>
+            <div v-if="isSnippet" class="stat">
+              <span class="muted">Displayed by</span>
+              <strong>{{ hosts.length }}</strong>
             </div>
-            <div class="stat">
-              <span class="muted">Routes leading here</span>
-              <strong>{{ routesInCount }}</strong>
-              <span v-if="coverageLabel !== null" class="sub">
-                on {{ coverageLabel }}% of all routes
-              </span>
-            </div>
-            <div class="stat">
-              <span class="muted">Links out</span>
-              <strong>{{ linksOut }}</strong>
-            </div>
-            <div class="stat">
-              <span class="muted">Links in</span>
-              <strong>{{ linksIn }}</strong>
-            </div>
-            <div class="stat">
-              <span class="muted">Order on level</span>
-              <strong>{{ geom.order + 1 }}</strong>
-            </div>
+            <template v-else>
+              <div class="stat">
+                <span class="muted">Routes from here</span>
+                <strong>{{ pathCount }}</strong>
+              </div>
+              <div class="stat">
+                <span class="muted">Routes leading here</span>
+                <strong>{{ routesInCount }}</strong>
+                <span v-if="coverageLabel !== null" class="sub">
+                  on {{ coverageLabel }}% of all routes
+                </span>
+              </div>
+              <div class="stat">
+                <span class="muted">Links out</span>
+                <strong>{{ linksOut }}</strong>
+              </div>
+              <div class="stat">
+                <span class="muted">Links in</span>
+                <strong>{{ linksIn }}</strong>
+              </div>
+              <div class="stat">
+                <span class="muted">Order on level</span>
+                <strong>{{ geom.order + 1 }}</strong>
+              </div>
+            </template>
           </div>
 
           <!-- The one home for what the macros say about arriving here. It read
@@ -1137,7 +1288,7 @@ function applySetting() {
             &mdash; read from the <code>(if:)</code> on the links that point here, which no
             other passage can satisfy.
           </p>
-          <p class="hint">
+          <p v-if="!isSnippet" class="hint">
             A route runs from the start until nothing leads on &mdash; a dead end, or an
             Ending you marked. Links are what you wrote, counted as written, so the two
             disagree wherever a link loops back or leaves an Ending.
@@ -1151,21 +1302,23 @@ function applySetting() {
     </div>
 
     <footer>
-      <button
-        class="btn"
-        :disabled="isStart"
-        :title="isStart ? 'Route counts are measured from here' : 'Measure route counts from this passage'"
-        @click="store.makeStart(node.id)"
-      >
-        {{ isStart ? 'This is the start' : 'Make start' }}
-      </button>
-      <button
-        class="btn"
-        title="Create a passage and link to it from this one"
-        @click="store.addPassage(node.id)"
-      >
-        Add linked
-      </button>
+      <template v-if="!isSnippet">
+        <button
+          class="btn"
+          :disabled="isStart"
+          :title="isStart ? 'Route counts are measured from here' : 'Measure route counts from this passage'"
+          @click="store.makeStart(node.id)"
+        >
+          {{ isStart ? 'This is the start' : 'Make start' }}
+        </button>
+        <button
+          class="btn"
+          title="Create a passage and link to it from this one"
+          @click="store.addPassage(node.id)"
+        >
+          Add linked
+        </button>
+      </template>
       <button
         class="btn danger"
         title="Delete this passage. Links to it are left in place as broken links."
@@ -1179,7 +1332,9 @@ function applySetting() {
       v-if="expanded"
       :model-value="body"
       :label="nodeLabel(node.code, node.title)"
-      :targets="targets"
+      :targets="linkTargets"
+      :display-targets="displayTargets"
+      :can-link="!isSnippet"
       @update:model-value="onBodyInput"
       @settle="settleBody"
       @close="expanded = false"
@@ -1280,6 +1435,24 @@ section.grow {
 .expand:hover {
   background: var(--bg);
   color: var(--accent);
+}
+
+.body-tools {
+  display: flex;
+  gap: 2px;
+}
+
+.expand.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.hosts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 /* `.link` is scoped to CharacterPicker rather than global, so this repeats it

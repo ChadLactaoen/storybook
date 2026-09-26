@@ -14,6 +14,7 @@ import {
   emptyCharacter,
   isNodeState,
   isTagColor,
+  nodeLabel,
   orderRoster,
 } from '../../types/story'
 import { codeShape, mintCode, normalizeSlug } from './mutations'
@@ -56,6 +57,7 @@ function canonicalNode(n: StoryNode) {
     code: n.code,
     id: n.id,
     isEnding: n.isEnding,
+    isSnippet: n.isSnippet,
     levelOffset: n.levelOffset,
     note: n.note,
     setting: n.setting,
@@ -107,6 +109,7 @@ interface RawNode {
   tags?: unknown
   state?: unknown
   isEnding?: unknown
+  isSnippet?: unknown
   levelOffset?: unknown
   level?: unknown
   setting?: unknown
@@ -275,6 +278,9 @@ export function parseDoc(json: string): ParsedDoc {
     if (typeof entry.levelOffset === 'number' && Number.isFinite(entry.levelOffset)) {
       levelOffset = Math.min(1, Math.max(0, Math.trunc(entry.levelOffset)))
     } else if (typeof entry.level === 'number' && Number.isFinite(entry.level)) {
+      // Recorded for a snippet too, and left to `importDoc` to skip: whether this
+      // passage *stays* a snippet is not known yet — one that is also the start
+      // is unflagged below, and its level must survive that.
       legacyLevels.set(id, Math.trunc(entry.level))
     }
 
@@ -289,6 +295,8 @@ export function parseDoc(json: string): ParsedDoc {
       // mean the same thing — not an ending — and neither is damage, so
       // neither earns a warning.
       isEnding: entry.isEnding === true,
+      // `=== true`, for `isEnding`'s reason just above.
+      isSnippet: entry.isSnippet === true,
       levelOffset,
       setting: (str(entry.setting) ?? '').trim(),
       code,
@@ -346,9 +354,41 @@ export function parseDoc(json: string): ParsedDoc {
     )
   }
 
+  // A snippet is on no route, so it cannot begin one. When the file names one
+  // as the start, the start wins and the passage becomes an ordinary one again:
+  // unflagging loses nothing the author wrote, where moving the start would
+  // silently change which story is played.
+  const namedStart = str(obj.startNodeId)
+  const startSnippet = nodes.find((n) => n.id === namedStart && n.isSnippet)
+  if (startSnippet !== undefined) {
+    startSnippet.isSnippet = false
+    warnings.push(
+      `"${nodeLabel(startSnippet.code, startSnippet.title)}" was both the start and a snippet; ` +
+        'it is now an ordinary passage, since a snippet cannot begin a story.',
+    )
+  }
+
+  // What `setSnippet` enforces, restored for a hand-edited file: a snippet is
+  // never an ending and never nudged, since it is on no route and has no level
+  // to nudge from. Quietly clearing them would let the file stop matching what
+  // the author sees, so it earns one aggregate warning.
+  const normalized = nodes.filter((n) => n.isSnippet && (n.isEnding || n.levelOffset !== 0))
+  for (const n of normalized) {
+    n.isEnding = false
+    n.levelOffset = 0
+  }
+  if (normalized.length > 0) {
+    warnings.push(
+      `Cleared the ending mark or level nudge on ${normalized.length === 1 ? 'a snippet' : `${normalized.length} snippets`} — ` +
+        'a snippet sits on level 0 and is on no route.',
+    )
+  }
+
   const ids = new Set(nodes.map((n) => n.id))
   let startNodeId = str(obj.startNodeId)
-  if (!startNodeId || !ids.has(startNodeId)) startNodeId = nodes[0]?.id ?? null
+  if (!startNodeId || !ids.has(startNodeId)) {
+    startNodeId = nodes.find((n) => !n.isSnippet)?.id ?? null
+  }
 
   const nextIdRaw = obj.nextId
   let nextId =

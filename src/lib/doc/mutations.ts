@@ -11,6 +11,7 @@ import type {
 import { compareByName, compareNodes, compareStr, emptyCharacter, orderRoster, SLUG_AMBIGUOUS } from '../../types/story'
 import type { Span } from '../harlowe/links'
 import { linkSyntaxIn, parseLinks, remapLinks } from '../harlowe/links'
+import { remapDisplays } from '../harlowe/macros'
 
 /**
  * Every mutation returns a fresh document. Nothing here reads layout, and
@@ -134,10 +135,20 @@ export function mintCode(shape: { prefix: string; width: number }, n: number): s
   return `${shape.prefix}${String(n).padStart(shape.width, '0')}`
 }
 
-function freeCode(taken: ReadonlySet<string>, seed: number): string {
+/**
+ * `avoid` is only ever a collision set, never a shape source: the shape is read
+ * from the codes passages actually hold. Link text is whatever an author typed,
+ * and a dangling `[[Go|X9]]` must not talk a story recoded to `T001` out of its
+ * own prefix.
+ */
+function freeCode(
+  taken: ReadonlySet<string>,
+  seed: number,
+  avoid: ReadonlySet<string> = taken,
+): string {
   const shape = codeShape(taken)
   let n = seed
-  while (taken.has(mintCode(shape, n))) n++
+  while (taken.has(mintCode(shape, n)) || avoid.has(mintCode(shape, n))) n++
   return mintCode(shape, n)
 }
 
@@ -190,30 +201,42 @@ export function createNode(
     setting?: string
     /** Names only. Notes are per-scene and never reach a new passage. */
     characters?: readonly string[]
+    /** A snippet: level 0, outside the tree, shown with `(display:)`. */
+    isSnippet?: boolean
   } = {},
 ): { doc: StoryDoc; node: StoryNode } {
   const next = clone(doc)
   const taken = new Set(next.nodes.map((n) => n.code))
+  // A code some dangling link already names would capture that link, which for
+  // a snippet is never wanted: nothing may link to one, so the capture would
+  // only swap a dashed card for a lint. A new passage is left to capture as it
+  // always has — that is how a link written ahead of its passage is kept.
+  const avoid = new Set(taken)
+  if (opts.isSnippet === true) {
+    for (const n of next.nodes) for (const l of parseLinks(n.body)) avoid.add(l.target)
+  }
   const wanted = opts.code?.trim() ?? ''
   const node: StoryNode = {
     id: String(next.nextId),
     // A passage the app makes deserves a placeholder name. A passage the author
     // wrote by hand does not get one invented for it — see `parseDoc`.
     title: opts.title?.trim() || 'Untitled Passage',
-    code: wanted.length > 0 && !taken.has(wanted) ? wanted : freeCode(taken, next.nextId),
+    code: wanted.length > 0 && !avoid.has(wanted) ? wanted : freeCode(taken, next.nextId, avoid),
     slug: '',
     note: '',
     body: opts.body ?? '',
     tags: [],
     state: 'TODO',
     isEnding: false,
+    isSnippet: opts.isSnippet === true,
     levelOffset: 0,
     setting: opts.setting?.trim() ?? '',
     characters: castFrom(next, opts.characters),
   }
   next.nextId += 1
   next.nodes.push(node)
-  if (next.startNodeId === null) next.startNodeId = node.id
+  // A snippet is on no route, so it cannot begin one.
+  if (next.startNodeId === null && !node.isSnippet) next.startNodeId = node.id
   return { doc: next, node }
 }
 
@@ -233,7 +256,7 @@ export function deleteNodes(doc: StoryDoc, ids: readonly string[]): StoryDoc {
   // prose, and a delete is not a statement about what the text should say. The
   // dangling links surface as phantom cards instead.
   if (next.startNodeId !== null && drop.has(next.startNodeId)) {
-    next.startNodeId = next.nodes[0]?.id ?? null
+    next.startNodeId = next.nodes.find((n) => !n.isSnippet)?.id ?? null
   }
   return next
 }
@@ -317,7 +340,9 @@ export function resolveLinks(
   inherit: InheritOptions = {},
 ): StoryDoc {
   const before = doc.nodes.find((n) => n.id === id)
-  if (!before) return doc
+  // A snippet cannot link, so its links are no instruction to create anything:
+  // a passage minted from one would be an orphan nothing can reach.
+  if (!before || before.isSnippet) return doc
   const body = before.body
 
   // Snapshotted once, above the loop: every passage a single blur creates is
@@ -489,7 +514,10 @@ export function setEndingMany(
   ids: readonly string[],
   value: boolean,
 ): StoryDoc {
-  const pick = new Set(ids)
+  // A snippet is on no route, so no route can stop at it. Filtered here rather
+  // than refused, so a multi-select that happens to include one still marks
+  // the rest.
+  const pick = storyIds(doc, ids)
   if (!doc.nodes.some((n) => pick.has(n.id) && n.isEnding !== value)) return doc
   const next = clone(doc)
   next.nodes = next.nodes.map((n) => (pick.has(n.id) ? { ...n, isEnding: value } : n))
@@ -520,7 +548,8 @@ export function setLevelOffsetMany(
   offset: number,
 ): StoryDoc {
   const value = Math.min(1, Math.max(0, Math.trunc(offset)))
-  const pick = new Set(ids)
+  // A snippet's level is 0 by definition; there is no floor to nudge it from.
+  const pick = storyIds(doc, ids)
   if (!doc.nodes.some((n) => pick.has(n.id) && n.levelOffset !== value)) return doc
   const next = clone(doc)
   next.nodes = next.nodes.map((n) => (pick.has(n.id) ? { ...n, levelOffset: value } : n))
@@ -531,9 +560,81 @@ export function setLevelOffset(doc: StoryDoc, id: string, offset: number): Story
   return setLevelOffsetMany(doc, [id], offset)
 }
 
+/** The subset of `ids` naming passages that are not snippets. */
+function storyIds(doc: StoryDoc, ids: readonly string[]): Set<string> {
+  const pick = new Set(ids)
+  for (const n of doc.nodes) if (n.isSnippet) pick.delete(n.id)
+  return pick
+}
+
 export function setStartNode(doc: StoryDoc, id: string): StoryDoc {
-  if (!doc.nodes.some((n) => n.id === id) || doc.startNodeId === id) return doc
+  // A snippet is on no route, so it cannot begin one.
+  if (!doc.nodes.some((n) => n.id === id && !n.isSnippet) || doc.startNodeId === id) return doc
   return { ...clone(doc), startNodeId: id }
+}
+
+/** How many passages a snippet refusal names before it says "and N more". */
+const BLOCKER_NAMES = 3
+
+function namesOf(nodes: readonly StoryNode[]): string {
+  const shown = nodes.slice(0, BLOCKER_NAMES).map((n) => `"${nameOf(n)}"`)
+  const rest = nodes.length - shown.length
+  return rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ')
+}
+
+/**
+ * Why this passage cannot become a snippet, or null when it can.
+ *
+ * A snippet cannot link and nothing may link to it, so each refusal is a case
+ * where flagging it would silently change the story: the start would stop
+ * beginning anything, its links would stop leading anywhere, and every route
+ * through it would be cut. The author has to make that edit in the prose, where
+ * they can see it, rather than have a button make it for them.
+ */
+export function snippetBlocker(doc: StoryDoc, id: string): string | null {
+  const node = doc.nodes.find((n) => n.id === id)
+  if (!node) return 'That passage no longer exists.'
+  if (node.isSnippet) return null
+  if (doc.startNodeId === id) return 'The start passage cannot be a snippet — it begins every route.'
+  const out = parseLinks(node.body).length
+  if (out > 0) {
+    return `It has ${out === 1 ? 'a link' : `${out} links`} of its own, and a snippet cannot link. Remove ${out === 1 ? 'it' : 'them'} first.`
+  }
+  const inbound = [...doc.nodes]
+    .sort(compareNodes)
+    .filter((n) => !n.isSnippet && n.id !== id && parseLinks(n.body).some((l) => l.target === node.code))
+  if (inbound.length > 0) {
+    return `${namesOf(inbound)} ${inbound.length === 1 ? 'links' : 'link'} to it, and nothing may link to a snippet. Remove those links first.`
+  }
+  return null
+}
+
+/**
+ * Make a passage a snippet, or an ordinary passage again.
+ *
+ * Making one is refused for the reasons `snippetBlocker` gives. Unmaking one is
+ * always allowed: it only returns the passage to the tree, as an orphan on
+ * level 1 — or as the start, when the story has none — and any `(display:)`
+ * naming it simply stops rendering it.
+ *
+ * A snippet is on no route, so becoming one also clears the ending mark and the
+ * level nudge — `parseDoc` repairs a hand-edited file to the same shape.
+ */
+export function setSnippet(doc: StoryDoc, id: string, value: boolean): CodeResult {
+  const node = doc.nodes.find((n) => n.id === id)
+  if (!node) return { doc, error: 'That passage no longer exists.' }
+  if (node.isSnippet === value) return { doc, error: null }
+  if (!value) {
+    const back = replaceNode(doc, id, { isSnippet: false })
+    // A story holding only snippets has no start, and `createNode` would have
+    // made this passage the start had it been created ordinary. Without this
+    // the story plays nothing — and `parseDoc` would pick a start on reload,
+    // so the document would stop round-tripping.
+    return { doc: back.startNodeId === null ? { ...back, startNodeId: id } : back, error: null }
+  }
+  const error = snippetBlocker(doc, id)
+  if (error !== null) return { doc, error }
+  return { doc: replaceNode(doc, id, { isSnippet: true, isEnding: false, levelOffset: 0 }), error: null }
 }
 
 export function setStoryTitle(doc: StoryDoc, title: string): StoryDoc {
@@ -766,7 +867,10 @@ export function recodeAll(doc: StoryDoc, mapping: ReadonlyMap<string, string>): 
   for (const n of next.nodes) {
     const code = resolved.get(n.id)
     if (code !== undefined) n.code = code
-    n.body = remapLinks(n.body, rewrite)
+    // A `(display: "P7")` names a code exactly as `[[…|P7]]` does, so it moves
+    // with it. The two splices touch disjoint spans and each re-parses its own
+    // input, so composing them is one pass per kind, both in the old vocabulary.
+    n.body = remapDisplays(remapLinks(n.body, rewrite), rewrite)
   }
   return { doc: next, error: null }
 }
