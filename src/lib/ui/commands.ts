@@ -360,6 +360,22 @@ export const COMMANDS: readonly CommandSpec[] = [
     chord: { mod: true, key: 'p' },
     hint: 'Open the story in a new tab, in the player theme from Editor settings',
   },
+  /*
+   * The inspector's Play from here. A bare key, like the other per-selection
+   * keys, and so it stands down while typing — the trade Play's ⌘P was made
+   * modified to avoid. ⌘⇧P was the obvious pairing, but Firefox keeps it for a
+   * private window and will not yield it, so the key would simply not arrive.
+   * Dimmed without a passage selected, like the cheat sheet below.
+   */
+  {
+    id: 'passage.play',
+    label: 'Play from selected passage',
+    group: 'story',
+    section: 1,
+    scope: 'global',
+    chord: { key: 'p' },
+    hint: 'Open the story in a new tab, starting at the selected passage',
+  },
   {
     id: 'story.stats',
     label: 'Stats',

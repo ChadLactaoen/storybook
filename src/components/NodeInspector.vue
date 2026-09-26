@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { SLUG_MAX } from '../lib/doc/mutations'
 import { authoredIn, authoredOut, forwardTargets, formatCount, share } from '../lib/graph/paths'
 import { wordCount } from '../lib/graph/stats'
+import { commandTip } from '../lib/ui/commands'
 import { prefs } from '../stores/prefs'
 import * as store from '../stores/story'
 import type { NodeState, TagColor } from '../types/story'
@@ -914,7 +915,7 @@ function applySetting() {
           <span class="label">Read</span>
           <button
             class="btn"
-            title="Open the story in a new tab, starting at this passage"
+            :title="commandTip('passage.play')"
             @click="emit('play', node.id)"
           >
             Play from here
