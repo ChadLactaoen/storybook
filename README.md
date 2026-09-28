@@ -60,7 +60,7 @@ choice a passage is locked behind, or that no route reaches it at all.
 | Character sheet | Per character: a description, plus **Personality**, **Dialogue characteristics**, **Mannerisms** and **Relations** as discrete key points. Open it from the index or from a passage's cast |
 | Relations | One-directional — Mira→Tam records only how Mira regards Tam. The sheet shows the reverse as dimmed read-only context. Renaming or deleting a character cascades through every relation |
 | Story index | **Story** → **Cast & Settings** (`Cmd ;`): every setting and character with a passage count. Click a row to filter the tree; rename from here to update every passage at once. The cast lists in roster order, reordered by dragging a row's ⠿ handle (or focusing it and pressing ↑ ↓), by its ▲▼ buttons one place at a time, or alphabetized with **Sort A–Z**; **Compact** shrinks each row to its handle and name, to fit a long cast on screen while ordering it, and lasts until the app is reloaded |
-| State | TODO / Draft / Done, shown as a coloured badge on each card. `1`, `2` and `3` set it — left to right across the sidebar's control — on one passage or a whole selection, as one undo step |
+| State | TODO / Draft / Review / Done, shown as a coloured badge on each card. `1` to `4` set it — left to right across the sidebar's control — on one passage or a whole selection, as one undo step |
 | Endings | Tick **Mark as Ending** in the sidebar, or press `E`, and the card gets a teal underline and an **END** flag. Works on a whole selection at once, as one undo step. Never guessed for you &mdash; a passage with no links yet is indistinguishable from one you meant to finish. Routes stop at an ending, so the endings divide the story's routes between them rather than overlapping, and anything linked *past* one is unreachable (Story stats says so) |
 | Reader | **Story** &rarr; **Play**, the toolbar button, or `Cmd P`: opens the story in a new tab, in the same player a published file uses, so what you test is what a reader gets. Conditions actually run, so you can watch which branch fires. Each passage shows its code at the top and, below the choices, the *trail*: the marks collected so far run together &mdash; where a card has to write `A*D` because the routes disagree, the trail says which way you went, `ABD`. Keys 1&ndash;9 take a choice; an ending adds the trail with a Copy button, the choices taken, and Restart. There is no Back. An author console under the page shows the variables you are carrying, which passage set each, and the route as `P1->P3->P7`. **Sidebar &rarr; Advanced &rarr; Play from here** (or `P` with a passage selected) starts anywhere, with everything unset and the console saying so. The tab is a snapshot: edit the story and press Play again |
 | Player themes | **Marquee**, **Folio**, **Phosphor** and **Daylight** restyle the same page. Pick the one Play and Publish use in **Editor settings &rarr; Player** (Folio until you do), where each has a **Preview** that opens a sample story in it. A reader can still switch theme and text size from the player's `Aa` button, and that choice is remembered in their browser |
@@ -124,7 +124,7 @@ Wheel or pinch to zoom at the cursor, drag the background to pan.
 notes, `Cmd Z` / `Cmd Shift Z`
 undo and redo, `N` adds a
 passage, `E` marks everything selected as an ending or clears it, `1` / `2` /
-`3` set its state, `Delete`
+`3` / `4` set its state, `Delete`
 removes everything selected. Formatting keys are handled by
 the editor itself rather than the global map, so they only fire where a
 selection means something.
@@ -135,7 +135,7 @@ Sheet**, with **Notes** under it; open together they split it in half.
 `Cmd`-click a card to select it and everything it leads to, `Shift`-click to add
 or drop one, and click the background to clear. With more than one selected the
 sidebar lists them and offers the edits that mean something for a set: **State**
-(also `1` / `2` / `3`), **Mark as Ending** (also `E`), **Level**, **Setting** and
+(also `1` to `4`), **Mark as Ending** (also `E`), **Level**, **Setting** and
 a single delete. The State row lights nothing while the
 selection disagrees, and the Ending box draws a dash rather than claiming either
 way — a mixed set marks everything, and only once they all agree does it clear.

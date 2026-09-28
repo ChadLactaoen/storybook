@@ -268,7 +268,7 @@ const commandBindings = computed<Record<string, CommandBinding>>(() => ({
     enabled: store.selectedStoryNodes.value.length > 0,
     checked: store.allSelectedEndings.value,
   },
-  // Derived rather than written out three times: the ids, the ticks and the
+  // Derived rather than written out once per state: the ids, the ticks and the
   // order all come off `NODE_STATES`, which is the same list the sidebar's
   // segmented control and the digit keys read.
   ...Object.fromEntries(

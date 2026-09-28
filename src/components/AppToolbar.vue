@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { readFileText } from '../lib/doc/file'
 import { formatCount } from '../lib/graph/paths'
 import * as store from '../stores/story'
+import { NODE_STATES, type NodeState } from '../types/story'
 import AppMenuBar from './AppMenuBar.vue'
 import { commandTip, type CommandBinding } from '../lib/ui/commands'
 
@@ -61,8 +62,16 @@ const totalPaths = computed(() => {
   return start ? formatCount(store.pathsFrom(start)) : '0'
 })
 
+/** A `Record` so that a state added to `NODE_STATES` fails to compile until it has one. */
+const STATE_TITLES: Record<NodeState, string> = {
+  TODO: 'Passages still to write',
+  Draft: 'Passages in draft',
+  Review: 'Passages in review',
+  Done: 'Finished passages',
+}
+
 const counts = computed(() => {
-  const out = { TODO: 0, Draft: 0, Done: 0 }
+  const out = Object.fromEntries(NODE_STATES.map((s) => [s, 0])) as Record<NodeState, number>
   for (const n of store.state.doc.nodes) out[n.state]++
   return out
 })
@@ -148,16 +157,17 @@ async function onFile(e: Event) {
         {{ pathsLabel }}
       </button>
       <!-- Named, not just coloured: these are the only legend for the status
-           dot on each card, so bare digits left it unexplained. -->
+           dot on each card, so bare digits left it unexplained. The name is
+           the first thing to go when the bar runs short, and the title keeps
+           it on hover. -->
       <span class="tally">
-        <span class="tick state-TODO" title="Passages still to write">
-          <span class="dot" />{{ counts.TODO }} TODO
-        </span>
-        <span class="tick state-Draft" title="Passages in draft">
-          <span class="dot" />{{ counts.Draft }} Draft
-        </span>
-        <span class="tick state-Done" title="Finished passages">
-          <span class="dot" />{{ counts.Done }} Done
+        <span
+          v-for="s in NODE_STATES"
+          :key="s"
+          :class="['tick', `state-${s}`]"
+          :title="STATE_TITLES[s]"
+        >
+          <span class="dot" />{{ counts[s] }}<span class="word">{{ s }}</span>
         </span>
       </span>
     </div>
@@ -349,8 +359,17 @@ async function onFile(e: Event) {
    `overflow: visible` to hang below it, which means anything that does not fit
    would spill off-screen and be unreachable rather than scrolled to.
    The readouts are what give way: they are duplicated in Story → Stats, while
-   every control here has no other home at this width. */
-@media (max-width: 1200px) {
+   every control here has no other home at this width. Both breakpoints are
+   measured, not guessed, against a large story's digits — four-digit tallies
+   and a nine-digit route count — which needs 1469px with the names and 1330px
+   without. The names go first, since the title still carries them. */
+@media (max-width: 1490px) {
+  .tally .word {
+    display: none;
+  }
+}
+
+@media (max-width: 1350px) {
   .tally {
     display: none;
   }

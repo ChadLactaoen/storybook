@@ -14,7 +14,7 @@
  */
 
 import type { NodeId, NodeState, StoryDoc } from '../../types/story'
-import { compareNodes, compareStr } from '../../types/story'
+import { NODE_STATES, compareNodes, compareStr } from '../../types/story'
 import { DISPLAY_BUDGET, DISPLAY_DEPTH, displayReach, parseDisplays, type DisplayRef } from '../harlowe/macros'
 import { displayedSnippet } from './derive'
 import { authoredOut as outDegree, countPaths, countPathsToAll, forwardTargets, share } from './paths'
@@ -345,8 +345,7 @@ export function computeStoryStats(doc: StoryDoc, layout: LayoutResult): StorySta
 
   /* ---------- completion ---------- */
 
-  const states: NodeState[] = ['TODO', 'Draft', 'Done']
-  const byState = states.map((st) => {
+  const byState = NODE_STATES.map((st) => {
     const ns = doc.nodes.filter((n) => n.state === st)
     return {
       state: st,

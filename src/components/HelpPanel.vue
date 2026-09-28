@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import { chordLabel, COMMANDS } from '../lib/ui/commands'
 import { MOD_LABEL as MOD } from '../lib/ui/platform'
+import { NODE_STATES } from '../types/story'
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -178,9 +179,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           <ul class="plain">
             <li>
               Each card carries a status dot &mdash;
-              <span class="chip state-TODO"><span class="dot" />TODO</span>
-              <span class="chip state-Draft"><span class="dot" />Draft</span>
-              <span class="chip state-Done"><span class="dot" />Done</span>
+              <span v-for="s in NODE_STATES" :key="s" :class="['chip', `state-${s}`]">
+                <span class="dot" />{{ s }}
+              </span>
               &mdash; counted in the toolbar.
             </li>
             <li><strong>Tags</strong> are shared story-wide and can be colour-coded.</li>

@@ -36,7 +36,7 @@ import * as M from '../lib/doc/mutations'
 import { parseDoc, serializeDoc } from '../lib/doc/serialize'
 import { deriveGraph } from '../lib/graph/derive'
 import type { TagColor } from '../types/story'
-import { TAG_COLORS, compareNodes, emptyDoc, tagsInPaletteOrder } from '../types/story'
+import { NODE_STATES, TAG_COLORS, compareNodes, emptyDoc, tagsInPaletteOrder } from '../types/story'
 import { deepFreeze, docFrom, shuffled } from './helpers'
 
 describe('passage note', () => {
@@ -674,6 +674,14 @@ describe('save file', () => {
     expect(doc.nodes.every((n) => n.state === 'TODO')).toBe(true)
     expect(doc.nodes.every((n) => n.levelOffset <= 1)).toBe(true)
     expect(warnings.length).toBeGreaterThan(0)
+  })
+
+  it('keeps every state through a save and load', () => {
+    const doc = docFrom({ A: ['B', 'C', 'D'], B: [], C: [], D: [] })
+    doc.nodes.forEach((n, i) => (n.state = NODE_STATES[i]!))
+    const { doc: back, warnings } = parseDoc(serializeDoc(doc))
+    expect(back.nodes.map((n) => n.state)).toEqual([...NODE_STATES])
+    expect(warnings).toEqual([])
   })
 
   it('leaves an untitled passage untitled rather than inventing a name', () => {
