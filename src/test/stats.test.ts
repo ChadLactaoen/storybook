@@ -295,6 +295,24 @@ describe('completion and shape', () => {
     expect(s.completion.wordPercentDone).toBe(25)
   })
 
+  it('counts a passage in Review toward the totals but not toward done', () => {
+    const doc = docFrom({ A: ['B'], B: [] })
+    doc.nodes[0]!.state = 'Done'
+    doc.nodes[0]!.body = 'one two'
+    doc.nodes[1]!.state = 'Review'
+    doc.nodes[1]!.body = 'three four five six seven eight'
+    const s = stats(doc)
+    expect(s.completion.byState.map((b) => [b.state, b.passages, b.words])).toEqual([
+      ['TODO', 0, 0],
+      ['Draft', 0, 0],
+      ['Review', 1, 6],
+      ['Done', 1, 2],
+    ])
+    expect(s.words.total).toBe(8)
+    expect(s.completion.passagePercentDone).toBe(50)
+    expect(s.completion.wordPercentDone).toBe(25)
+  })
+
   it('counts choice points and route lengths in passages', () => {
     const s = stats(docFrom({ A: ['B', 'C'], B: ['D'], C: [], D: [] }))
     expect(s.shape.choicePoints).toBe(1)

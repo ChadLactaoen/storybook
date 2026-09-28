@@ -251,7 +251,7 @@ export function useShortcuts(handlers: ShortcutHandlers) {
       handlers.playHere()
       return
     }
-    // 1, 2, 3 across the sidebar's segmented control, left to right. Read as a
+    // 1 to 4 across the sidebar's segmented control, left to right. Read as a
     // position in `NODE_STATES` rather than matched state by state, so the two
     // cannot fall out of order; `commands.test.ts` holds the table to the same
     // pairing. Unshifted digits only — the mod branch above has already taken

@@ -2024,7 +2024,7 @@ describe('selecting more than one passage', () => {
 
     const inspector = host.querySelector('.inspector')!
     const segs = [...inspector.querySelectorAll<HTMLElement>('.batch .seg')]
-    expect(segs.map((el) => el.textContent!.trim())).toEqual(['TODO', 'Draft', 'Done'])
+    expect(segs.map((el) => el.textContent!.trim())).toEqual(['TODO', 'Draft', 'Review', 'Done'])
     // Everything selected is still TODO, so that segment is the lit one.
     expect(segs.filter((el) => el.classList.contains('on')).map((el) => el.textContent!.trim()))
       .toEqual(['TODO'])
@@ -2220,7 +2220,7 @@ describe('selecting more than one passage', () => {
     await branchingStory()
     await click('Two', { metaKey: true })
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: '3' }))
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '4' }))
     await nextTick()
     expect(store.state.doc.nodes.map((n) => n.state)).toEqual(['TODO', 'Done', 'Done'])
     expect(host.querySelectorAll('.card.state-Done')).toHaveLength(2)
@@ -2228,6 +2228,11 @@ describe('selecting more than one passage', () => {
     // The segment the key stands in for has to follow it.
     const on = [...host.querySelectorAll<HTMLElement>('.inspector .batch .seg.on')]
     expect(on.map((el) => el.textContent!.trim())).toEqual(['Done'])
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '3' }))
+    await nextTick()
+    expect(store.state.doc.nodes.map((n) => n.state)).toEqual(['TODO', 'Review', 'Review'])
+    expect(host.querySelectorAll('.card.state-Review')).toHaveLength(2)
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: '2' }))
     await nextTick()
@@ -2244,7 +2249,7 @@ describe('selecting more than one passage', () => {
     await click('Two')
     expect(store.state.selectedIds).toHaveLength(1)
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: '3' }))
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '4' }))
     await nextTick()
     expect(store.state.doc.nodes.map((n) => n.state)).toEqual(['TODO', 'Done', 'TODO'])
     expect(problems).toEqual([])
@@ -2254,10 +2259,10 @@ describe('selecting more than one passage', () => {
     await branchingStory()
     await click('Two', { metaKey: true })
 
-    // `NODE_STATES` has three entries, so 4 and 0 index past and before it. A
+    // `NODE_STATES` has four entries, so 5 and 0 index past and before it. A
     // bare `Number(key)` without the bounds the lookup gives would read 0 as a
     // state and set the first one.
-    for (const key of ['0', '4', '9']) {
+    for (const key of ['0', '5', '9']) {
       window.dispatchEvent(new KeyboardEvent('keydown', { key }))
     }
     await nextTick()
@@ -2270,10 +2275,10 @@ describe('selecting more than one passage', () => {
     await click('Two')
 
     const area = host.querySelector<HTMLTextAreaElement>('.inspector textarea.input')!
-    area.dispatchEvent(new KeyboardEvent('keydown', { key: '3', bubbles: true }))
+    area.dispatchEvent(new KeyboardEvent('keydown', { key: '4', bubbles: true }))
     await nextTick()
 
-    // Writing "3 doors" in a passage must not mark it Done.
+    // Writing "4 doors" in a passage must not mark it Done.
     expect(store.state.doc.nodes.map((n) => n.state)).toEqual(['TODO', 'TODO', 'TODO'])
     expect(problems).toEqual([])
   })
@@ -2291,7 +2296,7 @@ describe('selecting more than one passage', () => {
     // canvas underneath and edit a selection nobody can see.
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e' }))
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n' }))
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: '3' }))
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '4' }))
     await nextTick()
 
     expect(store.state.doc.nodes.map((n) => n.isEnding)).toEqual([false, false, false])

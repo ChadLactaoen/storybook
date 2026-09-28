@@ -2,7 +2,7 @@
 
 export type NodeId = string
 
-export const NODE_STATES = ['TODO', 'Draft', 'Done'] as const
+export const NODE_STATES = ['TODO', 'Draft', 'Review', 'Done'] as const
 export type NodeState = (typeof NODE_STATES)[number]
 
 /**

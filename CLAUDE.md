@@ -503,7 +503,8 @@ swallowing the canvas keys.
 hide the fact that twenty-six controls did not, and it would clip the menu panels hanging
 below the bar. With `overflow: visible` anything that does not fit spills off-screen and is
 unreachable rather than scrolled to, so the media queries at the foot of `AppToolbar.vue`
-give way in a deliberate order — the tally, then the saved label, then the readouts
+give way in a deliberate order — the state names in the tally (each tick's title still
+carries its name), then the tally, then the saved label, then the readouts
 entirely, then the zoom stepper, which goes last because every item in it is also a
 shortcut, a trackpad pinch and a row in the View menu. Play is never the thing that falls
 off the edge. Those queries sit at the end of the stylesheet on purpose: they match the
